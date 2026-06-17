@@ -1,0 +1,62 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://medical-harness/spec/task.schema.json",
+  "title": "Medical Harness Unified Task",
+  "type": "object",
+  "required": ["task_id", "source_benchmark", "domain", "modality", "environment", "context", "available_tools", "goal", "checkpoints", "scoring"],
+  "properties": {
+    "task_id": {"type": "string", "pattern": "^(PB|HAB|MCTA)-.+"},
+    "source_benchmark": {"enum": ["PhysicianBench", "HealthAdminBench", "MedCTA"]},
+    "domain": {"enum": ["clinical_data_ops", "healthcare_admin", "multimodal_clinical_reasoning"]},
+    "modality": {"enum": ["structured_fhir", "gui_web", "image_text"]},
+    "specialty": {"type": "string"},
+    "anatomical_region": {"type": "string"},
+    "difficulty": {"enum": ["easy", "medium", "hard"]},
+    "environment": {
+      "type": "object",
+      "required": ["type"],
+      "properties": {"type": {"enum": ["fhir", "gui", "tool_sandbox"]}, "config": {"type": "object"}}
+    },
+    "context": {
+      "description": "AGENT-VISIBLE input only. Never put gold/reference here.",
+      "type": "object",
+      "properties": {
+        "patient_ref": {"type": "string"},
+        "images": {"type": "array", "items": {"oneOf": [
+          {"type": "string"},
+          {"type": "object", "required": ["path"], "properties": {
+            "asset_id": {"type": "string"}, "path": {"type": "string"}, "sha256": {"type": "string"},
+            "source_dataset": {"type": "string"}, "source_revision": {"type": "string"}, "extracted_from": {"type": "string"}}}
+        ]}},
+        "reports": {"type": "array", "items": {"type": "string"}},
+        "portal_state": {"type": "object"},
+        "text": {"type": "string"}
+      }
+    },
+    "available_tools": {
+      "description": "AGENT-VISIBLE. The FULL open tool set of the environment, NOT the gold sufficient subset.",
+      "type": "array",
+      "items": {"$ref": "tool.schema.json"}
+    },
+    "constraints": {
+      "description": "AGENT-VISIBLE only — explicit instructions the user/task states aloud. Hidden verifier requirements (required evidence/tools before action) live in policy.minimum_necessary_evidence / policy.required_tool_before_action, NOT here. No must_query (would leak the gold tool/evidence path).",
+      "type": "object",
+      "properties": {"must_not_do": {"type": "array", "items": {"type": "string"}}},
+      "additionalProperties": false
+    },
+    "goal": {"type": "string"},
+    "policy": {"$ref": "governance.schema.json"},
+    "checkpoints": {"type": "array", "minItems": 1, "items": {"$ref": "checkpoint.schema.json"}},
+    "expected_outcome": {"type": "object"},
+    "scoring": {"type": "object", "required": ["mode"], "properties": {"mode": {"enum": ["all_pass", "weighted"]}, "pass_threshold": {"type": "number"}}},
+    "reference": {
+      "description": "🔒 SCORER-ONLY. Never exposed to the agent. Holds gold labels.",
+      "type": "object",
+      "properties": {
+        "sufficient_tools": {"type": "array", "items": {"type": "string"}, "description": "MedCTA U: gold sufficient tool subset"},
+        "reference_trace": {"description": "MedCTA pi: reference interaction trajectory"},
+        "gold_answer": {"description": "MedCTA A: final clinical outcome / gold answer"}
+      }
+    }
+  }
+}

@@ -1,0 +1,85 @@
+TOTAL_LAB_OBS 71025
+DISTINCT_CODES 1497
+PAGES 72 NONNUMERIC 13507
+RANK|SYSTEM|CODE|N|CUM%|UNIT|P2.5|P50|P97.5|DISPLAY
+1|loinc.org|2345-7|2004|2.8|mg/dL|78.4|116|263|Glucose
+2|loinc.org|33914-3|1683|5.2|mL/min/1.73 m2|26|100|131|eGFR
+3|loinc.org|2823-3|1447|7.2|mmol/L|3.05|4.04|5.18|Potassium
+4|loinc.org|2160-0|1443|9.3|mg/dL|0.35|0.69|2.74|Creatinine
+5|loinc.org|4544-3|1406|11.2|%|19.9|32.8|47|Hematocrit
+6|loinc.org|3094-0|1406|13.2|mg/dL|7|15.4|51.4|Urea nitrogen
+7|loinc.org|17861-6|1404|15.2|mg/dL|7.7|9.15|10.3|Calcium
+8|loinc.org|2951-2|1392|17.2|mmol/L|125|137|145|Sodium
+9|loinc.org|718-7|1382|19.1|g/dL|6.6|10.5|15.6|Hemoglobin
+10|loinc.org|2075-0|1381|21.0|mmol/L|91.1|102|112|Chloride
+11|loinc.org|777-3|1367|23.0|K/uL|13.5|208|443|Platelets
+12|loinc.org|6690-2|1363|24.9|K/uL|0.21|6.1|28.3|Leukocytes
+13|loinc.org|2028-9|1357|26.8|mmol/L|20|26|31|Carbon dioxide
+14|loinc.org|787-2|1314|28.7|fL|76.4|93|114|MCV
+15|loinc.org|785-6|1311|30.5|pg|24.1|30.6|38.7|MCH
+16|loinc.org|786-4|1307|32.3|g/dL|29.3|32.8|35.8|MCHC
+17|loinc.org|789-8|1307|34.2|MIL/uL|1.89|3.44|5.27|Erythrocytes
+18|loinc.org|788-0|1306|36.0|%|11.9|16|27.9|Red cell distribution width
+19|loinc.org|33037-3|1266|37.8|mmol/L|4.06|9.78|15.4|Anion gap
+20|loinc.org|1975-2|1193|39.5|mg/dL|0.2|0.6|4.5|Total bilirubin
+21|loinc.org|1742-6|1182|41.1|U/L|9|27.6|177|ALT
+22|loinc.org|1920-8|1174|42.8|U/L|12|28.4|139|AST
+23|loinc.org|1751-7|1166|44.4|g/dL|2.27|3.91|4.87|Albumin
+24|loinc.org|2885-2|1151|46.1|g/dL|4.73|6.94|8.78|Total protein
+25|loinc.org|6768-6|1150|47.7|U/L|45.1|95|338|Alkaline phosphatase
+26|loinc.org|10834-0|1022|49.1|g/dL|1.73|2.81|4.87|Globulin
+27|loinc.org|5905-5|911|50.4|%|0.87|8.9|22.6|Monocytes [%]
+28|loinc.org|770-8|910|51.7|%|11.6|59.6|91.3|Neutrophils [%]
+29|loinc.org|736-9|878|52.9|%|1.62|21.6|48.9|Lymphocytes [%]
+30|loinc.org|751-8|870|54.1|K/uL|0.24|3.73|21.1|Neutrophils [#]
+31|loinc.org|731-0|861|55.4|K/uL|0.14|1.25|3.17|Lymphocytes [#]
+32|loinc.org|742-7|848|56.5|K/uL|0.04|0.56|2.86|Monocytes [#]
+33|loinc.org|714-6|799|57.7|%|0|1.6|6.9|Eosinophils [%]
+34|loinc.org|713-8|797|58.8|K/uL|0|0.1|83.8|Eosinophils [#]
+35|loinc.org|706-2|754|59.9|%|0.1|0.6|3|Basophils [%]
+36|loinc.org|704-7|743|60.9|K/uL|0|0.04|26.9|Basophils [#]
+37|base_name|PCCOM|689|61.9|||||POCT Comment
+38|loinc.org|51584-1|444|62.5|K/uL|0|0.03|1.07|Imm Granulocytes # Bld
+39|base_name|HOLTER|435|63.1|BPM|0|20|2.02e+07|Baseline HR High
+40|loinc.org|19048-8|419|63.7|K/uL|0|0|0.06|Nucleated red blood cells [#]
+41|loinc.org|58413-6|418|64.3|%|0|0|0.6|Nucleated red blood cells [%]
+42|base_name|IGWAM|415|64.9|%|0|0.41|12.3|Imm. Granulocyte, %
+43|loinc.org|18225-3|396|65.4|||||RBC Shape Bld
+44|loinc.org|48705-8|393|66.0|||||WBC+Platelets Bld
+45|loinc.org|49541-6|382|66.5|||||Fasting status Patient Ql Reported
+46|loinc.org|20395-0|375|67.0|||||Sample Integrity SerPl
+47|loinc.org|11125-2|372|67.6|||||Plat morph Bld
+48|loinc.org|2777-1|333|68.0|mg/dL|2.09|3.37|5.12|Phosphorus
+49|loinc.org|3016-3|316|68.5|uIU/mL|0.09|1.79|12.7|Thyroid stimulating hormone
+50|loinc.org|35013-2|264|68.9|%|0|7.97|32|Neuts Band # Snv
+51|loinc.org|69369-7|261|69.2|||||Bld gp Ab Scn BldCo Ql
+52|loinc.org|2089-1|257|69.6|mg/dL|41|108|182|LDL cholesterol
+53|loinc.org|90906-9|257|69.9|||||ABO + Rh Bld Father
+54|loinc.org|45374-6|255|70.3|||||Specimen Exp Date Bld
+55|loinc.org|19123-9|250|70.7|mg/dL|1.52|2.1|2.74|Magnesium
+56|loinc.org|2571-8|246|71.0|mg/dL|40|94|319|Triglyceride
+57|loinc.org|4548-4|246|71.4|%|4.8|5.7|10.6|Hemoglobin A1c
+58|loinc.org|66746-9|244|71.7|||||Specimen type
+59|loinc.org|5799-2|238|72.0|||||Leukocyte esterase [Presence] in Urine by Test s
+60|loinc.org|31208-2|234|72.4|||||Specimen source
+61|loinc.org|2085-9|232|72.7|mg/dL|32|65|111|HDL cholesterol
+62|loinc.org|2093-3|228|73.0|mg/dL|118|191|268|Cholesterol
+63|loinc.org|5792-7|227|73.3|||||Glucose [Mass/volume] in Urine by Test strip
+64|loinc.org|20454-5|196|73.6|||||Protein [Presence] in Urine by Test strip
+65|loinc.org|5803-2|195|73.9||5.07|6.66|9.03|pH of Urine by Test strip
+66|loinc.org|2532-0|195|74.2|U/L|94.1|297|1.4e+03|Lactate dehydrogenase
+67|loinc.org|5794-3|194|74.4|||||Hemoglobin [Presence] in Urine by Test strip
+68|loinc.org|5767-9|194|74.7|||||Appearance of Urine
+69|loinc.org|5802-4|194|75.0|||||Nitrite [Presence] in Urine by Test strip
+70|loinc.org|5778-6|192|75.2|||||Color of Urine
+71|loinc.org|5797-6|192|75.5|||||Ketones [Mass/volume] in Urine by Test strip
+72|loinc.org|2965-2|192|75.8||1|1.01|1.04|Specific gravity of Urine by Test strip
+73|loinc.org|1968-7|187|76.0|mg/dL|0.1|0.22|3.97|Direct bilirubin
+74|loinc.org|94500-6|182|76.3|||||SARS-CoV-2 RNA
+75|loinc.org|9830-1|174|76.5|ratio|1.7|2.9|7.1|Cholesterol/HDL ratio
+76|loinc.org|14298-4|174|76.8|||||Plasma Avail BPU
+77|loinc.org|2276-4|165|77.0|ng/mL|13.3|608|1.71e+03|Ferritin
+78|loinc.org|6301-6|161|77.3|INR|0.91|1.1|1.83|INR
+79|base_name|PRODCODENAME|160|77.5|||||Product Code Name
+80|loinc.org|55081-4|160|77.7|||||Product version code
+COVERAGE_CODES_NEEDED {'50%': 27, '80%': 91, '90%': 175, '95%': 309, '99%': 887}

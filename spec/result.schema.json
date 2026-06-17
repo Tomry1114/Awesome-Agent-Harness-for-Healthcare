@@ -1,0 +1,67 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://medical-harness/spec/result.schema.json",
+  "title": "Medical Harness Task Result",
+  "type": "object",
+  "required": ["task_id", "success", "evaluation_status", "checkpoints", "dimension_scores", "provenance"],
+  "properties": {
+    "task_id": {"type": "string"},
+    "success": {"type": "boolean"},
+    "evaluation_status": {"enum": ["complete", "partial", "proxy_partial", "proxy_only", "not_evaluated", "error"], "description": "complete=all strict evaluated; partial=some skipped; proxy_partial=strict+proxy; proxy_only=only proxy; not_evaluated=nothing; error=an error checkpoint"},
+    "unsupported_checkpoints": {"type": "integer"},
+    "proxy_evaluated_checkpoints": {"type": "integer", "description": "checkpoints scored by a proxy (e.g. offline whitelist), not a real judge"},
+    "checkpoints": {
+      "type": "array",
+      "items": {"type": "object", "required": ["id", "checkpoint_status", "dimension"], "properties": {
+        "id": {"type": "string"},
+        "checkpoint_status": {"enum": ["passed", "failed", "error", "skipped"]},
+        "failure_mode": {"enum": ["agent_failure", "verifier_error", "environment_error", null]},
+        "failure_tag": {"type": "string"},
+        "judge_backend": {"type": "string", "description": "e.g. offline_whitelist_proxy (NOT a real judge)"},
+        "evaluator_kind": {"enum": ["strict", "proxy"], "description": "proxy verifiers excluded from success + dimension_scores"},
+        "score_eligible": {"type": "boolean", "description": "false = proxy/replay, not counted in formal success/dimension_scores"},
+        "skip_reason": {"enum": ["skipped_user_config", "unsupported_in_skeleton", "missing_judge_backend", "missing_native_verifier", "missing_policy_verifier", "disabled_by_config"]},
+        "dimension": {"enum": ["Execution", "Tooling", "Context", "Lifecycle", "Observability", "Verification", "Governance"]},
+        "subdimension": {"type": "string"},
+        "score": {"type": "number"}
+      }}
+    },
+    "dimension_coverage": {"type": "object", "description": "count of evaluated (passed/failed) checkpoints per module"},
+    "proxy_dimension_scores": {"type": "object", "description": "proxy-only module scores (NOT formal benchmark scores)"},
+    "proxy_dimension_coverage": {"type": "object", "description": "count of proxy (score_eligible=false) checkpoints per module"},
+    "dimension_scores": {
+      "description": "keyed by the 7 ETCLOVG modules",
+      "type": "object",
+      "properties": {
+        "Execution": {"type": ["number", "null"]},
+        "Tooling": {"type": ["number", "null"]},
+        "Context": {"type": ["number", "null"]},
+        "Lifecycle": {"type": ["number", "null"]},
+        "Observability": {"type": ["number", "null"]},
+        "Verification": {"type": ["number", "null"]},
+        "Governance": {"type": ["number", "null"]}
+      }
+    },
+    "subdimension_scores": {"type": "object", "description": "optional fine-grained scores (clinical_task_success, tool_use_quality, ...)"},
+    "tool_calls": {"type": "integer"},
+    "tokens": {"type": "integer"},
+    "latency_ms": {"type": "integer"},
+    "failure_tags": {"type": "array", "items": {"enum": [
+      "tool_selection_error", "tool_argument_error", "hallucinated_fact", "missing_evidence",
+      "workflow_violation", "unsafe_action", "policy_violation", "format_schema_error",
+      "execution_error", "recovery_failure", "incomplete_outcome",
+      "cross_patient_access", "wrong_patient_document", "wrong_recipient",
+      "unsupported_visual_claim", "overconfident_diagnosis", "failure_to_refuse",
+      "missing_required_escalation", "verifier_error", "environment_error", "missing_synthetic_context"]}},
+    "provenance": {
+      "description": "agent_model != tool_backend != judge_model — record separately for interpretability.",
+      "type": "object",
+      "required": ["agent_model"],
+      "properties": {
+        "agent_model": {"type": "string"},
+        "tool_backend": {"type": "object"},
+        "judge_model": {"type": "string"}
+      }
+    }
+  }
+}

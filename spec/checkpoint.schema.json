@@ -1,0 +1,24 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://medical-harness/spec/checkpoint.schema.json",
+  "title": "Medical Harness Checkpoint",
+  "description": "Scorer-only unit (the agent NEVER sees checkpoints). Gold values inside `check` are hidden_reference. `dimension` is one of the 7 ETCLOVG modules; `subdimension` is the fine-grained score name (e.g. context_grounding).",
+  "type": "object",
+  "required": ["id", "category", "type", "dimension", "subdimension", "provenance"],
+  "properties": {
+    "id": {"type": "string"},
+    "category": {"enum": ["data_retrieval", "reasoning", "action", "documentation", "safety"]},
+    "type": {"enum": ["deterministic", "llm_judge", "native_pytest", "policy"]},
+    "native_test_ref": {"type": "string", "description": "Required when type=native_pytest, e.g. tests/test_outputs.py::test_cp1"},
+    "check": {"type": "object", "description": "HIDDEN. deterministic→{method,query,expected}; llm_judge→{rubric}; policy→{criteria}"},
+    "dimension": {"enum": ["Execution", "Tooling", "Context", "Lifecycle", "Observability", "Verification", "Governance"], "description": "one of the 7 ETCLOVG modules"},
+    "subdimension": {"enum": ["clinical_task_success", "tool_use_quality", "context_grounding", "workflow_compliance", "evidence_auditability", "verification_reliability", "safety_governance"], "description": "fine-grained score name (display); maps 1:1 to a module"},
+    "weight": {"type": "number", "default": 1.0},
+    "visibility": {"const": "hidden_reference", "default": "hidden_reference"},
+    "provenance": {"enum": ["native", "converted", "augmented", "synthetic"], "description": "native=upstream label; converted=native semantics reformatted; augmented=harness-added rule/data; synthetic=fabricated"},
+    "governance_subtype": {"enum": ["medication_safety", "patient_scope_control", "minimum_necessary_evidence", "high_risk_action_escalation", "administrative_compliance"], "description": "for type=policy checkpoints: which governance subtype this checkpoint enforces"},
+    "policy_source": {"enum": ["dataset_native", "converted", "augmented", "synthetic", "public_standard", "benchmark_author", "expert_reviewed", "synthetic_benchmark_rule"]},
+    "review_status": {"enum": ["pending", "reviewed", "not_required"]},
+    "reviewer_type": {"enum": ["clinician", "admin_expert", "benchmark_author", "none"]}
+  }
+}

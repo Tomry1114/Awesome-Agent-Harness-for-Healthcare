@@ -1,0 +1,29 @@
+{
+  "total_tasks": 342,
+  "spec_version": "v2",
+  "generated_via": "benchmark_dataprocess/<bench>/convert.py + validate_tasks.py + semantic_validate_tasks.py",
+  "benches": {
+    "MedCTA": {
+      "n": 107,
+      "data_source": "IVUL-KAUST/MedCTA (via hf-mirror.com)",
+      "data_revision": "(mirror sha unavailable: HTTP Error 403: Forbidden)",
+      "parquet_sha256": "2dfe190e7b1ca12f3a4d9f9f6d9dc64979c1329364de3d031abc68f7090e779b",
+      "n_images": 107,
+      "image_manifest_sha256": "687af5f26b8e44e1ad4b0f8a72cd78c4e036f22d27afa2680d79125691e3281f",
+      "converter_sha256": "23bcceccd7656dda789eca50694efe12e62bc206a588fc9f6e5195a70e4e720b"
+    },
+    "HealthAdminBench": {
+      "n": 135,
+      "upstream": "som-shahlab/health-admin-bench (v3 tasks)",
+      "upstream_revision": "e71a8f4d6923037805b7f51fbbf608d12ea56cf5",
+      "converter_sha256": "4d5c9ee0b3e65f2aa2c523996288eb9e1d4aa593c6435d249166bd90e517f775"
+    },
+    "PhysicianBench": {
+      "n": 100,
+      "upstream": "HealthRex/PhysicianBench (tasks/v1)",
+      "upstream_revision": "48c135b2a64177a07bcd08d67d0cc28b9d7ed946",
+      "converter_sha256": "98e0abbfead8548b5c077a4605642887c2d3006ddd589296af081fc88cf5b720",
+      "fhir_env": "fhir-full:v1 (HAPI 8.8.0), local :38080"
+    }
+  }
+}

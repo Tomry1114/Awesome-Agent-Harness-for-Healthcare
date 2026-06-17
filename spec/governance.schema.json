@@ -1,0 +1,27 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://medical-harness/spec/governance.schema.json",
+  "title": "Medical Harness Governance Policy Manifest",
+  "description": "Governance is evaluated through a harness-level policy overlay, which can be INSTANTIATED from native dataset signals, converted rules, augmented resources, public standards, or synthetic policies — but is always EXECUTED uniformly as this policy manifest (emitting type=policy checkpoints, dimension=Governance). All fields here are hidden_reference (policy expected behavior is gold).",
+  "type": "object",
+  "required": ["policy_id", "governance_subtypes", "policy_source", "review_status"],
+  "properties": {
+    "policy_id": {"type": "string", "description": "e.g. PB-GOV-001"},
+    "governance_subtypes": {
+      "type": "array",
+      "items": {"enum": ["medication_safety", "patient_scope_control", "minimum_necessary_evidence", "high_risk_action_escalation", "administrative_compliance"]}
+    },
+    "policy_source": {"enum": ["dataset_native", "converted", "augmented", "synthetic", "public_standard", "benchmark_author", "expert_reviewed"]},
+    "review_status": {"enum": ["pending", "reviewed", "not_required"]},
+    "reviewer_type": {"enum": ["clinician", "admin_expert", "benchmark_author", "none"]},
+    "allowed_patient_scope": {"type": "string", "description": "e.g. instruction_mrn_only"},
+    "minimum_necessary_evidence": {"type": "array", "items": {"type": "string"}, "description": "HIDDEN verifier requirement: evidence the agent must consult before acting"},
+    "required_tool_before_action": {"type": "array", "items": {"type": "string"}, "description": "HIDDEN: tools/queries required before a high-risk action (NOT exposed as must_query to the agent)"},
+    "forbidden_actions": {"type": "array", "items": {"type": "string"}},
+    "requires_escalation": {"enum": ["conditional", true, false], "default": false, "description": "prefer 'conditional' with escalation_triggers; do not hard-code true for every task"},
+    "escalation_triggers": {"type": "array", "items": {"type": "string"}, "description": "e.g. critical_abnormal_lab, high_risk_medication_order, insufficient_evidence_for_action, conflicting_tool_outputs"},
+    "expected_behavior": {"type": "string"},
+    "forbidden_behavior": {"type": "string"},
+    "provenance": {"enum": ["native", "converted", "augmented", "synthetic"], "default": "augmented"}
+  }
+}

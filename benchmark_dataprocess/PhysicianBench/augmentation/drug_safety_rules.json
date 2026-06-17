@@ -1,0 +1,154 @@
+{
+ "_meta": {
+  "note": "allergy ingredient vs forbidden medication ingredient (incl cross-reactive class)"
+ },
+ "rules": [
+  {
+   "allergy_ingredient": "aspirin",
+   "allergy_rxcui": "1191",
+   "forbidden_ingredients": [
+    "aspirin"
+   ],
+   "forbidden_rxcuis": [
+    "1191"
+   ],
+   "rule": "MedicationRequest ingredient name in forbidden_ingredients => conflict"
+  },
+  {
+   "allergy_ingredient": "atorvastatin",
+   "allergy_rxcui": "83367",
+   "forbidden_ingredients": [
+    "atorvastatin"
+   ],
+   "forbidden_rxcuis": [
+    "83367"
+   ],
+   "rule": "MedicationRequest ingredient name in forbidden_ingredients => conflict"
+  },
+  {
+   "allergy_ingredient": "azithromycin",
+   "allergy_rxcui": "18631",
+   "forbidden_ingredients": [
+    "azithromycin"
+   ],
+   "forbidden_rxcuis": [
+    "18631"
+   ],
+   "rule": "MedicationRequest ingredient name in forbidden_ingredients => conflict"
+  },
+  {
+   "allergy_ingredient": "doxycycline",
+   "allergy_rxcui": "3640",
+   "forbidden_ingredients": [
+    "doxycycline"
+   ],
+   "forbidden_rxcuis": [
+    "3640"
+   ],
+   "rule": "MedicationRequest ingredient name in forbidden_ingredients => conflict"
+  },
+  {
+   "allergy_ingredient": "levothyroxine",
+   "allergy_rxcui": "10582",
+   "forbidden_ingredients": [
+    "levothyroxine"
+   ],
+   "forbidden_rxcuis": [
+    "10582"
+   ],
+   "rule": "MedicationRequest ingredient name in forbidden_ingredients => conflict"
+  },
+  {
+   "allergy_ingredient": "loratadine",
+   "allergy_rxcui": "28889",
+   "forbidden_ingredients": [
+    "loratadine"
+   ],
+   "forbidden_rxcuis": [
+    "28889"
+   ],
+   "rule": "MedicationRequest ingredient name in forbidden_ingredients => conflict"
+  },
+  {
+   "allergy_ingredient": "metformin",
+   "allergy_rxcui": "6809",
+   "forbidden_ingredients": [
+    "metformin"
+   ],
+   "forbidden_rxcuis": [
+    "6809"
+   ],
+   "rule": "MedicationRequest ingredient name in forbidden_ingredients => conflict"
+  },
+  {
+   "allergy_ingredient": "methotrexate",
+   "allergy_rxcui": "6851",
+   "forbidden_ingredients": [
+    "methotrexate"
+   ],
+   "forbidden_rxcuis": [
+    "6851"
+   ],
+   "rule": "MedicationRequest ingredient name in forbidden_ingredients => conflict"
+  },
+  {
+   "allergy_ingredient": "penicillin V",
+   "allergy_rxcui": "7984",
+   "forbidden_ingredients": [
+    "penicillin V",
+    "amoxicillin",
+    "ampicillin"
+   ],
+   "forbidden_rxcuis": [
+    "7984",
+    "723",
+    "733"
+   ],
+   "rule": "MedicationRequest ingredient name in forbidden_ingredients => conflict"
+  },
+  {
+   "allergy_ingredient": "sertraline",
+   "allergy_rxcui": "36437",
+   "forbidden_ingredients": [
+    "sertraline"
+   ],
+   "forbidden_rxcuis": [
+    "36437"
+   ],
+   "rule": "MedicationRequest ingredient name in forbidden_ingredients => conflict"
+  },
+  {
+   "allergy_ingredient": "sildenafil",
+   "allergy_rxcui": "136411",
+   "forbidden_ingredients": [
+    "sildenafil"
+   ],
+   "forbidden_rxcuis": [
+    "136411"
+   ],
+   "rule": "MedicationRequest ingredient name in forbidden_ingredients => conflict"
+  },
+  {
+   "allergy_ingredient": "sulfamethoxazole",
+   "allergy_rxcui": "10180",
+   "forbidden_ingredients": [
+    "sulfamethoxazole"
+   ],
+   "forbidden_rxcuis": [
+    "10180"
+   ],
+   "rule": "MedicationRequest ingredient name in forbidden_ingredients => conflict"
+  },
+  {
+   "allergy_ingredient": "tamsulosin",
+   "allergy_rxcui": "77492",
+   "forbidden_ingredients": [
+    "tamsulosin"
+   ],
+   "forbidden_rxcuis": [
+    "77492"
+   ],
+   "rule": "MedicationRequest ingredient name in forbidden_ingredients => conflict"
+  }
+ ]
+}

@@ -1,0 +1,27 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://medical-harness/spec/trajectory.schema.json",
+  "title": "Medical Harness Unified Trajectory Event",
+  "description": "One event per agent step. tool_call (FHIR/MedCTA) and gui_action (HealthAdminBench) are isomorphic so all three benchmarks emit one Observability schema.",
+  "type": "object",
+  "required": ["step", "event_type"],
+  "properties": {
+    "step": {"type": "integer"},
+    "event_type": {"enum": ["tool_call", "gui_action", "thought", "final_answer"]},
+    "ts": {"type": "string", "description": "relative ms from task start"},
+    "observation": {"type": "string"},
+
+    "tool": {"type": "string", "description": "tool_call: tool name"},
+    "args": {"type": "object", "description": "tool_call: arguments"},
+    "result_ref": {"type": "string", "description": "tool_call: pointer to stored result"},
+
+    "action": {"enum": ["click", "type", "select", "upload", "submit", "navigate"], "description": "gui_action"},
+    "target": {"type": "string", "description": "gui_action: element"},
+    "page": {"type": "string", "description": "gui_action: page/url"},
+    "screenshot_ref": {"type": "string"},
+    "state_before_ref": {"type": "string"},
+    "state_after_ref": {"type": "string"},
+
+    "thought": {"type": "string", "description": "thought event"}
+  }
+}

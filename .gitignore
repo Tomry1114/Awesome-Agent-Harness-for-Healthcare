@@ -1,0 +1,39 @@
+# ===== Medical Harness — ignore large/vendored/generated assets =====
+
+# Vendored upstream benchmark repos + container images + raw datasets.
+# These are third-party clones (each has its own .git) and multi-GB binaries.
+# Re-fetch from the upstream revisions pinned in TASK_MANIFEST.json.
+/benchmark/
+
+# Apptainer/Singularity caches
+/.apptainer_cache/
+/.apptainer_tmp/
+
+# Per-run output bundles (regenerable by runner/run_batch.py)
+/results/
+
+# Python scratch
+**/__pycache__/
+*.pyc
+*.pyo
+
+# Runtime FHIR H2 database, cold backups, container images, raw datasets
+**/h2data/
+**/augmentation/backups/
+*.mv.db
+*.sif
+*.tar.gz
+*.parquet
+
+# Large media / generated demo assets
+*.mp4
+*.gif
+
+# JVM / perf scratch
+**/hsperfdata_*/
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
