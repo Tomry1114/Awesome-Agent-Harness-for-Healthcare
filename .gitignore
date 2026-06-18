@@ -37,3 +37,18 @@
 .idea/
 .vscode/
 *.swp
+
+# Runtime logs
+*.log
+
+# In-place edit backups (created by remote patching; never source of truth)
+*.bak_*
+*.bak_gui
+*.bak_prov
+*.bak_fix
+*.bak_preB
+*.bak_scripted
+
+# Per-run agent + profiling outputs (regenerable by the runner / profiler)
+runner/agent_*.json
+runner/medcta_profile*.json

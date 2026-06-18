@@ -80,6 +80,10 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
     agent = agents.make_agent(agent_name, task)
 
     trajectory, last_obs, last_res, finished = [], None, None, False
+    if hasattr(env, "initial_observation"):
+        _io = env.initial_observation()
+        if _io is not None:
+            last_res = _io; last_obs = json.dumps(_io)[:200]
     for step in range(max_steps):
         action = agent.act({"goal": task.get("goal"), "context": task.get("context"),
                             "tools": env.available_tools(), "last_observation": last_obs, "last_result": last_res})
@@ -92,7 +96,10 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
         if action["type"] != "tool_call" or not action.get("tool"):
             trajectory.append({"step": step, "event_type": "agent_error", "error": "bad_action_type", "raw": str(action)[:200]})
             finished = True; break
-        res = env.call_tool(action["tool"], action.get("args", {}))
+        try:
+            res = env.call_tool(action["tool"], action.get("args", {}))
+        except Exception as _e:
+            res = {"error": repr(_e)}
         obs = json.dumps(res)[:200]
         trajectory.append({"step": step, "event_type": "tool_call", "tool": action["tool"],
                            "args": action.get("args", {}), "result": res, "observation": obs, "ts": str(step)})
@@ -135,19 +142,52 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
            "verifiers": scoring._load_verifiers() if needs_pb else None, "pb_repo": pb_repo, "job_dir": job_dir}
     results = [scoring.run_checkpoint(cp, ctx) for cp in task.get("checkpoints", [])]
     env_type = (task.get("environment") or {}).get("type")
-    tb = {"fhir": "live", "rxnorm": "frozen"} if env_type == "fhir" else {env_type: "stub" if env_type == "gui" else "replay"}
-    # #3: the MedCTA "stub" is actually a gold replay reading hidden reference — label it honestly
-    if getattr(agent, "name", "") == "replay":
-        provenance = {"agent_model": "gold_replay:reference_trace", "agent_visibility": "uses_hidden_reference",
-                      "intended_use": "scorer_validation_only", "tool_backend": tb}
+    env_cls = type(env).__name__
+    vlm = os.path.basename(os.environ.get("MH_VLM_PATH", "Qwen3-VL-2B-Instruct"))
+    # ---- role-separated provenance: brain != tool-backend != judge. Record EACH even if same model,
+    #      so nobody mistakes "agent saw the image" for "an image tool (also Qwen3-VL) saw it". ----
+    real_ts = os.environ.get("MH_TOOL_MODE", "real") != "replay"
+    if env_type == "fhir":
+        tool_backend = {"fhir": "live_hapi", "rxnorm": "frozen"}; tool_backend_model = None
+    elif env_type == "gui":
+        tool_backend = {"gui": "real_playwright_portal" if env_cls == "GuiEnvReal" else "mock_inmemory"}
+        tool_backend_model = None  # DOM actions, no model
+    elif env_type == "tool_sandbox":
+        tool_backend = {"tool_sandbox": "real_vlm_tools" if real_ts else "replay_cache"}
+        tool_backend_model = vlm if real_ts else None  # ImageDescription/RegionAttribute/OCR run a VLM
     else:
-        provenance = {"agent_model": f"stub:{agent_name}", "tool_backend": tb}
+        tool_backend = {env_type: "unknown"}; tool_backend_model = None
+    aname = getattr(agent, "name", "") or agent_name
+    if aname == "qwen":
+        agent_model = "%s (text-only brain)" % vlm; uses_hidden_ref = False; validation_only = False
+    elif aname == "replay":
+        agent_model = "gold_replay:reference_trace"; uses_hidden_ref = True; validation_only = True
+    elif aname == "scripted":
+        agent_model = "scripted:gold_path"; uses_hidden_ref = True; validation_only = True
+    else:
+        agent_model = "stub:%s" % aname; uses_hidden_ref = False; validation_only = True
+    # no LLM judge wired; MedCTA outcome uses an offline whitelist proxy until a real Gacc judge lands
+    judge_model = "offline_whitelist_proxy" if env_type == "tool_sandbox" else "none"
+    provenance = {"agent_model": agent_model, "tool_backend": tool_backend,
+                  "tool_backend_model": tool_backend_model, "judge_model": judge_model,
+                  "uses_hidden_reference": uses_hidden_ref, "scorer_validation_only": validation_only}
     result = scoring.build_result(task, trajectory, results, provenance)
     result["_schema"] = validate_result(result)
     result["_trajectory"] = trajectory
     result["_job_dir"] = job_dir
-    if env_type != "fhir":
-        result["_warning"] = f"{env_type} environment is stub; execution score is not meaningful."
+    # ---- qualification: downgrade ONLY for mock / replay / proxy / hidden-reference — NOT by substrate.
+    #      A real Playwright GUI run or real VLM-tool run is NOT auto-"stub". ----
+    quals = []
+    if uses_hidden_ref: quals.append("uses_hidden_reference")
+    if validation_only: quals.append("scorer_validation_only")
+    if env_type == "gui" and env_cls != "GuiEnvReal": quals.append("mock_env")
+    if env_type == "tool_sandbox" and not real_ts: quals.append("replay_tool_backend")
+    if judge_model.startswith("offline"): quals.append("outcome_proxy")
+    if any(c.get("score_eligible") is False for c in result.get("checkpoints", [])): quals.append("proxy_scored_checkpoints")
+    quals = sorted(set(quals))
+    if quals:
+        result["_qualification"] = quals
+        result["_warning"] = "qualified: " + ", ".join(quals)
     # light per-task cleanup of agent-created (stub-tagged) resources to avoid FHIR pollution
     if cleanup and env_type == "fhir" and ctx.get("base"):
         cl = cleanup_stub(ctx["base"])

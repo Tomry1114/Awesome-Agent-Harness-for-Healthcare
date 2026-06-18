@@ -1,6 +1,7 @@
 # Medical Harness — 项目状态总览 (STATUS)
 
-> **单一进度入口**。最后更新:2026-06-17 · 主机:HPC ce483 `~/Medical_harness/` · 规范:Task Spec v2
+> **单一进度入口**。最后更新:2026-06-18 · 主机:HPC ce483 `~/Medical_harness/` · 规范:Task Spec v2
+> **运行环境:`medicalharness`**(conda,Python 3.10;`~/.conda/envs/medicalharness/bin/python`)——与 AgentOCR 解耦,代码一律用此环境。GPU 经 `sbatch -p debug --gres=gpu:1`(A40)。
 > 三数据集组合:**PhysicianBench(FHIR 临床)+ HealthAdminBench(GUI 行政)+ MedCTA(多模态影像)**,全 agentic、不重叠、合起来覆盖 7 个 ETCLOVG 模块。
 
 ## 0. 文档地图
@@ -37,8 +38,19 @@
 - **MedCTA ToolSandboxEnv v0(第三条 execution substrate)**:`ToolSandboxEnv`(replay 缓存输出)+ `ReplayAgent`(重放 π 参考轨迹,gold-replay 验证 agent,非真实 agent)+ scorer:`toolset_match`(ToolAcc)/`arg_match`(ArgAcc,新增 cp_arg_accuracy)/ llm_judge **离线 whitelist**(Gacc 代理)。验证:gold replay → ToolAcc/ArgAcc/Gacc 全 pass;判别力 OK(错工具/错答案→fail);batch 5 → Tooling 1.0/Execution 0.8(1 个 Gacc 离线未命中=措辞差异,真实 Gacc 需 judge)。grounding/no_fabrication skipped(judge/verifier 待接)。**三条 substrate(FHIR/GUI/tool_sandbox)skeleton 端到端齐了。**
 - **HealthAdminBench GuiEnv v0(第二条 execution substrate)**:`GuiEnv`(mock portal,browser 动作 navigate/click/type/select/upload/submit/snapshot 改写内存 `full_state`)+ `StubGuiAgent` + **JMESPath deterministic scorer**(`jmespath.search` 对 full_state)。验收 7/7:HAB 单任务/batch5 jmespath 真实执行(failed,pass 已演示)、llm_judge+criteria-policy skipped、schema 5/5、bundle 齐全、跨环境跑通。**证明 unified runner 不只 FHIR 特化**(FHIR substrate + GUI substrate 同一 runner/scoring/schema)。v1=真 Playwright 驱动门户。
 
+### ✅ v1 真实环境(2026-06-18 新增)
+- **专用 env `medicalharness`**(8.9G):torch 2.8.0+cu128 / transformers 4.57.3 / playwright 1.48 / jmespath / jsonschema / pytest / pandas / pyarrow。imports 全 OK。
+- **MedCTA ToolSandboxEnv v1(真实工具后端)**:`runner/vlm_backend.py`(可插拔 Qwen3-VL 单例,默认本地 `~/hf_models/Qwen3-VL-2B-Instruct`,`MH_VLM_BACKEND=local`)+ `runner/tools_medcta.py`(5 真实工具:ImageDescription/RegionAttributeDescription/OCR→VLM、Calculator 安全 AST、GoogleSearch 离线 frozen 语料)+ `ToolSandboxEnv` real/replay 双模(`MH_TOOL_MODE=real`)。**验证**:Qwen3-VL-2B 在 A40 ~6s 加载/~8s 每图出真实医学描述;集成测试(sbatch,replay agent + 真实工具)success / Tooling=1.0 / schema OK,工具真在 GPU 上执行。
+- **HealthAdminBench GuiEnv v1(真实门户)**:Node 22 + v2 Next.js 16 门户(`benchmark/HealthAdminBench/benchmark/v2/portals`,`:3002`)+ Playwright 1.48 + chromium 130(npmmirror 镜像;azureedge 被墙)+ `GuiEnvReal`(`environments.py`):真 chromium 驱动真门户,`full_state` 从 `localStorage.portals_state.emr` 读出(即 jmespath checkpoint 的评分对象)。`MH_GUI_MODE=mock` 回退 v0。**验证**:HAB 任务端到端,真 DOM 操作→真 full_state→jmespath 正确评分(stub 正确判 fail,schema OK)。
+- **关键设计发现**:原始 MedCTA agent 是**纯文本 LLM**——用户问题**不含图**,agent 必须**调 ImageDescription/RegionAttributeDescription 工具才能"看到"图**(reference_trace 实证:user 仅文本→assistant 调 ImageDescription→tool 返回描述→调 RegionAttributeDescription→final)。决定真实 agent 的 I/O:不直接喂图,逼其用工具,工具增益才可测。
+
 ### 🟡 进行中 / 下一步
-**推荐下一项**:**真实 LLM agent**(替换 StubAgent,用 upstream 语义 FHIR 工具 → native_pytest 可 pass,**需模型 API key**)+ `llm_judge`。或先做 **GuiEnv/ToolSandboxEnv 真实化** 或 **增强 #3 Encounter**(均无需 key)。详见 `runner/README.md` TODO。
+**真实 Qwen3-VL tool-calling agent 已建成且环境感知**(`runner/qwen_agent.py`)——**三数据集全部跑通**:MedCTA(3) + PhysicianBench(1) + HealthAdminBench(2,GUI)。
+> GUI(HAB-denial-easy-1,真实 agent,2B):观测管线已建(`data-mh-ref` 枚举 77 个可交互元素 + 页面文本注入),chromium 在 GPU 节点正常、门户经 login IP(10.120.31.247:3002)可达、`full_state` 经 jmespath 评分。但 2B **未按 `<tool_call>` 协议输出**(吐裸文本)→ step0 即 final,所有 cp failed(status=partial)。**[更正]** 上一行此前误判为数据不对齐——实为观测截断假象:门户本就有 DEN-001/Martinez（denials-worklist-row-DEN-001 存在,共 40 行）。已用 gold 路径证明该 GUI 任务有可达 ground truth:navigate /emr/denied/DEN-001→点 remittance tab→选 disposition 'Route to Clinical Appeals'→填 triage note→submit,经真实 GuiEnvReal+真门户+真 scorer → success=True,4 个确定性 cp(viewedDenialDetails/viewedRemittanceImage/selectedDisposition/documentedAppealInEpic)全 PASS(Context/Lifecycle/Observability=1.0;llm_judge/policy 因无后端 skip→status=partial)。对齐审计:门户 50 个 DEN,57 个 HAB 任务引用 DEN id,0 缺失 → denial 类任务全对齐。**结论:三条 substrate 真实 agent 端到端全通,2B 太弱是共同瓶颈,应上 4B/7B。**
+runner 已加健壮性(工具错误→observation 不崩溃)——纯文本 brain,看到问题后用 Qwen3-VL function-calling 自行决定调哪个工具(ImageDescription/RegionAttribute/OCR/Search/Calculator),工具真实执行后综合作答 → 产出**真实 acc + ToolAcc/ArgAcc**。同思路复用到 GUI(读 axtree→发 DOM 动作)与 PB(语义 FHIR 工具)。**全本地 Qwen3-VL,不用 API key。**
+> 注:replay agent 的 cp_outcome 通过 = 回放 gold 答案,**非模型真实正确性**;真实 acc 必须由真实 agent 自答产生。已实测(真实 agent,MCTA-0,2B):自主调 ImageDescription/RegionAttribute/Search,但误读为"胰腺病灶/无血栓" → cp_outcome failed(real acc=0)、ToolAcc passed。2B 偏弱+循环 → 应上 4B/7B。
+> **MedCTA 失败画像 + B 协议修复(2026-06-18,MCTA-0..9,真实 2B)**:确定性多标签分类把失败分为「可工程修」vs「模型能力」。B 修复(qwen_agent.py:花括号配平解析器替脆正则 + 感知工具剥 `image` 参数 + tool_sandbox 提示词「勿传 image/一次一 action/多步 RegionAttribute grounding」)→ **协议噪声定向清零:tool_argument_error 4→0、final_answer_format_error 1→0**。残余为纯模型能力:image_misread 6→8(MCTA-0 由「解析截断空答」正确重归类为「真感知后读错」)、underuse_vs_ref 8→9、loop 1(MCTA-7)、proxy 命中 2→1。tool_selection_error / search_misuse 始终 0。**结论:协议层已干净,瓶颈=感知+grounding 纪律 → 转 option A(4B/7B)。** 产物:medcta_profile.py(可复用)、medcta_profile.json(后)、medcta_profile.preB.json(前)、qwen_agent.py.bak_preB。
+> **评审复修(2026-06-18,4 文件 + Δ 重跑 job 9887269)**:B 修复后评审实测发现 1 回归+2 旧未修,全收。**新-1/新-2(解析器回归)**:`<answer>{...JSON...}</answer>` 被误当 tool_call 吞答案——改为仅当出现 `<tool_call>` 标签且 name 非空才走工具,否则走 answer(6 用例实测)。**#1(GUI 默认崩)**:`make_env` 默认改 `GuiEnvMock`(login 节点无可启动 chromium),真实门户改显式 `MH_GUI_MODE=real`(HAB sbatch 已设)。**#3(RegionAttribute 假接地)**:bbox/attribute 分开传 + 数值 bbox **真裁剪 PIL 图**再喂 VLM(像素级接地),自由文本区域退化为 focus 并注明未裁剪。**重跑验证无回归**:final_answer_format_error 仍 0/10、tool_selection 0/10;#3 生效证据=MCTA-5 从单步答变为切上/下半真区域接地(rep 2→4、10 次调用),但 2B 循环+占位符 attribute→loop 1→2、tool_argument_error 1/10(均为模型能力,非 harness bug)→ 印证 option A。待办(评审#2/5 低):ArgAcc 全等过脆、dtype/torch_dtype。
 > 目标:让 medication_safety governance policy 从"有数据+已并入"走到"端到端可判分"。
 > ⚠️ 运维教训:本节点 `pkill -f` 不可靠 → 必须按 PID 杀(run_fhir.sh 已修);**严禁热复制 H2**(server 运行时 cp 会致 DB closed),重置用 `augmentation/restore_pristine_h2.sh`。
 
@@ -46,9 +58,9 @@
 | 项 | 解锁 | 需要 |
 |---|---|---|
 | ~~增强 #2~~ ✅ 已完成(全量 26 任务,104 governance cp 已并入 unified,注入+审计通过)| Governance(临床安全/禁忌药)| 完成 |
-| **B 线**:PhysicianBench 接 `FHIR_BASE_URL` + 参考 agent 跑通 native_pytest | 端到端闭环(任务→agent→checkpoint→判分)| **模型 API key** + FHIR 安全重置(停→还原 pristine→启)|
+| **B 线**:三 bench 接真实 agent 跑通(PB native_pytest / GUI / MedCTA)| 端到端闭环 + 真实 acc | **真实 agent(可用本地 Qwen3-VL,无需 API)** + FHIR 安全重置 |
 | 增强 #3(可选):从时间戳重建 Encounter | Lifecycle(就诊级流程)| 无 |
-| MedCTA 工具后端 + frozen GoogleSearch corpus + judge | MedCTA 端到端 | 模型/VLM 或 API |
+| ~~MedCTA 工具后端 + frozen GoogleSearch~~ ✅ **v1 真实后端**(本地 Qwen3-VL,无 key)| MedCTA 端到端 | 余:真实 tool-calling agent |
 | 各 bench `tasks_unified` 接入统一 harness 运行器 | 全量跑分 | harness runner(待建)|
 | policy 临床/行政专家复核(`review_status: pending`→reviewed)| Governance 可信度 | 医生/行政专家 |
 
@@ -81,3 +93,16 @@ cd PhysicianBench && python3 lab_ref.py
 - Governance=统一 policy overlay(可由 native/converted/augmented/synthetic instantiate)
 - native_pytest 区分 agent/verifier/environment 失败
 - agent_model ≠ tool_backend ≠ judge_model(分开记录)
+
+
+## 设计不变量(口径)
+
+> 评审校准后的精确表述,后续描述以此为准。
+
+- **角色分离(脑/手/裁判)**:`Agent` 只输出 action intent（act→tool_call|final）。真实工具执行属 **tool-backend/环境层**(FHIR HTTP · Playwright DOM · `tools_medcta.py` · `vlm_backend.py`)。provenance 必分记:`agent_model`(脑) · `tool_backend_model`(手内部模型,如图像工具的 VLM) · `judge_model`。**同为 Qwen3-VL 也要按角色分开**,否则会被误读为「agent 直接看图」。
+- **两类差异、两处收敛**:执行差异 → `EnvironmentAdapter`;评价差异 → `checkpoint.method` 的 scorer dispatch(native_pytest/jmespath/llm_judge/policy)。runner 主循环对两者无感知。
+- **qualification 规则**:降级只看 mock_env / replay_tool_backend / outcome_proxy / uses_hidden_reference / scorer_validation_only / proxy_scored_checkpoints,**不按 substrate**。真实 GUI / 真实 ToolSandbox 不天然降级。
+- **gold/replay success 的边界**:只算 `scorer_validation_success`(env 接线 OK + scorer 通路 OK + reference 可复现),标 `uses_hidden_reference / scorer_validation_only`,**不进真实 agent baseline aggregate**。
+- **隐藏状态边界(GUI)**:`full_state`(`localStorage.portals_state.emr`)是 **scorer-only hidden state**,仅进 scorer ctx;agent 只能看页面文本 + `data-mh-ref` 可交互元素列表。`data-mh-ref` 是观测层临时定位辅助,不改业务状态,每步重生成 ref map 防 stale。
+- **MedCTA acc 口径**:真实 agent 轨迹 + ToolAcc/ArgAcc(真) + **proxy outcome**;接真实 Gacc judge/人工评审前不称正式 acc/Gacc。
+- **benchmark vs harness**:当前 = evaluation harness / benchmark runner(含 policy overlay);下一步 = active runtime intervention harness,用同一 runner 做 with/without A/B Δ。

@@ -111,12 +111,35 @@ class ReplayAgent(AgentBase):
         self._i += 1
         return a
 
+class ScriptedAgent(AgentBase):
+    """GOLD-PATH validation agent: replays a fixed action list from env MH_SCRIPT (JSON list of
+    {"tool":..., "args":...}; appends a final). Proves a task has a reachable ground truth and the
+    scorer returns success for a correct trajectory. NOT a real agent."""
+    name = "scripted"
+    def __init__(self, task):
+        import json, os
+        self.steps = json.loads(os.environ.get("MH_SCRIPT", "[]"))
+        for st in self.steps:
+            st.setdefault("type", "tool_call")
+        if not self.steps or self.steps[-1].get("type") != "final":
+            self.steps.append({"type": "final", "answer": "scripted gold path complete"})
+        self._i = 0
+    def act(self, state):
+        a = self.steps[self._i] if self._i < len(self.steps) else {"type": "final", "answer": "done"}
+        self._i += 1
+        return a
+
 def make_agent(name, task):
     et = (task.get("environment") or {}).get("type")
+    if name == "scripted":
+        return ScriptedAgent(task)
+    if name == "qwen":
+        from qwen_agent import QwenToolAgent
+        return QwenToolAgent(task)
     if name == "stub" and et == "gui":
         return StubGuiAgent(task)
     if name == "stub" and et == "tool_sandbox":
         return ReplayAgent(task)   # MedCTA stub == gold replay (no VLM/key)
     return AGENT_REGISTRY[name](task)
 
-AGENT_REGISTRY = {"stub": StubAgent, "replay": ReplayAgent}
+AGENT_REGISTRY = {"stub": StubAgent, "replay": ReplayAgent, "scripted": ScriptedAgent}
