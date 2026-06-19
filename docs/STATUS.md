@@ -17,6 +17,10 @@
 | 机器可读 schema(6)| `spec/{task,checkpoint,tool,trajectory,governance,result}.schema.json` |
 | 任务清单/版本/校验和 | `TASK_MANIFEST.json`(根)|
 | 各 bench 处理 | `benchmark_dataprocess/<bench>/README.md` |
+| 指标体系设计 + 指标代码 | `benchmark_metric/README.md` |
+| Action-level 安全规范(正式)| `benchmark_metric/SAFETY_SPEC_v1.md` |
+| Action-level 安全实现 | `benchmark_metric/{risk_annotator,fhir_scope,safety_metrics}.py` + `test_safety.py`(14 单测)|
+| llm_judge 后端(本地 Qwen 判官)| `runner/judge_backend.py`(MH_JUDGE=qwen 开启)|
 
 ## 1. 进度看板
 

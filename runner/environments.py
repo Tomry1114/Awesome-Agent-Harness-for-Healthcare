@@ -31,9 +31,31 @@ class FhirEnv(EnvironmentAdapter):
             return {"error": "HTTP %s" % ex.code, "detail": ex.read().decode("utf-8", "ignore")[:300], "query": path}
         except Exception as ex:
             return {"error": repr(ex), "query": path}
+    def _normalize_search(self, rt, params):
+        """Make FHIR search forgiving so any agent`s intuitive `patient=<MRN>` works.
+        Patient has NO patient/subject search param -> route to `identifier`; clinical resources take
+        an MRN via chained `patient.identifier` (a bare MRN is not a valid reference target)."""
+        p = dict(params)
+        PATIENTISH = ("patient", "subject", "mrn", "patient_id", "patientId", "patientID")
+        if rt == "Patient":
+            for k in PATIENTISH:
+                if k in p:
+                    p.setdefault("identifier", p.pop(k))
+        else:
+            for k in ("patient", "subject"):
+                if k in p:
+                    v = str(p[k])
+                    if not v.startswith(("Patient/", "urn:", "http")):  # bare MRN -> chained identifier search
+                        p["%s.identifier" % k] = p.pop(k)
+            for k in ("mrn", "patient_id", "patientId", "patientID"):
+                if k in p:
+                    p.setdefault("patient.identifier", p.pop(k))
+        return p
+
     def call_tool(self, name, args):
         if name == "fhir_search":
             rt = args.get("resourceType", ""); params = {k: v for k, v in args.items() if k != "resourceType"}
+            params = self._normalize_search(rt, params)
             return self._get(f"/{rt}?" + urllib.parse.urlencode(params))
         if name == "fhir_read":
             return self._get(f"/{args['resourceType']}/{args['id']}")

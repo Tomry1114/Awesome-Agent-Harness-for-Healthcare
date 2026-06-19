@@ -52,3 +52,6 @@
 # Per-run agent + profiling outputs (regenerable by the runner / profiler)
 runner/agent_*.json
 runner/medcta_profile*.json
+
+# Generated metric run dirs (bundles + reports, regenerable)
+/results_v0*/

@@ -52,8 +52,16 @@ runner/                 # unified harness: load task → env adapter → agent l
   tools_medcta.py       #   MedCTA tool backend: ImageDescription / RegionAttributeDescription / OCR / Calculator / GoogleSearch(frozen)
   scoring.py            #   checkpoint dispatch → weighted 7-module aggregation → result
   native_pytest.py      #   runs PhysicianBench upstream pytest checkpoints
+  judge_backend.py      #   local Qwen LLM judge for llm_judge checkpoints (MH_JUDGE=qwen) — the JUDGE role
   medcta_profile.py     #   small-batch failure-mode profiler (multi-label classifier over a real-agent run)
   run_*.sbatch          #   Slurm launchers (debug partition, gpu:1) for each substrate + the profiler
+benchmark_metric/       # METRICS layer: aggregates bundles -> Safety / Efficiency / Integrity-Meta panels
+  SAFETY_SPEC_v1.md     #   normative action-level safety spec (code implements this; status enums + evidence)
+  risk_annotator.py     #   post-hoc per-action risk block (high-risk action + prechecks + scope + unsafe)
+  fhir_scope.py         #   FHIR-aware patient-scope extraction (identity-type aware; regex is fallback only)
+  safety_metrics.py     #   unsafe_action_rate / required_check_completion / patient_scope_correctness (by status)
+  report.py             #   v0 report: per-benchmark Safety/Efficiency/Meta matrix (no cross-bench averaging)
+  test_safety.py        #   19 unit assertions over the hardened safety boundaries
 spec/                   # 6 frozen JSON schemas: task / checkpoint / tool / trajectory / governance / result
 benchmark_dataprocess/  # per-benchmark converters, augmentations, validators, and unified outputs
   <Bench>/tasks_unified.jsonl   # the converted benchmark assets
@@ -68,6 +76,11 @@ TASK_MANIFEST.json      # 342 tasks + pinned upstream revisions + checksums
 - **proxy verifier** (e.g. MedCTA offline-whitelist outcome) → `score_eligible=false`,
   reported only in `proxy_dimension_scores` / `proxy_evaluated_checkpoints`, **never** in formal score
 - **skipped** (missing judge/verifier backend) → excluded from both
+- **judge tiers** (do NOT conflate): `offline_whitelist_proxy` is NEVER formal success; a local
+  `qwen3vl_judge` (enable with `MH_JUDGE=qwen`) is score-eligible but recorded as
+  `judge_tier=local_model_judge` and, when the judge model also serves as agent brain / image tool,
+  `judge_independence=shared_model_with_agent_or_tool` + `qualification:[non_independent_judge]` — it is
+  NOT an expert/independent judge. Unparseable verdict → `verifier_error`, never a silent pass.
 - **`evaluation_status`** — 6 states: `complete` / `partial` / `proxy_partial` / `proxy_only` /
   `not_evaluated` / `error`, so a run is never silently counted as fully scored.
 - **`_qualification`** — a result is downgraded ONLY for `mock_env` / `replay_tool_backend` /
@@ -98,7 +111,35 @@ sbatch runner/run_medcta_profile.sbatch
 
 Key env vars: `MH_VLM_PATH` (model dir, default `~/hf_models/Qwen3-VL-2B-Instruct`),
 `MH_GUI_MODE` (`real`|`mock`, default mock — login nodes lack a launchable browser),
-`MH_TOOL_MODE` (`real`|`replay`), `MH_PORTAL_BASE` (portal URL for GUI).
+`MH_TOOL_MODE` (`real`|`replay`), `MH_PORTAL_BASE` (portal URL for GUI),
+`MH_JUDGE` (`qwen` to enable the local LLM judge for llm_judge checkpoints).
+
+## Metrics & action-level safety (`benchmark_metric/`)
+
+Two reporting panels over the 7 dimensions, plus an Integrity/Meta group that scores the *harness
+itself* (not the agent). Reported per benchmark — coverage is ragged, so a single dimension number
+is never averaged across benchmarks.
+
+- **Efficiency** — task/subtask success · functional_tool_use · tool_call_success · argument_validity ·
+  workflow_completion · redundant_action_rate.
+- **Safety (action-level, canonical)** — risk lives on a concrete action, not a checkpoint. A post-hoc
+  `risk_annotator` reads `task.policy` (`required_tool_before_action` / `allowed_patient_scope` /
+  `minimum_necessary_evidence` / `forbidden_actions`) + the trajectory and attaches a `risk` block per
+  high-risk action (create medication, submit appeal, assert a final diagnosis). Every judgment uses a
+  status enum (`pass`/`fail`/`unknown`/`skipped`/`error`) with evidence; `unsafe` stays `unknown`
+  (never a false negative) until a real judge/verifier is available. Metrics: `unsafe_action_rate`
+  (+coverage) · `required_check_completion` · `patient_scope_correctness`.
+- **Integrity/Meta** — `verifier_coverage` (% strict-executable checkpoints) · `qualification_integrity`.
+
+Checkpoint `llm_judge` and action-level `unsafe_check` are kept separate (different evidence contracts):
+enabling the judge promotes MedCTA outcome proxy→formal and scores grounding/observability checkpoints,
+but does NOT auto-flip the action-level `unsafe_check`.
+
+```bash
+python runner/run_batch.py --bench PhysicianBench --agent qwen --limit 10 --fhir-base $FHIR --out results/
+MH_JUDGE=qwen python runner/run_batch.py --bench MedCTA --agent qwen --limit 10 --out results/   # judged
+python benchmark_metric/report.py results/   # Safety / Efficiency / Meta per benchmark
+```
 
 ## Not in this repo (re-fetch separately)
 
@@ -109,8 +150,10 @@ from the upstream revisions pinned in `TASK_MANIFEST.json` and the deployment no
 
 ## Status
 
-See `docs/STATUS.md` (progress) and `docs/CHANGELOG.md` (per-round changes). The real
-Qwen3-VL agent now runs **end-to-end across all three substrates**; the current bottleneck is
-model capacity (the 2B under-uses tools and misreads images) rather than the harness. Promoting
-MedCTA's outcome from *proxy* to *formal* score needs a real outcome (Gacc) judge; that is the
-remaining step for formal benchmark numbers.
+See `docs/STATUS.md` (progress) and `docs/CHANGELOG.md` (per-round changes). All five scorer
+methods are wired (deterministic / native_pytest / jmespath / policy / **llm_judge**), the metric
+pipeline runs end-to-end (bundles → Safety/Efficiency/Meta report), and action-level safety is live.
+The bottleneck is now the **2B model in two roles** — as the agent (under-uses tools; can't operate
+the GUI) and as a non-independent judge (boosts coverage but low-trust verdicts) — not the harness.
+Trustworthy numbers need a stronger/independent judge and a stronger agent (4B/7B); the wiring that
+turns those on is already in place (`MH_JUDGE`, `MH_VLM_PATH`).

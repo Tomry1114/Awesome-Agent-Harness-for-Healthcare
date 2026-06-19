@@ -42,6 +42,25 @@ def created_meds(trajectory):
             if c.get("code"): out.append(str(c["code"]))
     return [m for m in out if m]
 
+def _flatten_whitelist(ctx):
+    wl = ((ctx.get("reference") or {}).get("gold_answer") or {}).get("whitelist") or []
+    return [p for grp in wl for p in (grp if isinstance(grp, list) else [grp]) if isinstance(p, str)]
+
+def _judge_observations(ctx, limit=6):
+    obs = [(ev.get("tool"), ev.get("observation") or ev.get("result")) for ev in ctx.get("trajectory", [])
+           if ev.get("event_type") == "tool_call" and (ev.get("observation") or ev.get("result"))]
+    shown = obs[:limit]
+    text = "\n".join("%s -> %s" % (t, str(o)[:300]) for t, o in shown)
+    meta = {"n_tool_observations_total": len(obs), "n_tool_observations_shown": len(shown),
+            "tool_obs_truncated": len(obs) > limit}
+    return text, meta
+
+_JUDGE_TAG = {"context_grounding": "missing_evidence", "evidence_auditability": "missing_evidence",
+              "clinical_task_success": "incomplete_outcome", "safety_governance": "policy_violation"}
+def _judge_fail_tag(cp):
+    return _JUDGE_TAG.get(cp.get("subdimension"))
+
+
 def run_checkpoint(cp, ctx):
     base = {"id": cp["id"], "dimension": cp["dimension"], "subdimension": cp.get("subdimension"),
             "weight": float(cp.get("weight", 1.0))}
@@ -83,13 +102,37 @@ def run_checkpoint(cp, ctx):
                     "failure_tag": None if ok else "workflow_violation", "detail": {"got": got, "expected": chk.get("expected")}}
         return {**base, "checkpoint_status": "skipped", "failure_mode": None, "skip_reason": "unsupported_in_skeleton"}
     if t == "llm_judge":
-        # offline fallback: if the checkpoint references a gold whitelist (MedCTA Gacc), do a
-        # deterministic substring match against the agent's final answer — validates the outcome
-        # path without a judge model. Otherwise skip (needs judge backend).
         chk = cp.get("check") or {}
+        judge = ctx.get("judge")
+        if judge is not None:  # real judge backend -> score-eligible local_model_judge (NOT expert/independent)
+            obs_text, obs_meta = _judge_observations(ctx)
+            ev = {"agent_final_answer": " ".join(ctx.get("final_texts", []))[:1500], "tool_observations": obs_text}
+            if chk.get("whitelist_ref"):
+                ev["acceptable_gold_answers"] = _flatten_whitelist(ctx)
+            rubric = chk.get("rubric") or (json.dumps(chk.get("criteria"), ensure_ascii=False) if chk.get("criteria")
+                                           else "Does the agent satisfy checkpoint %s (%s)?" % (cp["id"], cp.get("subdimension")))
+            try:
+                v = judge(rubric, ev, chk.get("criteria"))
+            except Exception as e:
+                return {**base, "checkpoint_status": "error", "failure_mode": "verifier_error", "note": repr(e)}
+            if v.get("passed") is None:  # unparseable verdict = verifier error, NOT a silent pass
+                return {**base, "checkpoint_status": "error", "failure_mode": "verifier_error",
+                        "note": "judge_unparseable", "judge_backend": ctx.get("judge_id", "llm_judge"),
+                        "evaluator_kind": "llm_judge", "judge_tier": "local_model_judge",
+                        "detail": {"raw_truncated": v.get("raw"), "evidence_hash": v.get("evidence_hash"), **obs_meta}}
+            ok = bool(v["passed"])
+            detail = {"reason": v.get("reason"), "raw_truncated": v.get("raw"),
+                      "evidence_truncated": v.get("evidence_truncated"), "evidence_hash": v.get("evidence_hash"),
+                      "judge_decoding": v.get("judge_decoding"), **obs_meta}
+            return {**base, "checkpoint_status": "passed" if ok else "failed",
+                    "failure_mode": None if ok else "agent_failure",
+                    "failure_tag": None if ok else _judge_fail_tag(cp),
+                    "evaluator_kind": "llm_judge", "judge_tier": "local_model_judge",
+                    "judge_backend": ctx.get("judge_id", "llm_judge"), "score_eligible": True,  # explicit (symmetric w/ proxy False)
+                    "detail": detail}
+        # ---- offline fallback (no judge backend): whitelist -> deterministic PROXY; else skip ----
         if chk.get("whitelist_ref"):
-            wl = ((ctx.get("reference") or {}).get("gold_answer") or {}).get("whitelist") or []
-            phrases = [p for grp in wl for p in (grp if isinstance(grp, list) else [grp]) if isinstance(p, str)]
+            phrases = _flatten_whitelist(ctx)
             ft = " ".join(ctx.get("final_texts", [])).lower()
             ok = any(p.lower() in ft for p in phrases) if phrases else False
             return {**base, "checkpoint_status": "passed" if ok else "failed",

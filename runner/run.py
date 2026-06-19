@@ -88,24 +88,38 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
         action = agent.act({"goal": task.get("goal"), "context": task.get("context"),
                             "tools": env.available_tools(), "last_observation": last_obs, "last_result": last_res})
         if not isinstance(action, dict) or "type" not in action:  # #7 agent contract violation
-            trajectory.append({"step": step, "event_type": "agent_error", "error": "invalid_action", "raw": str(action)[:200]})
+            trajectory.append({"step": step, "event_type": "agent_error", "error": "invalid_action", "raw": str(action)[:200], "status": "error"})
             finished = True; break
         if action["type"] == "final":
-            trajectory.append({"step": step, "event_type": "final_answer", "thought": action.get("answer", "")})
+            trajectory.append({"step": step, "event_type": "final_answer", "thought": action.get("answer", ""), "status": "ok"})
             finished = True; break
         if action["type"] != "tool_call" or not action.get("tool"):
-            trajectory.append({"step": step, "event_type": "agent_error", "error": "bad_action_type", "raw": str(action)[:200]})
+            trajectory.append({"step": step, "event_type": "agent_error", "error": "bad_action_type", "raw": str(action)[:200], "status": "error"})
             finished = True; break
         try:
             res = env.call_tool(action["tool"], action.get("args", {}))
         except Exception as _e:
             res = {"error": repr(_e)}
         obs = json.dumps(res)[:200]
-        trajectory.append({"step": step, "event_type": "tool_call", "tool": action["tool"],
-                           "args": action.get("args", {}), "result": res, "observation": obs, "ts": str(step)})
+        _err = res.get("error") if isinstance(res, dict) else None
+        if not _err and isinstance(res, dict):  # F2: tool_sandbox tools report errors as a bracketed string in "output"
+            _out = res.get("output")
+            if isinstance(_out, str) and _out.lstrip().startswith("["):
+                _marker = (_out[_out.find("[") + 1:_out.find("]")] if "]" in _out else _out[:40]).lower()
+                if any(w in _marker for w in ("error", "unknown", "invalid", "fail")):
+                    _err = _out[:120]
+        _ev = {"step": step, "event_type": "tool_call", "tool": action["tool"],
+               "args": action.get("args", {}), "result": res, "observation": obs, "ts": str(step),
+               "status": "error" if _err else "ok"}  # F2: explicit per-action status (no obs-substring heuristic downstream)
+        if _err:
+            _es = str(_err)
+            _ev["error_type"] = next(("http_" + c for c in ("400", "401", "403", "404", "409", "422", "500", "502", "503")
+                                      if ("HTTP " + c) in _es),
+                                     "exception" if any(k in _es for k in ("Error", "Exception", "Traceback")) else "tool_error")
+        trajectory.append(_ev)
         last_obs = obs; last_res = res
     if not finished:  # #8 ran out of steps without a final answer
-        trajectory.append({"step": max_steps, "event_type": "agent_error", "error": "max_steps_exceeded"})
+        trajectory.append({"step": max_steps, "event_type": "agent_error", "error": "max_steps_exceeded", "status": "error"})
     env.teardown()
 
     # upstream-format trajectory.log for native_pytest
@@ -135,11 +149,17 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
     # #5 lazy: only load PB drug-safety verifiers if a checkpoint needs them
     needs_pb = any((cp.get("check") or {}).get("verifier", "").startswith(("augmentation/drug_safety_check", "drug_safety_check"))
                    for cp in task.get("checkpoints", []))
+    _judge_on = os.environ.get("MH_JUDGE", "").lower() in ("1", "qwen", "local", "on", "true")
+    _judge_id = ("qwen3vl_judge:%s" % os.path.basename(os.environ.get("MH_VLM_PATH", "Qwen3-VL-2B-Instruct"))) if _judge_on else None
+    _judge_fn = None
+    if _judge_on:
+        import judge_backend; _judge_fn = judge_backend.judge
     ctx = {"base": getattr(env, "base", None), "mrn": (task.get("context") or {}).get("patient_ref"),
            "trajectory": trajectory, "created_meds": scoring.created_meds(trajectory),
            "final_texts": final_texts, "note_texts": note_texts, "full_state": getattr(env, "full_state", None),
            "reference": task.get("reference", {}), "agent_tool_calls": agent_tool_calls, "ref_tool_calls": ref_tool_calls,
-           "verifiers": scoring._load_verifiers() if needs_pb else None, "pb_repo": pb_repo, "job_dir": job_dir}
+           "verifiers": scoring._load_verifiers() if needs_pb else None, "pb_repo": pb_repo, "job_dir": job_dir,
+           "judge": _judge_fn, "judge_id": _judge_id}
     results = [scoring.run_checkpoint(cp, ctx) for cp in task.get("checkpoints", [])]
     env_type = (task.get("environment") or {}).get("type")
     env_cls = type(env).__name__
@@ -167,9 +187,22 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
     else:
         agent_model = "stub:%s" % aname; uses_hidden_ref = False; validation_only = True
     # no LLM judge wired; MedCTA outcome uses an offline whitelist proxy until a real Gacc judge lands
-    judge_model = "offline_whitelist_proxy" if env_type == "tool_sandbox" else "none"
+    if _judge_on:
+        judge_model = _judge_id
+    elif env_type == "tool_sandbox":
+        judge_model = "offline_whitelist_proxy"
+    else:
+        judge_model = "none"
+    judge_independent = None
+    if _judge_on:
+        judge_independent = (vlm not in (agent_model or "")) and (vlm != (tool_backend_model or ""))
     provenance = {"agent_model": agent_model, "tool_backend": tool_backend,
                   "tool_backend_model": tool_backend_model, "judge_model": judge_model,
+                  "judge_tier": ("local_model_judge" if _judge_on else
+                                 ("offline_whitelist_proxy" if env_type == "tool_sandbox" else "none")),
+                  "judge_independence": ("n/a" if not _judge_on else
+                                         ("independent" if judge_independent else "shared_model_with_agent_or_tool")),
+                  "judge_decoding": ({"temperature": 0, "do_sample": False, "max_new_tokens": 220} if _judge_on else None),
                   "uses_hidden_reference": uses_hidden_ref, "scorer_validation_only": validation_only}
     result = scoring.build_result(task, trajectory, results, provenance)
     result["_schema"] = validate_result(result)
@@ -183,10 +216,11 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
     if env_type == "gui" and env_cls != "GuiEnvReal": quals.append("mock_env")
     if env_type == "tool_sandbox" and not real_ts: quals.append("replay_tool_backend")
     if judge_model.startswith("offline"): quals.append("outcome_proxy")
+    if _judge_on and judge_independent is False: quals.append("non_independent_judge")
     if any(c.get("score_eligible") is False for c in result.get("checkpoints", [])): quals.append("proxy_scored_checkpoints")
     quals = sorted(set(quals))
+    result["qualification"] = quals  # F1: non-underscore -> survives --out / run_batch result.json (meta.qualification_integrity)
     if quals:
-        result["_qualification"] = quals
         result["_warning"] = "qualified: " + ", ".join(quals)
     # light per-task cleanup of agent-created (stub-tagged) resources to avoid FHIR pollution
     if cleanup and env_type == "fhir" and ctx.get("base"):
