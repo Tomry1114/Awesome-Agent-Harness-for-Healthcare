@@ -1,3 +1,102 @@
+## 2026-06-22 (续) — FHIR prompt 防 Patient 死循环 + provenance judges 防 env 串台虚标
+
+- **改动1(评审#1)**:`SYS_BY_ENV["fhir"]` 补硬约束——"病人已由 MRN 标识,**不要搜 Patient 资源**(浪费步数);patient= 只用于 Observation/MedicationRequest/Condition/AllergyIntolerance/DiagnosticReport/DocumentReference 等临床资源"。治上轮 qwen 死循环发 `Patient?patient=` 空耗步数 → 兜底只写出空交付物。gpt5 能自纠、qwen 受此累。
+- **改动2(评审#2,防越界 over-claim)**:run.py `provenance.judges` 从"按 env 标志(_gacc_on/_mm_on/_judge_on)设"改为"**从实际跑出的每个 checkpoint 的 evaluator_kind 派生**"(`_judge_for(subdim)` 扫 results 取 evaluator_kind + judge_backend)。PB 的 outcome 是 native_pytest(无 evaluator_kind)→ 即便误开 MH_GACC_MODEL 也不会虚标"答案由 deepseek 判";judge_decoding 随真实 outcome tier 走。
+- **文件**:`runner/qwen_agent.py`、`runner/run.py`。
+- **验证**:① PB stub + 误开 MH_GACC_MODEL → `judge_model=none, judges={}`(不虚标 ✅);② MedCTA replay + gacc+mm → `judges={outcome:deepseek-v3.2/gacc_semantic/independent, grounding:gemini-2.5-flash/multimodal_judge/independent}`(多判官仍正确 ✅)。
+
+## 2026-06-22 — PB 内容判官接入 xbai 网关(层2 修复,task_success 复活)
+
+- **改动**:层2 修复——上游 PB 内容检查点(clinical_task_success / context_grounding / evidence_auditability)用 `eval_helpers.llm_judge`(chat.completions),原需 OPENAI/OpenROUTER + 默认 GPT-5;现接到 xbai 网关:① medicalharness env 装 `openai 2.43.0`;② run.py 自动接线:设了 `LLM_JUDGE_MODEL` 且未设 OPENAI_API_KEY → 从 ~/.xbai_key 自动补 `OPENAI_API_KEY` + `OPENAI_BASE_URL=https://us-api.xbai.top/v1`(native_pytest 的 `env={**os.environ}` 透传给 pytest 子进程);③ 判官模型用 `gemini-2.5-flash`(gpt-5/5.4/5.4-mini 在本 key 分组全 503)。
+- **文件**:`runner/run.py`;medicalharness env(openai)。
+- **验证(deepseek agent + gemini judge,PB-aberrant_drug_screen)**:内容检查点不再 status=None,产出**真实判分 passed=2/8**(2 个 clinical_task_success 过、其余真判负)。**task_success/subtask_success 复活为有意义指标**(0.25),不再被 harness 卡 0。
+- **口径/passport**:PB 内容判官 = gemini-2.5-flash(≠ 上游 gpt-5),登记已知偏离;判官独立于 deepseek agent。
+- **PB task_success=0 两层全解**:层1(交付物 truncation,续7)+ 层2(内容判官接入,本条)。剩余失败为真信号(模型临床内容质量)。
+
+## 2026-06-21 (续7) — PB task_success=0 真因诊断 + 修复(交付物 truncation bug)
+
+- **诊断(评审驱动)**:PB task_success 全 0 是**两层 harness 问题**,非模型智力:
+  - **层1(本轮修)交付物 truncation bug**:任务要求把方案写到 `/workspace/output/<file>.txt`。LLM agent **确实调 write_file 写长临床计划**,但内容超 max_tokens → 输出截断(实测 3231 字符、`<tool_call>` 无闭合、花括号 2:0、断在半句)→ `_parse` 找不到平衡 JSON → **静默回退当 final → write_file 丢失**。这才是"模型只聊天不写文件"假象的根因(隔离探针证明 deepseek 收到 nudge 会完整写出)。
+  - **层2(未修)内容判官没接**:PB 内容检查点(clinical_task_success)用上游 `eval_helpers.llm_judge`,需 `OPENAI_API_KEY`/`OPENROUTER_API_KEY` + 默认 GPT-5;我们用 xbai 网关、没设 → 判官跑不起来 → status=None → 全挂。
+- **改动(层1)**:① openai_agent `_chat` token floor 800→2048;qwen_agent act() 两处调用 400→1500。② `_parse`:`<tool_call>` 在但 JSON 残缺 → 返回 `tool_call_truncated`(不再误判 final);run.py 据此记 agent_error + 回灌"被截断请重发"。③ run.py 加**强制交付物轮**:循环后若 goal 要求的交付物仍缺,强制再做一次 write_file(覆盖"早 final"与"耗尽步数"两种),并对"写了单个但文件名错"透明重命名(`deliverable_renamed`)。④ write_file 路径映射本就正确(`/workspace/output/X`→剥前缀→env.workspace/X)。
+- **文件**:`runner/openai_agent.py`、`runner/qwen_agent.py`、`runner/run.py`。
+- **验证(deepseek,3 PB 任务)**:write_file 现稳定完整写出(含强制轮);`uds_evaluation_plan.txt` 实测 **6323 字节完整临床计划**。**层1解决**。task_success 仍 0/8 → 卡层2(内容判官 status=None)。
+- **遗留(层2)**:把上游 PB 内容判官指到 xbai 网关(`OPENAI_BASE_URL=…/v1` + `OPENAI_API_KEY`=xbai + `LLM_JUDGE_MODEL`=网关可用模型),确认 openai 包在 medicalharness env、env 透传进 native_pytest 子进程;会引入判官模型偏离(登记 passport)。
+
+## 2026-06-21 (续6) — provenance/qualification 多判官修正(诚信门:如实记录谁判的)
+
+- **问题(评审指出)**:run.py provenance/qualification 只认本地 qwen 判官(`_judge_on`),不知 gacc/mm 判官存在。典型 MedCTA 跑法(`MH_GACC+MH_MM_JUDGE`、不开 `MH_JUDGE`)被打错标:judge_model 谎报 `offline_whitelist_proxy`(实为 deepseek-v3.2 真判)、judge_tier 错、误盖 `outcome_proxy` 资格章(实为真判官正式分)、provenance 无 deepseek/gemini 模型名(复现性缺失);依据 `judge_model.startswith("offline")` 也因 judge_model 在 tool_sandbox 被硬设成 offline 而失真。注释"no LLM judge wired…until a real Gacc judge lands"过时。
+- **改动**:run.py 重写为**多判官感知**——`provenance.judges = {outcome:{model,tier,independence}, grounding:{...}}`:outcome 来自 gacc(gacc_semantic)| 本地 qwen(local_model_judge)| offline proxy;grounding 来自 mm(multimodal_judge)| 本地 qwen;各判官与 agent_model/tool_backend_model 比独立性。旧单字段(judge_model/tier/independence/decoding)= outcome 判官真实值(向后兼容、不再谎报)。`outcome_proxy` 改为**看实际 checkpoint**(clinical_task_success 的 evaluator_kind=="proxy" 才盖);`non_independent_judge` 改为任一真判官同模型即盖。删过时注释。
+- **文件**:`runner/run.py`、`spec/result.schema.json`(provenance 加 `judges` 字段)。
+- **验证**:GPU-free replay 跑(MH_GACC+MH_MM_JUDGE、不开 MH_JUDGE):judge_model=**deepseek-v3.2**(原谎报 offline)、tier=**gacc_semantic**、independence=**independent**、judges 记全 outcome(deepseek)+grounding(gemini);qualification **无 outcome_proxy**;cp 级 clinical_task_success→gacc_judge/deepseek、context_grounding→multimodal_judge/gemini。
+- **诚信门**:result.json 现在如实记"答案谁判 / grounding 谁判 / 是否独立",不再把真判官谎报成 proxy。
+
+## 2026-06-21 (续5) — 对齐门 passport 建立(prompt/裁判/口径维度)
+
+- **改动**:新建 `ALIGNMENT.md` + `alignment_passport.yaml`(项目根),登记 MedCTA+HAB 的 7 项 claim:aligned 3(gacc method/prompt/granularity 本轮已对齐)、gap 3(medcta-gacc-model deepseek≠gpt-5.4、medcta-agent-prompt、hab-agent-prompt——均为已知接受偏离,影响与原文 leaderboard 可比性)、extra 1(cp_grounding,已 augmented)。
+- **门禁判定**:🚧 未完全通过(有 3 个已登记 gap)→ 不宣称"已和论文完全对齐";阻断项:要与原文并表需切 gpt-5.4 + 用原文 agent prompt。
+- **证据**:全部 paper_ref 已核实文件存在(goal_accuracy.py / vlm_models/*.py / sft/zero_shot_system_prompt_request.json)。
+- **文件**:`ALIGNMENT.md`、`alignment_passport.yaml`(新)。
+
+## 2026-06-21 (续4) — MedCTA Gacc 对齐:0–1 连续语义分(复刻 goal_accuracy.py)
+
+- **纠错(上轮我错)**:之前说"MedCTA 原文白名单字符串匹配、不用 LLM"——错。`benchmark/MedCTA/goal_accuracy.py`:`EVAL_MODEL="gpt-5.4"`、提示"Assign a score from 0.0 to 1.0…partial credit…synonyms count"、`json_schema {score:number}`、`clamp(0,1)`、`safe_mean` 聚合。白名单是**喂 LLM 的 gold 文本**;**cp_outcome 用 LLM judge 方法上忠实原文**(provenance native 站得住)。真偏离:(a) 模型 gpt-5.4→本地 Qwen 2B;(b) 粒度 0–1→二值。
+- **改动**:① 新增 `runner/gacc_judge.py`——**原样复用** goal_accuracy.py 的 SYSTEM/USER prompt,出 0–1 分;模型可配(`MH_GACC_MODEL`,默认 deepseek-v3.2=便宜强模型折中,非 gpt-5.4)。② scoring.py llm_judge 加 Gacc 路由(cp=clinical_task_success + whitelist_ref + ctx.gacc → `score`(0–1) + 阈值 MH_GACC_THRESHOLD(默认0.5)派生 pass/fail,evaluator_kind=gacc_judge/judge_tier=gacc_semantic/score_eligible=True)。③ build_result 持久化 `score`。④ run.py `MH_GACC` 注入 ctx.gacc。⑤ report.py 加 `gacc_mean`(=mean(score))。
+- **文件**:`runner/gacc_judge.py`(新)、`runner/scoring.py`、`runner/run.py`、`benchmark_metric/report.py`。
+- **验证**:① 0–1 冒烟:EXACT→1.0 / PARTIAL→0.85 / SYNONYM→1.0 / WRONG→0.0(合原文 partial-credit/synonym)。② 路由单测:gacc_judge/score=1.0/eligible。③ GPU-free 重判 v0c MedCTA cp_outcome:**Gacc mean=0.360**(连续)vs 旧二值 subtask 0.17——二值把 MCTA-4(0.3)/5(0.6)/7(0.7)部分分抹成 0。
+- **口径/passport**:cp_outcome = native(LLM 语义)+ gacc_semantic(0–1),方法合原文;两处偏离(模型 deepseek-v3.2≠gpt-5.4、阈值二值视图)登记 paper-align passport。
+- **遗留**:全量带 `MH_GACC=1` 重跑得正式 gacc_mean;老 bundle 无 score → gacc_mean n/a。
+
+## 2026-06-21 (续3) — cp_grounding 复刻诚信修复:止血 relabel + 真·多模态 grounding 裁判
+
+- **问题(评审指出)**:MedCTA `cp_grounding`(rubric:"答案是否 grounded 在所提供图像而非编造")标 `provenance: native` 进正式分,但 ① 原版 MedCTA 没这条(原生只有答案 whitelist + ToolAcc/ArgAcc);② 裁判纯文本(本地 Qwen 看不到图),判不了图像 grounding、最多判"答案与工具文本一致"。既非原生、又名不副实。
+- **改动**:
+  - **止血**:`tasks_unified.jsonl` 107 个 MedCTA 任务 cp_grounding `provenance: native → augmented` + 注明 text judge 看不到图。
+  - **新增 `runner/mm_judge_backend.py`**:多模态 grounding 裁判——读 `context.images[].path`(MH_MEDCTA_IMG_ROOT 解析)→ base64 → 喂网关多模态模型(默认 gemini-2.5-flash,便宜)→ 判 `{grounded:true|false}`;防注入、账单 403 快速失败、image_sha 审计。
+  - **scoring.py**:llm_judge 分支顶部加多模态 grounding 路由——cp 为 `context_grounding` 且 ctx 有 mm_judge+图 → 看图裁判,标 `evaluator_kind/judge_tier=multimodal_judge`、`score_eligible=True`(provenance 已 augmented;对 agent 大脑/感知工具独立)。
+  - **run.py**:`MH_MM_JUDGE` 开启时 ctx 注入 `mm_judge` + `medcta_img`(=env.image_path)+ `medcta_question`。
+- **文件**:`runner/mm_judge_backend.py`(新)、`runner/scoring.py`、`runner/run.py`、`benchmark_dataprocess/MedCTA/tasks_unified.jsonl`。
+- **验证**:① 判别冒烟(MCTA-0 同图):真答案"门静脉+肠系膜上静脉血栓"→grounded=True;瞎编"正常胸片"→False。② GPU-free 重判 v0c MedCTA 10 题:grounding **7/10**(0 None);**与旧文本裁判大面积分歧**——MCTA-3/9 旧文本 passed、看图裁判 False(答案脱离图像、文本裁判被骗放行),MCTA-0/1/4/6/7 旧文本误杀、看图实为 grounded。③ scoring 路由单测:瞎编→status=failed、multimodal_judge、score_eligible=True、image_sha 对上。
+- **口径**:cp_grounding 现在 = augmented + multimodal_judge(独立),与 cp_outcome(判对错)**不重叠**(判有没有脱离图像编造)。拒绝了"改成文本一致性"方案(会与 cp_outcome 重叠、且非真 grounding)。
+- **遗留**:全量 MedCTA 带 `MH_MM_JUDGE` 重跑可得正式 grounding 分(会用网关额度,gemini-2.5-flash 便宜);本轮已用 GPU-free 重判验证管线。
+
+## 2026-06-21 (续2) — functional_tool_use 补齐 + 新增 required_tool_completion;v0d PB 诊断纠正(余额耗尽)
+
+- **改动**:① 新增 `benchmark_metric/tool_requirements.py`——从任务 goal+env **派生**工具要求(**harness-derived,非论文原生**;官方 PB 故意开放式、不预设 required tools,见 healthrex.github.io/PhysicianBench):fhir 任务必需检索(fhir_search|fhir_read)、goal 含 `workspace/output/*` 则需 write_file、含 order/prescribe/referral 则需 fhir_create;gui 必需 submit;tool_sandbox 必需感知工具。输出 `sufficient_tools`(任一→functional_tool_use)+ `required_tool_groups`(OR 组全齐→新指标)。② 回填三个 `tasks_unified.jsonl` 的 reference(PB 94/100 需 write_file、67/100 需 fhir_create;HAB/MedCTA 各按 env)。③ report.py 加 `required_tool_completion`,functional_tool_use 改用派生回退(老 bundle 也能算)。
+- **文件**:`benchmark_metric/tool_requirements.py`(新)、`benchmark_metric/report.py`、`benchmark_dataprocess/{PhysicianBench,HealthAdminBench,MedCTA}/tasks_unified.jsonl`、`runner/openai_agent.py`、`runner/run.py`。
+- **踩坑**:tool_requirements 正则首版被 heredoc 多层转义成 `\\w`/`\\b`(raw string 里=字面反斜杠)→ DELIV/ORDER 永不匹配、回填只剩检索组;改单反斜杠后从 .bak_tools 重灌。
+- **结果(指标判别力)**:functional_tool_use(任一)区分力低(≈1,"碰过工具就算");**required_tool_completion(全齐)有牙**——PB:Qwen **0.10** / gpt5 **0.20**(连强模型也只 2/10 走全 检索+写交付+下单);MedCTA 两者 1.00;HAB:Qwen **0.00**(从不 submit)vs gpt5 **0.83**(5/6 submit)。**functional_tool_use 三 bench 全有定义,不再 n/a**(这是官方 PB 开放式设计下,用每题自身 goal 派生 ground truth 的结果,已标注为 harness-derived)。
+- **纠正上一轮 v0d PB 结论**:之前称"task_success=0 真因=答而不写工件"——经查 **v0d PB 7/10 命中 `http_403 用户额度不足`(xbai key 余额跑成负数 $-0.068)**,错误回退 `<answer>API_BRAIN_ERROR>` 被误读成终答;3 个跑干净的任务**全部写了交付物(3/3)**。故 v0d PB 低分主因是 **API 余额耗尽,非模型缺陷**;v0c(24 步、API 干净)才是 PB 可信跑,其真问题是 max_steps 截断(写交付物 1/10)。
+- **硬化**:`openai_agent._chat` 重试 3→5、指数退避;**账单/额度类 403 快速失败 + 打 `BILLING/QUOTA` 标**(退避对欠费无用);`run.py` 对含 API_BRAIN_ERROR 的轨迹打 qualification **`api_backend_error`**,让报表把基础设施失败与 agent 失败分开、不冤枉模型。
+- **遗留**:PB-40 干净重跑需先给 xbai key 充值(当前余额很小);重跑后用 `api_backend_error` 过滤可得无污染数字。
+
+## 2026-06-21 — 第 X 轮:接入 gpt-5.5(OpenAI 兼容 API 大脑)+ 强模型 × harness 首跑(v0c)
+
+- **改动**:新增 OpenAI 兼容 API agent 后端,把"大脑"从本地 Qwen3-VL-2B 换成远端 chat-completions 模型(gpt-5.5,经 xbai 网关);协议/解析器与 Qwen **完全一致**(只换 chat 后端),可同台对比。
+- **文件**:
+  - `runner/openai_agent.py`(新):`OpenAIToolAgent(QwenToolAgent)`,只重写 `_chat`(urllib POST `/v1/chat/completions`);key 从 `~/.xbai_key`(chmod600,**不入 git**)或 `MH_OPENAI_KEY`;base/model 从 `MH_OPENAI_BASE`(默认 https://us-api.xbai.top)/`MH_OPENAI_MODEL`(默认 gpt-5.5);3 次重试 + 失败降级成 `<answer>API_BRAIN_ERROR>`。
+  - `runner/qwen_agent.py`:两处 `get_backend().chat` 抽成可重写 `self._chat`(行为不变),供子类换后端。
+  - `runner/agents.py`:`make_agent` 加 `name in ("gpt5","openai")` 分支。
+  - `runner/run.py`:provenance 加 `aname=="gpt5"` → `agent_model="<model> (api brain)"`,不降级成 stub。
+  - `runner/run_batch.py`:加 `--max-steps`(透传 run_task;原写死 12)。
+- **原因**:上轮复盘=瓶颈是 2B 模型能力(agent+非独立 judge),非 harness;需强模型验证过程指标判别力,并反证 HAB 的 n/a(2B 在 GUI 0 动作)。
+- **踩坑**:① urllib 默认 UA 被 Cloudflare **1010** 拦(curl 能过)→ `_chat` 加 `User-Agent: curl/8.4.0` 头;② GPU 计算节点 gpu3-9 实测能**直连 xbai 网关**(egress=200),故 MedCTA 的 gpt5 大脑 + 本地 Qwen 影像工具可同节点跑。
+- **结果(v0c,results_v0c/;PB-10/MedCTA-10/HAB-6)**:gpt-5.5 全面碾压 2B —
+  - PB:tool_call_success **0.42→0.95**、argument_validity 0.48→0.95、redundant **0.37→0.00**(235 动作);
+  - MedCTA:tool_call_success 0.88→0.97、redundant 0.34→0.00、subtask 0.12→0.17;
+  - **HAB(重点):GUI 动作 0→76、tool_call_success n/a→0.97、argument_validity 1.00、subtask 0.00→0.68、workflow_completion 0.50、patient_scope_correctness 1.00(11/11)** → 实锤上轮 HAB n/a 是**模型不发动作,非 harness bug**。
+  - **task_success 仍全 0**:9/10 PB 以 `max_steps_exceeded` 收尾(gpt5 取证 ~23 动作/任务顶到 24 上限,没步数写交付物)→ 引出 v0d PB-40。
+  - 坑:v0c HAB **未挂 judge**(为免 GPU 跟 PB 并行)→ verifier_coverage 0.90→0.42(效率数字真,coverage 降是配置选择)→ 引出 v0d HAB full-judge。
+  - provenance:`agent_model=gpt-5.5 (api brain)`、qualification=[](不降级);judge 此时对 gpt5 **独立**。
+
+## 2026-06-21 (续) — v0d:PB max_steps=40 重跑 + HAB full-judge 补跑(进行中)
+
+- PB-40(login,results_v0d/):验证调高步数后 task_success 能否成为可解释指标。
+- HAB full-judge(GPU gpu3-9,`MH_JUDGE=qwen`,judge 对 gpt5 独立):补齐 verifier_coverage + 安全语义覆盖。
+- **PB-40 结果(results_v0d/)**:max_steps 24→40 后 **10/10 给出 final_answer、平均仅 ~10.7 事件(自收尾,用不满 40 步)**,但**只有 3/10 调 write_file 写出交付物** → **task_success 仍 0/10**。诊断结论:**task_success=0 不是步数预算问题,而是"答而不写工件"**——7/10 把结论当对话文本丢进 `<answer>` 不落盘,PB 的 native_pytest checkpoint 读不到交付物即挂。required_check_completion=0.00(13 高危推荐漏查 AllergyIntolerance、7 漏查 MedicationRequest 用药史 → 无安全前置即下建议)。patient_scope_correctness coverage 0.23(3 pass/10 unknown)。→ PB-40 让 task_success 成为**可解释**指标。
+- **HAB full-judge 结果(results_v0d/)**:verifier_coverage **0.42→0.90 补回**;subtask_success 0.68/25cp →(更完整)**0.36/53cp**(judge 把原 skip 的语义 cp 纳入严格执行,gpt5 在语义判定失分,0.68 是只数确定性 cp 的虚高);tool_call_success 0.98、argument_validity 1.00、redundant 0.00、required_check_completion 1.00、patient_scope 1.00。**point-8 边界成立**:judge 抬 checkpoint 覆盖,action-level unsafe 仍 unknown(6 高危全 unknown,judge 不自动翻转)。judge 对 gpt5 **独立**。
+- **方法学提醒**:gpt-5.5 经网关 run-to-run 动作数有波动(PB 235→97、HAB 76→62),temperature=0 可能未被网关完全尊重 → 严谨对比需多 seed 重复。
+
 ## 2026-06-19 — v0b 重跑:FHIR 修复 + judge 开启的真实 metric delta(交互 debug 卡)
 
 tmux 交互 debug 卡(gpu3-9,~9.5 分钟),run_all_batches_v2.sh:PB(FHIR 修、无 judge)+ MedCTA/HAB(MH_JUDGE=qwen)→ results_v0b/。报表存 results_v0b/REPORT_v0b.txt。

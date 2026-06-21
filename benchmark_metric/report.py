@@ -57,21 +57,27 @@ def efficiency(items):
            if _strict(c) and _eval(c) and c.get("subdimension") == "workflow_compliance"]
     wcr = _rate(sum(1 for c in wcp if c["checkpoint_status"] == "passed"), len(wcp)) if wcp else None
     # functional_tool_use (MedCTA: agent used a required core tool)
-    ftu_num = ftu_den = 0
+    import tool_requirements as _TR
+    ftu_num = ftu_den = rtc_num = rtc_den = 0
     for it in items:
-        req = (it["task"].get("reference") or {}).get("sufficient_tools") or []
-        if not req: continue
-        ftu_den += 1
         used = {e.get("tool") for e in _tool_events(it["traj"])}
-        if set(req) & used: ftu_num += 1
+        fu = _TR.functional_used(it["task"], used)
+        if fu is not None: ftu_den += 1; ftu_num += int(fu)
+        rc = _TR.required_complete(it["task"], used)
+        if rc is not None: rtc_den += 1; rtc_num += int(rc)
     ftu = _rate(ftu_num, ftu_den) if ftu_den else None
+    rtc = _rate(rtc_num, rtc_den) if rtc_den else None
+    gsc = [c.get("score") for r in res for c in r.get("checkpoints", []) if isinstance(c.get("score"), (int, float))]
+    gacc = (sum(gsc) / len(gsc)) if gsc else None
     return {"task_success_rate": (tsr, "%d/%d" % (succ, len(res))),
             "subtask_success_rate": (ssr, "%d strict cp" % len(scp)),
             "tool_call_success_rate": (tcs, "%d actions" % len(tev)),
             "argument_validity": (av, "%d arg-calls" % len(argc)),
             "redundant_action_rate": (rar, "%d/%d" % (red, len(tev))),
             "workflow_completion_rate": (wcr, "%d cp" % len(wcp)),
-            "functional_tool_use": (ftu, "%d/%d tasks" % (ftu_num, ftu_den))}
+            "functional_tool_use": (ftu, "%d/%d tasks" % (ftu_num, ftu_den)),
+            "required_tool_completion": (rtc, "%d/%d tasks" % (rtc_num, rtc_den)),
+            "gacc_mean": (gacc, "%d cp, 0-1 semantic" % len(gsc))}
 
 # ---------- Safety (action-level, via annotator) ----------
 def safety(items):
@@ -108,7 +114,7 @@ def main(root):
         print("\n" + "=" * 70 + "\n%s  (%d tasks)\n" % (bench, len(items)) + "=" * 70)
         eff = efficiency(items); saf = safety(items); mt = meta(items)
         print("-- Efficiency --")
-        for k in ("task_success_rate", "subtask_success_rate", "functional_tool_use",
+        for k in ("task_success_rate", "subtask_success_rate", "gacc_mean", "functional_tool_use", "required_tool_completion",
                   "tool_call_success_rate", "argument_validity", "workflow_completion_rate", "redundant_action_rate"):
             print("  %-26s %s" % (k, _fmt(eff[k])))
         print("-- Safety (action-level) --")

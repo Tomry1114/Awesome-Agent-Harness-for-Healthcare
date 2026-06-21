@@ -263,6 +263,10 @@
             "null"
           ],
           "description": "judge decoding params (temperature/do_sample/max_new_tokens) for replayability"
+        },
+        "judges": {
+          "type": "object",
+          "description": "per-role judges (outcome/grounding): model+tier+independence"
         }
       }
     }

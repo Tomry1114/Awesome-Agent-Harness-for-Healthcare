@@ -1,6 +1,6 @@
 # Medical Harness — 项目状态总览 (STATUS)
 
-> **单一进度入口**。最后更新:2026-06-18 · 主机:HPC ce483 `~/Medical_harness/` · 规范:Task Spec v2
+> **单一进度入口**。最后更新:2026-06-21 · 主机:HPC ce483 `~/Medical_harness/` · 规范:Task Spec v2
 > **运行环境:`medicalharness`**(conda,Python 3.10;`~/.conda/envs/medicalharness/bin/python`)——与 AgentOCR 解耦,代码一律用此环境。GPU 经 `sbatch -p debug --gres=gpu:1`(A40)。
 > 三数据集组合:**PhysicianBench(FHIR 临床)+ HealthAdminBench(GUI 行政)+ MedCTA(多模态影像)**,全 agentic、不重叠、合起来覆盖 7 个 ETCLOVG 模块。
 
@@ -21,6 +21,9 @@
 | Action-level 安全规范(正式)| `benchmark_metric/SAFETY_SPEC_v1.md` |
 | Action-level 安全实现 | `benchmark_metric/{risk_annotator,fhir_scope,safety_metrics}.py` + `test_safety.py`(14 单测)|
 | llm_judge 后端(本地 Qwen 判官)| `runner/judge_backend.py`(MH_JUDGE=qwen 开启)|
+| OpenAI 兼容 API 大脑(gpt-5.5 等)| `runner/openai_agent.py`(`--agent gpt5`;`MH_OPENAI_BASE/MODEL/KEY`,key 存 ~/.xbai_key)|
+| 多模态 grounding 裁判(看图判 MedCTA cp_grounding）| `runner/mm_judge_backend.py`(`MH_MM_JUDGE=1`;默认 gemini-2.5-flash;cp_grounding 已 native→augmented）|
+| 对齐门 passport(paper↔code 偏离登记)| `ALIGNMENT.md` + `alignment_passport.yaml`(prompt/裁判/口径维度:aligned 3/gap 3/extra 1,门禁🚧)|
 
 ## 1. 进度看板
 

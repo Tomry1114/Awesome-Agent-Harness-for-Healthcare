@@ -1,0 +1,63 @@
+# alignment passport — Medical Harness (prompt / agent-protocol / answer-scoring dimension)
+# updated: 2026-06-21  host: ce483  scope: MedCTA + HAB prompts & MedCTA Gacc; NOT a full paper claim inventory
+gate_status: blocked          # has registered gaps
+counts: {aligned: 3, gap: 4, missing: 0, unknown: 0, extra: 1}
+claims:
+  - id: medcta-gacc-method
+    paper: "answer scored by LLM judge, semantic (not string match)"
+    paper_ref: "benchmark/MedCTA/goal_accuracy.py:19,199"
+    code_ref: "runner/scoring.py (gacc route); runner/gacc_judge.py"
+    status: aligned
+  - id: medcta-gacc-prompt
+    paper: "GOAL_ACCURACY_SYSTEM/USER_PROMPT"
+    paper_ref: "benchmark/MedCTA/goal_accuracy.py:33-66"
+    code_ref: "runner/gacc_judge.py (verbatim reuse)"
+    status: aligned
+  - id: medcta-gacc-granularity
+    paper: "0.0-1.0 continuous score, safe_mean aggregate"
+    paper_ref: "benchmark/MedCTA/goal_accuracy.py:37,231,138"
+    code_ref: "runner/gacc_judge.py score; benchmark_metric/report.py gacc_mean"
+    status: aligned
+    note: "binary pass/fail kept only as a thresholded (MH_GACC_THRESHOLD) view"
+  - id: medcta-gacc-model
+    paper: "EVAL_MODEL = gpt-5.4"
+    paper_ref: "benchmark/MedCTA/goal_accuracy.py:19"
+    code: "deepseek-v3.2 (MH_GACC_MODEL default)"
+    status: gap
+    severity: comparability
+    accepted: true
+    reason: "cost (account quota); cheap-strong substitute chosen by user"
+  - id: medcta-agent-prompt
+    paper: "expert medical imaging assistant prompt"
+    paper_ref: "benchmark/MedCTA/vlm_models/{gemini,claude,biomedx}.py"
+    code: "runner/qwen_agent.py SYS_BY_ENV[tool_sandbox] (self-written)"
+    status: gap
+    severity: comparability
+    accepted: true
+  - id: hab-agent-prompt
+    paper: "DOM action space click/fill/select/scroll/back/download/upload/done; ACTION:/KEY_INFO: format; scroll memory"
+    paper_ref: "benchmark/HealthAdminBench/sft/zero_shot_system_prompt_request.json"
+    code: "runner/qwen_agent.py SYS_BY_ENV[gui]: click/type/select/submit/navigate + <tool_call>/<answer>"
+    status: gap
+    severity: comparability
+    accepted: true
+    reason: "unified <tool_call> protocol across substrates is a harness design choice, not a replication"
+  - id: medcta-cp_grounding
+    paper: "no grounding scorer (goal_accuracy.py scores answer only)"
+    paper_ref: "benchmark/MedCTA/goal_accuracy.py (absent)"
+    code: "added cp_grounding, multimodal judge"
+    status: extra
+    note: "labelled provenance=augmented + judge_tier=multimodal_judge (not native)"
+  - id: pb-content-judge-model
+    paper: "PB content checkpoints judged by LLM (eval_helpers.llm_judge), default GPT-5"
+    paper_ref: "benchmark/PhysicianBench/PhysicianBench/utils/eval_helpers.py:58-72,623"
+    code: "gemini-2.5-flash via xbai gateway (LLM_JUDGE_MODEL; gpt-5.x all 503 on this key group)"
+    status: gap
+    severity: comparability
+    accepted: true
+    reason: "upstream gpt-5 unavailable on gateway; method (LLM chat.completions judge) is faithful, model differs"
+blocking:
+  - medcta-gacc-model
+  - medcta-agent-prompt
+  - hab-agent-prompt
+  - pb-content-judge-model

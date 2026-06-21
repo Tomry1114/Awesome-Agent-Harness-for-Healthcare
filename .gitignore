@@ -55,3 +55,6 @@ runner/medcta_profile*.json
 
 # Generated metric run dirs (bundles + reports, regenerable)
 /results_v0*/
+
+# All per-run result dirs (regenerable bundles + reports)
+/results_*/

@@ -29,7 +29,8 @@ Rules:
 """ + PROTOCOL,
     "fhir": """You are a clinical agent working in an EHR. Use the FHIR tools to retrieve the patient's
 data and complete the clinical task in the instructions. The patient resource id / MRN is: {patient}.
-Query with fhir_search (args: resourceType, patient, ...) and fhir_read (resourceType, id). Use
+Query with fhir_search (args: resourceType, patient, ...) and fhir_read (resourceType, id).
+The patient is ALREADY identified by the MRN above — do NOT search the Patient resource (a Patient query wastes steps). The patient= argument is ONLY for clinical resources: Observation, MedicationRequest, Condition, AllergyIntolerance, DiagnosticReport, DocumentReference, etc. Use
 get_lab_reference_range for lab interpretation. Save any required deliverable with write_file
 (args: path, content) under the path the instructions specify. Available tools:
 {tools}
@@ -98,6 +99,10 @@ class QwenToolAgent:
         q = str((task.get("context") or {}).get("text") or "") or str(task.get("goal") or "")
         self.messages = [{"role": "system", "content": sys}, {"role": "user", "content": q}]
         self._pending = False; self._last_tool = None
+    def _chat(self, messages, max_new_tokens=400):
+        from vlm_backend import get_backend
+        return get_backend().chat(messages, max_new_tokens=max_new_tokens)
+
     def _parse(self, out):
         # Only treat as a tool call when the <tool_call> tag is actually present AND carries a name.
         # A final answer may itself contain JSON (e.g. <answer>{"diagnosis": "pneumonia"}</answer>) —
@@ -118,10 +123,21 @@ class QwenToolAgent:
                         return {"type": "tool_call", "tool": name, "args": args}
                 except Exception:
                     pass
+            # <tool_call> tag opened but JSON missing/truncated/unparseable -> a CUT-OFF tool call
+            # (e.g. an over-long write_file), NOT a chat answer. Flag so the runner retries, not loses it.
+            if "<answer>" not in out:
+                return {"type": "tool_call_truncated", "raw": out[:300]}
         a = ANSWER_RE.search(out)
         return {"type": "final", "answer": (a.group(1).strip() if a else out.strip())}
 
     def act(self, state):
+        _lr0 = state.get("last_result")
+        _fb = _lr0.get("feedback") if isinstance(_lr0, dict) else None
+        if _fb:  # runner deliverable-enforcement feedback: incorporate and re-decide
+            self.messages.append({"role": "user", "content": "SYSTEM: " + _fb})
+            out = self._chat(self.messages, max_new_tokens=1500)
+            self.messages.append({"role": "assistant", "content": out})
+            return self._parse(out)
         if self.et == "gui":
             lr = state.get("last_result")
             if isinstance(lr, dict) and ("observation" in lr or "error" in lr):
@@ -129,8 +145,7 @@ class QwenToolAgent:
                 if lr.get("error"): parts.append("ERROR: %s" % lr["error"])
                 if lr.get("observation"): parts.append(lr["observation"])
                 self.messages.append({"role": "user", "content": ("OBSERVATION:\n" + "\n".join(parts))[:3800]})
-            from vlm_backend import get_backend
-            out = get_backend().chat(self.messages, max_new_tokens=300)
+            out = self._chat(self.messages, max_new_tokens=300)
             self.messages.append({"role": "assistant", "content": out})
             return self._parse(out)
         if self._pending:
@@ -139,7 +154,6 @@ class QwenToolAgent:
             if not isinstance(obs, str): obs = json.dumps(obs, ensure_ascii=False)[:1500]
             self.messages.append({"role": "user", "content": "TOOL RESULT (%s): %s" % (self._last_tool, obs)})
             self._pending = False
-        from vlm_backend import get_backend
-        out = get_backend().chat(self.messages, max_new_tokens=400)
+        out = self._chat(self.messages, max_new_tokens=1500)
         self.messages.append({"role": "assistant", "content": out})
         return self._parse(out)

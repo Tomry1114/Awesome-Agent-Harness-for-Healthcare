@@ -103,6 +103,51 @@ def run_checkpoint(cp, ctx):
         return {**base, "checkpoint_status": "skipped", "failure_mode": None, "skip_reason": "unsupported_in_skeleton"}
     if t == "llm_judge":
         chk = cp.get("check") or {}
+        # ---- multimodal GROUNDING route: image-grounding needs a judge that SEES the image (augmented) ----
+        mm = ctx.get("mm_judge")
+        if mm is not None and cp.get("subdimension") == "context_grounding" and ctx.get("medcta_img"):
+            rubric = chk.get("rubric") or "Is the answer grounded in the provided image rather than fabricated?"
+            ans = " ".join(ctx.get("final_texts", []))[:1500]
+            try:
+                v = mm(rubric, ans, ctx["medcta_img"], question=ctx.get("medcta_question", ""))
+            except Exception as e:
+                return {**base, "checkpoint_status": "error", "failure_mode": "verifier_error", "note": repr(e)}
+            if v.get("passed") is None:
+                return {**base, "checkpoint_status": "error", "failure_mode": "verifier_error",
+                        "note": "mm_judge_error", "evaluator_kind": "multimodal_judge",
+                        "judge_tier": "multimodal_judge", "judge_backend": v.get("model"),
+                        "detail": {"reason": str(v.get("reason"))[:200], "image_sha": v.get("image_sha")}}
+            ok = bool(v["passed"])
+            return {**base, "checkpoint_status": "passed" if ok else "failed",
+                    "failure_mode": None if ok else "agent_failure",
+                    "failure_tag": None if ok else _judge_fail_tag(cp),
+                    "evaluator_kind": "multimodal_judge", "judge_tier": "multimodal_judge",
+                    "judge_backend": v.get("model"), "score_eligible": True,
+                    "detail": {"reason": v.get("reason"), "raw_truncated": v.get("raw"),
+                               "image_sha": v.get("image_sha"), "judge_decoding": v.get("judge_decoding")}}
+        # ---- MedCTA Gacc route: 0-1 semantic score per upstream goal_accuracy.py (cp_outcome) ----
+        gacc = ctx.get("gacc")
+        if gacc is not None and chk.get("whitelist_ref") and cp.get("subdimension") == "clinical_task_success":
+            pred = " ".join(ctx.get("final_texts", []))[:2000]
+            gold = _flatten_whitelist(ctx)
+            try:
+                gv = gacc(pred, gold)
+            except Exception as e:
+                return {**base, "checkpoint_status": "error", "failure_mode": "verifier_error", "note": repr(e)}
+            sc = gv.get("score")
+            if sc is None:
+                return {**base, "checkpoint_status": "error", "failure_mode": "verifier_error",
+                        "note": "gacc_unparseable", "evaluator_kind": "gacc_judge", "judge_tier": "gacc_semantic",
+                        "judge_backend": gv.get("model")}
+            thr = float(os.environ.get("MH_GACC_THRESHOLD", "0.5"))
+            ok = sc >= thr
+            return {**base, "checkpoint_status": "passed" if ok else "failed",
+                    "failure_mode": None if ok else "agent_failure",
+                    "failure_tag": None if ok else _judge_fail_tag(cp),
+                    "evaluator_kind": "gacc_judge", "judge_tier": "gacc_semantic",
+                    "judge_backend": gv.get("model"), "score": sc, "score_eligible": True,
+                    "detail": {"gacc_score": sc, "threshold": thr, "raw_truncated": gv.get("raw"),
+                               "gold_n": len(gold), "judge_model": gv.get("model")}}
         judge = ctx.get("judge")
         if judge is not None:  # real judge backend -> score-eligible local_model_judge (NOT expert/independent)
             obs_text, obs_meta = _judge_observations(ctx)
@@ -206,6 +251,7 @@ def build_result(task, trajectory, results, provenance):
         if r.get("failure_tag"): c["failure_tag"] = r["failure_tag"]
         if r.get("judge_backend"): c["judge_backend"] = r["judge_backend"]
         if r.get("evaluator_kind"): c["evaluator_kind"] = r["evaluator_kind"]
+        if "score" in r: c["score"] = r["score"]
         if "score_eligible" in r: c["score_eligible"] = r["score_eligible"]
         cps.append(c)
     dim, cov, proxy_dim, proxy_cov = aggregate(results)

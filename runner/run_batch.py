@@ -39,6 +39,7 @@ def main():
     ap.add_argument("--has-subdimension", default=None)
     ap.add_argument("--governance-only", action="store_true")
     ap.add_argument("--out", default="results/")
+    ap.add_argument("--max-steps", type=int, default=12)
     args = ap.parse_args()
 
     base_out = os.path.join(ROOT, args.out) if not os.path.isabs(args.out) else args.out
@@ -58,7 +59,7 @@ def main():
     for tid in tids:
         if args.reset_mode == "per_task": R.reset_fhir("per_task")
         try:
-            res = R.run_task(args.bench, tid, args.agent, args.fhir_base)
+            res = R.run_task(args.bench, tid, args.agent, args.fhir_base, max_steps=args.max_steps)
         except Exception as e:
             buckets["task_error"] += 1; rows.append({"task": tid, "error": repr(e)}); continue
         # --- per-task bundle (A) ---

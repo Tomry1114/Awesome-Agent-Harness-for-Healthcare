@@ -133,6 +133,9 @@ def make_agent(name, task):
     et = (task.get("environment") or {}).get("type")
     if name == "scripted":
         return ScriptedAgent(task)
+    if name in ("gpt5", "openai"):
+        from openai_agent import OpenAIToolAgent
+        return OpenAIToolAgent(task)
     if name == "qwen":
         from qwen_agent import QwenToolAgent
         return QwenToolAgent(task)

@@ -80,6 +80,10 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
     agent = agents.make_agent(agent_name, task)
 
     trajectory, last_obs, last_res, finished = [], None, None, False
+    import re as _re
+    _dm = _re.search(r"/?workspace/output/[\w.\-]+", task.get("goal", "") or "")
+    _deliverable = _dm.group(0) if _dm else None
+    _deliv_nudges = 0
     if hasattr(env, "initial_observation"):
         _io = env.initial_observation()
         if _io is not None:
@@ -91,8 +95,26 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
             trajectory.append({"step": step, "event_type": "agent_error", "error": "invalid_action", "raw": str(action)[:200], "status": "error"})
             finished = True; break
         if action["type"] == "final":
+            if _deliverable and _deliv_nudges < 3:
+                _fp = os.path.join(getattr(env, "workspace", "") or "", os.path.basename(_deliverable))
+                if not (os.path.isfile(_fp) and os.path.getsize(_fp) > 0):
+                    _deliv_nudges += 1
+                    _fb = ("STOP. The task REQUIRES a deliverable file and it is NOT written yet. You MUST "
+                           "call write_file NOW with EXACTLY path=\"%s\" (this EXACT filename, no other name) "
+                           "and content = your full clinical assessment and management plan. Do not answer in "
+                           "chat. Do not use any other filename. After write_file succeeds, then finish." % _deliverable)
+                    trajectory.append({"step": step, "event_type": "deliverable_nudge", "path": _deliverable,
+                                       "attempt": _deliv_nudges, "status": "ok"})
+                    last_res = {"feedback": _fb}; last_obs = _fb
+                    continue
             trajectory.append({"step": step, "event_type": "final_answer", "thought": action.get("answer", ""), "status": "ok"})
             finished = True; break
+        if action["type"] == "tool_call_truncated":  # cut-off tool call (e.g. oversized write_file) -> ask to re-issue
+            trajectory.append({"step": step, "event_type": "agent_error", "error": "truncated_tool_call",
+                               "raw": action.get("raw", "")[:200], "status": "error"})
+            last_res = {"feedback": "Your previous tool call was CUT OFF before the JSON closed (content too long). "
+                        "Re-issue the SAME write_file tool call but keep the content focused so the JSON completes."}
+            last_obs = "truncated_tool_call"; continue
         if action["type"] != "tool_call" or not action.get("tool"):
             trajectory.append({"step": step, "event_type": "agent_error", "error": "bad_action_type", "raw": str(action)[:200], "status": "error"})
             finished = True; break
@@ -120,6 +142,35 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
         last_obs = obs; last_res = res
     if not finished:  # #8 ran out of steps without a final answer
         trajectory.append({"step": max_steps, "event_type": "agent_error", "error": "max_steps_exceeded", "status": "error"})
+    # deliverable enforcement (final): guarantee ONE write attempt if the required file is still missing
+    # (covers both "finished early" and "ran out of steps"), then normalize a mis-named single file.
+    if _deliverable:
+        _ws = getattr(env, "workspace", "") or ""
+        _want = os.path.join(_ws, os.path.basename(_deliverable)) if _ws else ""
+        _missing = lambda: not (_want and os.path.isfile(_want) and os.path.getsize(_want) > 0)
+        if _ws and _missing():
+            _fb = ("You must NOW save the required deliverable. Call write_file with EXACTLY path=\"%s\" and "
+                   "content = your full clinical assessment and management plan." % _deliverable)
+            try:
+                _a = agent.act({"goal": task.get("goal"), "context": task.get("context"),
+                                "tools": env.available_tools(), "last_observation": _fb,
+                                "last_result": {"feedback": _fb}})
+                if isinstance(_a, dict) and _a.get("type") == "tool_call" and _a.get("tool") == "write_file":
+                    _wr = env.call_tool("write_file", _a.get("args", {}))
+                    trajectory.append({"step": max_steps, "event_type": "tool_call", "tool": "write_file",
+                                       "args": _a.get("args", {}), "result": _wr,
+                                       "observation": json.dumps(_wr)[:200], "ts": str(max_steps),
+                                       "status": "ok", "forced_deliverable": True})
+            except Exception as _fe:
+                trajectory.append({"step": max_steps, "event_type": "agent_error",
+                                   "error": "forced_deliverable_failed", "raw": repr(_fe)[:120], "status": "error"})
+        if _ws and os.path.isdir(_ws) and _missing():  # mis-named single file -> normalize (transparent)
+            _cands = [f for f in glob.glob(os.path.join(_ws, "*")) if os.path.isfile(f) and os.path.getsize(f) > 0]
+            if len(_cands) == 1:
+                shutil.copyfile(_cands[0], _want)
+                trajectory.append({"step": max_steps, "event_type": "deliverable_renamed",
+                                   "from": os.path.basename(_cands[0]), "to": os.path.basename(_deliverable),
+                                   "status": "ok"})
     env.teardown()
 
     # upstream-format trajectory.log for native_pytest
@@ -154,12 +205,30 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
     _judge_fn = None
     if _judge_on:
         import judge_backend; _judge_fn = judge_backend.judge
+    _mm_on = os.environ.get("MH_MM_JUDGE", "").lower() in ("1", "on", "true") or bool(os.environ.get("MH_MM_JUDGE_MODEL"))
+    _mm_fn = None
+    if _mm_on:
+        import mm_judge_backend; _mm_fn = mm_judge_backend.judge_grounding
+    _gacc_on = os.environ.get("MH_GACC", "").lower() in ("1", "on", "true") or bool(os.environ.get("MH_GACC_MODEL"))
+    _gacc_fn = None
+    if _gacc_on:
+        import gacc_judge; _gacc_fn = gacc_judge.score
+    # PB content checkpoints (upstream eval_helpers.llm_judge) need an OpenAI-compatible judge. Opt-in by
+    # setting LLM_JUDGE_MODEL; auto-fill key/base from the xbai gateway file so only the model is chosen.
+    # (native_pytest propagates os.environ to the pytest subprocess.) Judge-model deviation -> passport.
+    if os.environ.get("LLM_JUDGE_MODEL") and not os.environ.get("OPENAI_API_KEY"):
+        _kf = os.path.expanduser("~/.xbai_key")
+        if os.path.exists(_kf):
+            os.environ["OPENAI_API_KEY"] = open(_kf).read().strip()
+            os.environ.setdefault("OPENAI_BASE_URL", "https://us-api.xbai.top/v1")
     ctx = {"base": getattr(env, "base", None), "mrn": (task.get("context") or {}).get("patient_ref"),
            "trajectory": trajectory, "created_meds": scoring.created_meds(trajectory),
            "final_texts": final_texts, "note_texts": note_texts, "full_state": getattr(env, "full_state", None),
            "reference": task.get("reference", {}), "agent_tool_calls": agent_tool_calls, "ref_tool_calls": ref_tool_calls,
            "verifiers": scoring._load_verifiers() if needs_pb else None, "pb_repo": pb_repo, "job_dir": job_dir,
-           "judge": _judge_fn, "judge_id": _judge_id}
+           "judge": _judge_fn, "judge_id": _judge_id,
+           "mm_judge": _mm_fn, "medcta_img": getattr(env, "image_path", None),
+           "medcta_question": (task.get("context") or {}).get("text"), "gacc": _gacc_fn}
     results = [scoring.run_checkpoint(cp, ctx) for cp in task.get("checkpoints", [])]
     env_type = (task.get("environment") or {}).get("type")
     env_cls = type(env).__name__
@@ -180,29 +249,45 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
     aname = getattr(agent, "name", "") or agent_name
     if aname == "qwen":
         agent_model = "%s (text-only brain)" % vlm; uses_hidden_ref = False; validation_only = False
+    elif aname == "gpt5":
+        agent_model = "%s (api brain)" % os.environ.get("MH_OPENAI_MODEL", "gpt-5.5"); uses_hidden_ref = False; validation_only = False
     elif aname == "replay":
         agent_model = "gold_replay:reference_trace"; uses_hidden_ref = True; validation_only = True
     elif aname == "scripted":
         agent_model = "scripted:gold_path"; uses_hidden_ref = True; validation_only = True
     else:
         agent_model = "stub:%s" % aname; uses_hidden_ref = False; validation_only = True
-    # no LLM judge wired; MedCTA outcome uses an offline whitelist proxy until a real Gacc judge lands
-    if _judge_on:
-        judge_model = _judge_id
-    elif env_type == "tool_sandbox":
-        judge_model = "offline_whitelist_proxy"
-    else:
-        judge_model = "none"
-    judge_independent = None
-    if _judge_on:
-        judge_independent = (vlm not in (agent_model or "")) and (vlm != (tool_backend_model or ""))
+    # Role-specific judges: outcome via Gacc (MH_GACC) | local Qwen (MH_JUDGE) | offline proxy;
+    # grounding via multimodal judge (MH_MM_JUDGE) | local Qwen. Record EACH truthfully — result.json
+    # must say who judged the answer and who judged grounding (reproducibility / integrity gate).
+    def _ind_str(jm):
+        return "independent" if (jm and (jm not in (agent_model or "")) and (jm != (tool_backend_model or ""))) \
+               else "shared_model_with_agent_or_tool"
+    _TIER = {"gacc_judge": "gacc_semantic", "multimodal_judge": "multimodal_judge",
+             "llm_judge": "local_model_judge", "proxy": "offline_whitelist_proxy"}
+    # judges are derived from what ACTUALLY ran (per-checkpoint evaluator_kind), NOT from env flags, so a
+    # stray MH_GACC_MODEL during a native_pytest (PB) run cannot falsely claim "deepseek judged the answer".
+    def _judge_for(subdim):
+        for r in results:
+            if r.get("subdimension") == subdim and r.get("evaluator_kind"):
+                ek = r["evaluator_kind"]; jb = r.get("judge_backend") or ek
+                return {"model": jb, "tier": _TIER.get(ek, ek),
+                        "independence": "n/a" if ek == "proxy" else _ind_str(jb)}
+        return None
+    judges = {}
+    _o = _judge_for("clinical_task_success")
+    if _o: judges["outcome"] = _o
+    _g = _judge_for("context_grounding")
+    if _g: judges["grounding"] = _g
+    _outc = judges.get("outcome", {})
+    judge_model = _outc.get("model", "none")
+    judge_decoding = ({"temperature": 0, "max_new_tokens": 80} if _outc.get("tier") == "gacc_semantic" else
+                      ({"temperature": 0, "do_sample": False, "max_new_tokens": 220} if _outc.get("tier") == "local_model_judge" else None))
     provenance = {"agent_model": agent_model, "tool_backend": tool_backend,
                   "tool_backend_model": tool_backend_model, "judge_model": judge_model,
-                  "judge_tier": ("local_model_judge" if _judge_on else
-                                 ("offline_whitelist_proxy" if env_type == "tool_sandbox" else "none")),
-                  "judge_independence": ("n/a" if not _judge_on else
-                                         ("independent" if judge_independent else "shared_model_with_agent_or_tool")),
-                  "judge_decoding": ({"temperature": 0, "do_sample": False, "max_new_tokens": 220} if _judge_on else None),
+                  "judge_tier": _outc.get("tier", "none"),
+                  "judge_independence": _outc.get("independence", "n/a"),
+                  "judge_decoding": judge_decoding, "judges": judges,
                   "uses_hidden_reference": uses_hidden_ref, "scorer_validation_only": validation_only}
     result = scoring.build_result(task, trajectory, results, provenance)
     result["_schema"] = validate_result(result)
@@ -215,9 +300,12 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
     if validation_only: quals.append("scorer_validation_only")
     if env_type == "gui" and env_cls != "GuiEnvReal": quals.append("mock_env")
     if env_type == "tool_sandbox" and not real_ts: quals.append("replay_tool_backend")
-    if judge_model.startswith("offline"): quals.append("outcome_proxy")
-    if _judge_on and judge_independent is False: quals.append("non_independent_judge")
+    if any(c.get("evaluator_kind") == "proxy" and c.get("subdimension") == "clinical_task_success"
+           for c in result.get("checkpoints", [])): quals.append("outcome_proxy")
+    if any(j.get("independence") == "shared_model_with_agent_or_tool" for j in judges.values()):
+        quals.append("non_independent_judge")
     if any(c.get("score_eligible") is False for c in result.get("checkpoints", [])): quals.append("proxy_scored_checkpoints")
+    if any("API_BRAIN_ERROR" in str(ev.get("thought", "")) for ev in trajectory): quals.append("api_backend_error")
     quals = sorted(set(quals))
     result["qualification"] = quals  # F1: non-underscore -> survives --out / run_batch result.json (meta.qualification_integrity)
     if quals:
