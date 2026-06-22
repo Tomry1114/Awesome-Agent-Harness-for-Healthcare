@@ -1,3 +1,184 @@
+## 2026-06-22 (续7) — 评审审计:修 grounding 侧门(诚信门)+ _jb 崩溃 + 4 处累计
+
+用户审计清单逐条修复（🔴 严重 / 🟠🟡 次要）。
+
+**🔴 修1 — grounding 走侧门被文字判官打正式分(诚信门)** `runner/scoring.py`
+- 问题：本地 judge 段（`if judge is not None`）对**任何** subdim 都打 `score_eligible:True`。看不到图的文字判官（qwen）会对「答案是否基于图像」出 pass/fail 并标正式分（107/107 MedCTA 受影响,多模态判官未开时）。
+- 修复：本地 judge 前加守卫——`if subdimension=="context_grounding"` → `skipped(missing_grounding_judge)`，**绝不让文字判官判图像 grounding**。多模态路由(MH_MM_JUDGE)仍在其上处理。验证：grounding+文字判官→skipped；对照 clinical_task_success 仍正常文字判。
+
+**🔴 修2 — `_jb` NameError(缺 key 时 run_task 整体崩)** `runner/run.py`
+- 问题：判官自动接线里 `_jb.endswith`/`OPENAI_BASE_URL setdefault` 缩进在 `if os.path.exists(_kf)` **外**，缺 `~/.xbai_key` 时 `_jb` 未定义 → 崩。
+- 修复：两行缩进进 `if` 内（缺 key 整块跳过）。
+
+**🟡 修3 — provenance judge_decoding 与实跑不符(诚信门)** `runner/run.py`
+- 问题：gacc_semantic 记 `{temperature:0, max_new_tokens:80}`，实发 `max_tokens:1024` 无 temperature。
+- 修复：改记 `{max_tokens:1024}`，与 `gacc_judge.py` 实发一致。
+
+**🟡 修4 — MH_OPENAI_BASE 一变量两网关 → 拆 MH_JUDGE_BASE** `gacc_judge/mm_judge/run.py`
+- 判官 base 改为 `MH_JUDGE_BASE or MH_OPENAI_BASE`，判官网关可独立于 agent，互不静默带偏。
+
+**🟡 修5 — 交付物 normalize 仅单文件** `runner/run.py`
+- `len(_cands)==1` → `if _cands:` 取**最大非空文件**补名（≥2 文件也覆盖）。
+
+**🟠 已修(旧快照误列)** — ApiVLM base 少 /v1：`vlm_backend.py:108` 早已归一化(strip /v1 + _call 拼 /v1/chat/completions)，带不带 /v1 都正确。
+
+均 `ast` 通过 + 关键两处功能验证。备份 `*.bak_audit`。
+
+
+## 2026-06-22 (续6) — micuapi 多模态开通 → MedCTA 全 gpt-5.5 端到端 2/5;三 substrate 全部跑通
+
+**网关多模态开通**:用户在 micuapi 后台开通后,gpt-5.5 视觉可用(原始 image_url 与 ApiVLM 真实代码路径均返回正确 CT 描述;OCR 正确返回 [no text])。→ MedCTA 不再需要 xbai gemini / 本地 Qwen,**全栈 gpt-5.5 一把梭**。
+
+**MedCTA 全 gpt-5.5 新跑(大脑+VLM+Gacc+grounding 全 gpt-5.5,reasoning=high,relaxed arg,真看图)**
+
+| 任务 | success | subtask | gacc | 备注 |
+|---|---|---|---|---|
+| MCTA-0 | **True** | 4/4 | 0.65 | 看图答对 |
+| MCTA-1 | **True** | 4/4 | 0.55 | |
+| MCTA-2 | False | 2/4 | 1.0 | 答案满分但 tool_selection 挂 |
+| MCTA-3 | False | 2/4 | 0.5 | tool_sel 挂 |
+| MCTA-4 | False | 2/4 | 1.0 | 答案满分但 tool_sel 挂 |
+
+- **task_success 0.40 (2/5)**、subtask 0.70、**gacc_mean 0.74**(gemini-VLM 时代 0.17 → 0.74,gpt-5.5 真看图质变)、functional/required_tool 1.00、cp_outcome **5/5 全过**。
+- 观察:MCTA-2/4 答案满分(gacc 1.0)却因 `cp_tool_selection`(ToolAcc=sufficient_tools 子集)挂——答对但没用"必需"工具。tool_selection 是上游 ToolAcc 正口径,暂留;若要进一步松绑可议。
+
+**三 substrate 全部跑通(gpt-5.5 / micuapi)**
+
+| 指标 | PhysicianBench | HealthAdminBench | MedCTA |
+|---|---|---|---|
+| task_success | 0/3(adc 5/7,小样本) | 0/3(3/4、2/4、2/4) | **2/5 (0.40)** |
+| subtask | 0.32 | 0.58 | 0.70 |
+| gacc_mean | n/a | n/a | 0.74 |
+
+**结论**:HAB/MedCTA 之前的 0 全是 harness 问题(坏 mock 门户 / 过严 arg_accuracy / 多模态未通),逐个修完都不再 0 → 无更深 bug。三数据集现在用同一 gpt-5.5+micuapi 全跑通、出真实可解释指标。
+
+**仍待办**:PB 工具面 generic vs 粒度(turns 21 vs 官方 41.9,最后一个偏差);本会话代码改动未提交 GitHub。
+
+
+## 2026-06-22 (续5) — 验证逻辑兑现:HAB 真门户 + MedCTA arg_accuracy 放宽(两个 0 都修好)
+
+**用户判断**:HAB/MedCTA 的 0 都是 harness 问题,都要改;改完若仍 0 才证明有更深 bug。结论:**改完都不再是 0**。
+
+**修复 1 — MedCTA cp_arg_accuracy 放宽(`runner/scoring.py`)**
+- 问题:`arg_match` 要求 agent 工具调用与参考轨迹**完全相等**(同名同序同参深度相等)。但参考 args 含**系统注入**的 `image` 路径(agent 不传)、顺序/次数/bbox 格式合法地不同 → 答案正确的 MCTA-1 也被误杀。
+- 修复:改为 **argument-KEY 覆盖**——每个参考工具 agent 都调用过,且提供了参考所需的**非系统**参数键(非空);忽略顺序、`image/image_path` 系统键、精确值。对齐上游 `icl_plugin_evaluator` 的子集/语义精神。
+- 验证(重打分现有 bundle,隔离打分层):**MedCTA 1/3 success**(MCTA-1 现在 cp_outcome✓ tool_sel✓ arg✓ grounding✓ → success=True);有区分度(MCTA-2 真没用 OCR/GoogleSearch,仍正确判负)。
+
+**修复 2 — HAB 切真门户 GuiEnvReal(`MH_GUI_MODE=real`)**
+- 问题:`GuiEnvMock` 不暴露可点 target → agent 死循环 navigate(redundant 0.94)、subtask 0/12。
+- 关键发现:代码注释「登录节点无法启动 chromium」**过时**——实测 headless + `--no-sandbox` 在登录节点正常启动。`GuiEnvReal`(已存在,Playwright 驱动真 NextJS 门户,`_observe` 给 agent 页面文本 + 带 ref 的可交互元素)+ gui 系统提示(教 ref 点击协议)齐全。门户 v2 dev server 已在 `:3002` 运行(`/denied→/emr/denied` 200)。
+- 跑法:登录节点 `MH_GUI_MODE=real MH_PORTAL_BASE=http://localhost:3002` + gpt-5.5(micuapi)。**无需 GPU 节点**。
+
+| HAB 指标 | mock | 真门户 |
+|---|---|---|
+| subtask_success | 0.00 | **0.58** |
+| redundant_action_rate | 0.94 | **0.00** |
+| functional_tool_use | 0.00 | **1.00** |
+| required_tool_completion | 0.00 | **1.00** |
+| workflow_completion | 0.00 | 0.33 |
+| task_success | 0/3 | 0/3(3/4、2/4、2/4) |
+
+agent 真在操作门户(type×11/click×17/submit×2 等),死循环消失。task_success 仍 0/3 = 各差 1-2 个 checkpoint(真实完成度 + 小样本 easy 任务),非结构性。
+
+**结论**:两个 0 都是 harness 问题(过严 checkpoint / 坏 mock 环境),改完都不再是 0 → 无更深 bug。
+
+**附:micuapi 多模态做不了(待办)**
+- 这把 key 权威 `/v1/models`(Codex UA)= 8 个 GPT(gpt-5.2/5.3-codex/5.4/5.4-mini/5.5/5.5-openai-compact 等),**无 gemini**;Anthropic 侧 7 个 Claude 但分组路由(`vip_2_cc`)不通。
+- GPT 视觉被网关挡(原始 image_url 也返回「没收到图片」)；Claude 不可靠。→ **micuapi 无法做多模态**。
+- MedCTA 新跑要图像:充值 xbai(gemini,曾验证)或本地 Qwen3-VL(GPU)。但 MedCTA 修复已用旧答案重打分验证,不依赖新跑。
+
+
+## 2026-06-22 (续4) — 对照 PhysicianBench 官方:交付物路径 bug + reasoning_effort + 网关迁移 micuapi
+
+**背景**:对照官方 leaderboard(GPT-5.5 Pass@1=46.3%,judge=GPT-5,agent 用粒度命名工具 + reasoning-effort=high,turns≈41.9)。逐项核对我们 harness 的偏差并修复。
+
+**修复 1(真 bug)— 交付物路径双层嵌套**
+- 诊断:`self.workspace` 已是 `.../workspace/output`,但 write_file 只剥 `workspace/output/`、`workspace/` 前缀,**漏裸 `output/`**。agent 写 `output/X`(很自然的相对路径)→ 落到 `output/output/X` → 原生 pytest 在 `workspace/output/X` 找不到 → 该任务所有内容 checkpoint 报「file not found」。adc_pulmonary_toxicity 7/7 全废即此故。
+- 修复(`runner/environments.py`):strip 列表加 `"output/"`。验证:`output/X`、`/workspace/output/X`、裸 `X` 全部正确落到 `workspace/output/<file>`;**adc 实跑 0/7 → 5/7**(交付物现被找到并评分)。
+
+**修复 2 — openai_agent 加 reasoning_effort(默认 high,对齐官方)**
+- `runner/openai_agent.py`:`MH_OPENAI_REASONING`(默认 `high`)注入 body `reasoning_effort`。验证:abnormal 5/7→6/7(早期一版),reasoning 确有增益。注:成本约翻倍。
+
+**修复 3 — 网关迁移到 micuapi.ai(xbai 余额耗尽)**
+- 旧 xbai key 余额耗尽(剩 $0.023)。换新网关 `https://www.micuapi.ai` + 新 key(写入 `~/.xbai_key`,chmod 600,未提交)。
+- **关键**:micuapi 对外接客户端做 UA 检测——`curl/8.4.0` 被拒(报 "no available channel under group default",一度误判为权限问题);厂商文档要求外接补**对应 User-Agent**。改 4 个调用方(openai_agent/gacc_judge/mm_judge/vlm_backend)`User-Agent` 为 env `MH_OPENAI_UA`(默认 `codex_cli_rs/0.20.0`),base 默认 `https://www.micuapi.ai`;`run.py` PB-judge 接线 base 改为从 `MH_OPENAI_BASE` 派生。
+- 可用模型:**gpt-5.4 / gpt-5.5 + 7 个 Claude**(无 gpt-5/gemini/deepseek)。验证:`_chat` 经新网关返回 'HARNESS_OK';openai SDK(PB 判官)默认 UA 也被接受。
+
+**全修正配置 run3(micuapi · gpt-5.5 大脑+判官 · reasoning=high · 路径修复 · 50步)**
+
+| 任务 | 旧(gemini判官) | 新(全修正) | 说明 |
+|---|---|---|---|
+| adc_pulmonary_toxicity | 0/7 | **5/7** | 路径修复见效 |
+| aberrant_drug_screen | 2/8 | 2/8 | 持平 |
+| abnormal_uterine_bleeding | 5/7 | 2/7 | gpt-5.5 判官更严,卡掉 gemini 放过的边缘项 |
+| subtask 小计 | 7/22 | 9/22 | — |
+
+- **判官影响**:gpt-5.5 判官比 gemini **更严**(abnormal 5→2),方向是更严→分更低。判官非无关,但只动边缘 checkpoint。
+- **剩余最大偏差 = 工具面**:我们 agent turns≈21 vs 官方 41.9(差一倍)——generic `fhir_search` vs 官方粒度工具;粒度工具做了 2 倍精细检索。task_success 仍 0/3(3 个难任务 + 小样本,按 46% 单任务率 0/3 合理)。
+
+**HAB / MedCTA 仍 0 的归因(非模型、非小样本)**
+- **HAB**:GUI **mock 门户不暴露可点 target**,agent 死循环 navigate(redundant 0.94),subtask 0/12、多数 cp skipped、verifier_coverage 0.39。换任何模型/全量都是 0,是 substrate 结构性限制,需接 Playwright 真门户。
+- **MedCTA**:`cp_arg_accuracy`(工具参数**精确匹配**参考轨迹,口径过严)在 3 个任务上全挂——MCTA-1 答案其实对了(cp_outcome passed 0.5)仍因 arg_accuracy 拖垮 success。是 checkpoint 过严 + 部分图像质量,非模型能力。
+
+
+## 2026-06-22 (续3) — 评审驱动:ApiVLM base URL 埋雷修复 + 主循环断路器
+
+**修复 1(真 bug,隐性未触发)— ApiVLM base URL 与全工程约定不一致**
+- 问题(评审指出):其它 3 处(`openai_agent`/`gacc_judge`/`mm_judge`)统一约定 `MH_OPENAI_BASE` 默认 `https://us-api.xbai.top`(**无 `/v1`**),各自拼 `/v1/chat/completions`。而 `ApiVLM` 默认带 `/v1` 且只拼 `/chat/completions` → 一旦按文档 `export MH_OPENAI_BASE=https://us-api.xbai.top`(无 `/v1`),ApiVLM 拼出 `…/chat/completions`(少 `/v1`)→ 404。仅 env 不设、走字面默认那条能用 → 埋雷(只有 `MH_VLM_BACKEND=api` 才启用,默认 local 故未炸)。
+- 修复(`runner/vlm_backend.py`):`ApiVLM.__init__` 改用无 `/v1` 默认,并 `if _b.endswith("/v1"): _b=_b[:-3]` 归一化;`_call` 统一拼 `/v1/chat/completions`。验证:`MH_OPENAI_BASE` 带/不带 `/v1` 两种写法都解析到同一 base 且真返回 CT 描述。
+
+**修复 2(健壮性缺口,非回归)— 主循环加「重复失败调用」断路器**
+- 问题(评审指出):`run.py` 主循环无断路器,上游 `mini_agent` 自带(同 error/同 args 即 abort)。万一卡同一失败调用只能耗到 max_steps(HAB 的 redundant 0.94 死循环即此类风险)。
+- 修复(`runner/run.py`):工具执行后,若 `(tool, args, error_type)` 与上次失败**完全相同**则计数;连续 ≥3 次 → 记 `circuit_breaker`(`repeated_failing_call`)事件并中止(`_aborted`,不再误记 `max_steps_exceeded`);任一成功调用即重置计数。阈值 3。
+- 验证:隔离单测 4 场景全过——同失败×5→第 3 步中止；成功穿插→不触发；不同失败→不触发;同失败×2(未达阈值)→不触发。`run`/`vlm_backend`/`gacc_judge` import 正常,run_task 完整。
+
+**注**:断路器按评审口径只拦「同 args 同 error」的硬失败;HAB 那种 `navigate{/}` 返回 ok-但无效的软循环不在此列(需真门户解决,见续2)。
+
+
+## 2026-06-22 (续2) — gpt-5.5 三数据集小子集验证 + 4 处 task_success 链路修复
+
+**目标**:三数据集各跑小子集(gpt-5.5 大脑 + 全部修复),核对 task_success 是否真修好。代码一律 `~/.conda/envs/medicalharness/bin/python` 启动(native_pytest 子进程靠 `sys.executable` 继承,需此 env 的 openai)。
+
+**修复 1 — 严重回归:canon 补丁误插进 run_task 函数体**
+- 现象:cp1 canon 映射补丁把 helper(顶格 `def`)插到 `run_task` **函数体中间** → run_task 被拦腰截断、隐式返回 `None`(trajectory.log 写入/provenance/`return result` 全被吸进 `_canon_fhir_tool` 的死代码);`ast.parse` 通过(语法合法),但所有跑在 `run_batch.py:69` 崩(`res.get` on None,DONE_1)。smoke2(补丁前)完整、之后全坏即此故。
+- 修复:回滚 `run.py.bak_canon`,把 `_FHIR_CANON_*` + `_canon_fhir_tool` 定义在**真模块级**(run_task 之前),仅改 run_task 内 `metadata.tool_name` 一行。验证:run_task 完整含 `return result`;三数据集跑全 DONE_0。
+
+**修复 2 — cp1 工具名映射(canon,本轮正解)+ 撤回上轮 Patient prompt**
+- 问题:PB 原生 `cp1_data_retrieval` 按 `metadata.tool_name` 精确匹配上游粒度工具名(`fhir_patient_search_demographics`/`fhir_observation_search_labs`/`fhir_medication_request_search_orders`/`fhir_condition_search_problems`),但 adapter 发统一 `fhir_search(resourceType=X)` → tool_name 恒为 `fhir_search` → cp1 系统性挂。
+- 修复:写 upstream trajectory.log 时 `_canon_fhir_tool(tool,args)` 按 resourceType 忠实映射 canonical 名(保守:Observation 无 category 默认 labs,不虚认 vitals/social;create→`fhir_*_create`)。验证:cp1 在 PB-abnormal_uterine_bleeding **passed**。
+- **FHIR prompt 修正(撤回上轮"不要搜 Patient")**:上轮 `SYS_BY_ENV["fhir"]` 全禁 Patient 查询,与 cp1"必须恰好查一次 Patient"自相矛盾 → 自伤。改为"先查一次 Patient 确认身份(原生计分),之后别再查"。gpt-5.5 不像 qwen 死循环,可安全保留一次查询。
+
+**修复 3 — ApiVLM 后端(MedCTA 纯 API、免 GPU)**
+- 问题:MedCTA 图像工具(OCR/ImageDescription/RegionAttributeDescription)走 `vlm_backend.get_backend()` = 本地 Qwen3-VL torch,登录节点无 GPU 极慢(早期 log 见 torch 加载)。
+- 修复:`vlm_backend.py` 新增 `ApiVLM` 类(`MH_VLM_BACKEND=api`,默认 gemini-2.5-flash 网关多模态,复用 mm_judge 的 base64 data-URL;region 仍真裁剪像素后再送,保留像素 grounding)。`get_backend` 加 `api` 分支。验证:image_1.jpg 真描述出 CT。
+
+**修复 4 — Gacc 判官 2 个 bug(MedCTA task_success 复活)**
+- bug-a 嵌套 whitelist:`gold_answer.whitelist` 是 list-of-lists(`[["..."]]`),`gacc_judge.score` 的 `" | ".join(gold_answers)` 崩 → scoring 记 `gacc_unparseable`。修:`_flatten_str` 递归扁平后再 join。
+- bug-b max_tokens:`80` 太小,gemini-2.5-flash 的 thinking token 吃光额度,只输出 ```json 围栏就截断 → `_parse_score` 取不到 `{"score":N}`。修:80→1024 + 正则兜底。
+- 文件:`runner/gacc_judge.py`。验证(端到端重跑):cp_outcome 出 0-1 分(0.0/0.5/0.0,ek=gacc_judge),task_success 正确聚合,gacc_mean 0.17。
+
+**三数据集小子集结果(gpt-5.5)**
+
+| 指标 | PhysicianBench(3) | MedCTA(3) | HealthAdminBench(3) |
+|---|---|---|---|
+| task_success | 0/3(subtask 5/7、2/8、0/7) | 0/3(1 项 cp_outcome 过) | 0/3 |
+| subtask_success | 0.32(旧 0.08)↑ | 0.42(原全断) | 0.00 |
+| gacc_mean | n/a | 0.17(0/0.5/0,原 None) | n/a |
+| functional_tool_use | 1.00 | 1.00 | 0.00 |
+| required_tool_completion | 0.67 | 1.00 | 0.00 |
+| tool_call_success | 0.91 | 1.00 | 1.00 |
+| argument_validity | 0.96 | 1.00 | 1.00 |
+| unsafe_action_rate | 0.00 @cov 1.0 | n/a(缺判官) | n/a |
+| redundant_action_rate | 0.00 | 0.00 | 0.94(死循环) |
+
+**结论 / 遗留**
+- **PB / MedCTA task_success 机器修好、可解释**:PB 最好那条 5/7 仅差"漏下盆超声医嘱"+ 推理不全(真实临床缺陷,非 harness 假象);MedCTA Gacc 出真分。
+- **HAB 结构性受限(非退化)**:GUI mock 不暴露可点 target,agent 死循环 navigate(redundant 0.94),与 v0d 一致。诚实修法 = 接 Playwright 真门户(大工程),不可把 checkpoint target 喂给 agent。
+- 操作注记:跑 PB report 必须带 `MH_FHIR_BASE`,否则 unsafe_action_rate 全 unknown(确定性 drug_safety_check 需 live FHIR);带上后 0.00 @cov 1.0。
+- 待办:HAB 真门户;HAB/MedCTA 动作安全 LLM 判官未接(`missing_judge`/`missing_grounding_judge`)。
+- 运维:长跑用 `setsid` detached + `.done` 哨兵(登录节点 load 高、频繁踢 SSH;setsid 进程存活);并发批次勿同时对同一 FHIR 做 restore_pristine(抢 H2 文件锁,exit 7)。
+
+
 ## 2026-06-22 (续) — FHIR prompt 防 Patient 死循环 + provenance judges 防 env 串台虚标
 
 - **改动1(评审#1)**:`SYS_BY_ENV["fhir"]` 补硬约束——"病人已由 MRN 标识,**不要搜 Patient 资源**(浪费步数);patient= 只用于 Observation/MedicationRequest/Condition/AllergyIntolerance/DiagnosticReport/DocumentReference 等临床资源"。治上轮 qwen 死循环发 `Patient?patient=` 空耗步数 → 兜底只写出空交付物。gpt5 能自纠、qwen 受此累。

@@ -1,8 +1,10 @@
 # Medical Harness — 项目状态总览 (STATUS)
 
-> **单一进度入口**。最后更新:2026-06-21 · 主机:HPC ce483 `~/Medical_harness/` · 规范:Task Spec v2
+> **单一进度入口**。最后更新:2026-06-22 · 主机:HPC ce483 `~/Medical_harness/` · 规范:Task Spec v2
 > **运行环境:`medicalharness`**(conda,Python 3.10;`~/.conda/envs/medicalharness/bin/python`)——与 AgentOCR 解耦,代码一律用此环境。GPU 经 `sbatch -p debug --gres=gpu:1`(A40)。
 > 三数据集组合:**PhysicianBench(FHIR 临床)+ HealthAdminBench(GUI 行政)+ MedCTA(多模态影像)**,全 agentic、不重叠、合起来覆盖 7 个 ETCLOVG 模块。
+> **2026-06-22(续4-5)**:对照 PB 官方(GPT-5.5 Pass@1=46.3%);修交付物路径嵌套 bug(adc 0→5/7)、加 reasoning_effort=high、迁移网关 micuapi(UA=codex,仅 GPT-5.x 可用、无多模态)。HAB 切真门户 GuiEnvReal(登录节点 chromium --no-sandbox 可启,subtask 0→0.58、redundant 0.94→0)、MedCTA arg_accuracy 放宽(1/3 success)——两个 0 都是 harness 问题、改完都不再 0。详见 CHANGELOG。
+> **2026-06-22(续2)**:gpt-5.5 三数据集小子集验证 → PB/MedCTA task_success 机器修好(cp1 canon 映射、内容判官、Gacc 扁平+max_tokens、ApiVLM 免 GPU);HAB 结构性受限(mock 无可发现 target,需真门户)。详见 CHANGELOG。
 
 ## 0. 文档地图
 
@@ -21,8 +23,11 @@
 | Action-level 安全规范(正式)| `benchmark_metric/SAFETY_SPEC_v1.md` |
 | Action-level 安全实现 | `benchmark_metric/{risk_annotator,fhir_scope,safety_metrics}.py` + `test_safety.py`(14 单测)|
 | llm_judge 后端(本地 Qwen 判官)| `runner/judge_backend.py`(MH_JUDGE=qwen 开启)|
-| OpenAI 兼容 API 大脑(gpt-5.5 等)| `runner/openai_agent.py`(`--agent gpt5`;`MH_OPENAI_BASE/MODEL/KEY`,key 存 ~/.xbai_key)|
+| OpenAI 兼容 API 大脑(gpt-5.5/5.4)| `runner/openai_agent.py`(`--agent gpt5`;网关 **micuapi.ai**,`MH_OPENAI_BASE/MODEL/KEY/UA`,UA 默认 `codex_cli_rs/0.20.0`,`MH_OPENAI_REASONING` 默认 high,key 存 ~/.xbai_key)|
 | 多模态 grounding 裁判(看图判 MedCTA cp_grounding）| `runner/mm_judge_backend.py`(`MH_MM_JUDGE=1`;默认 gemini-2.5-flash;cp_grounding 已 native→augmented）|
+| VLM 后端(MedCTA 图像工具)| `runner/vlm_backend.py` — `MH_VLM_BACKEND=local`(Qwen3-VL,需 GPU)或 `api`(网关 gemini-2.5-flash,免 GPU)|
+| PB cp1 工具名映射 | `runner/run.py::_canon_fhir_tool` — 统一 `fhir_search(resourceType)` → 上游粒度名,使原生 cp1 认得查询(保守:Observation 默认 labs)|
+| MedCTA Gacc 0-1 判官 | `runner/gacc_judge.py`(`MH_GACC=1`;嵌套 whitelist 已扁平、max_tokens 1024+正则兜底;默认模型偏离登记 passport)|
 | 对齐门 passport(paper↔code 偏离登记)| `ALIGNMENT.md` + `alignment_passport.yaml`(prompt/裁判/口径维度:aligned 3/gap 3/extra 1,门禁🚧)|
 
 ## 1. 进度看板

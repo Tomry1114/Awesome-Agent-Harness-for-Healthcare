@@ -4,7 +4,7 @@ instead of the local Qwen3-VL. Tool perception (MedCTA image tools) still runs t
 the tool backend; this class only swaps the reasoning brain. Text-only brain across all 3 substrates.
 
 Config (env):
-  MH_OPENAI_BASE   default https://us-api.xbai.top   (calls {BASE}/v1/chat/completions)
+  MH_OPENAI_BASE   default https://www.micuapi.ai   (calls {BASE}/v1/chat/completions; UA=MH_OPENAI_UA default codex_cli_rs/0.20.0)
   MH_OPENAI_MODEL  default gpt-5.5
   MH_OPENAI_KEY    API key; if unset, read ~/.xbai_key (chmod 600, never committed)
 """
@@ -22,20 +22,22 @@ class OpenAIToolAgent(QwenToolAgent):
     name = "gpt5"
     def __init__(self, task):
         super().__init__(task)
-        self.base = os.environ.get("MH_OPENAI_BASE", "https://us-api.xbai.top").rstrip("/")
+        self.base = os.environ.get("MH_OPENAI_BASE", "https://www.micuapi.ai").rstrip("/")
         self.model = os.environ.get("MH_OPENAI_MODEL", "gpt-5.5")
+        self.reasoning = os.environ.get("MH_OPENAI_REASONING", "high")  # PhysicianBench official default = high
         self._key = _load_key()
     def _chat(self, messages, max_new_tokens=400):
         url = self.base + "/v1/chat/completions"
         body = {"model": self.model, "messages": messages,
                 "max_tokens": max(2048, int(max_new_tokens))}
+        if self.reasoning: body["reasoning_effort"] = self.reasoning
         data = json.dumps(body).encode()
         last = ""
         for attempt in range(5):
             try:
                 req = urllib.request.Request(url, data=data, method="POST", headers={
                     "Authorization": "Bearer " + self._key, "Content-Type": "application/json",
-                    "User-Agent": "curl/8.4.0", "Accept": "application/json"})
+                    "User-Agent": os.environ.get("MH_OPENAI_UA", "codex_cli_rs/0.20.0"), "Accept": "application/json"})
                 with urllib.request.urlopen(req, timeout=120) as r:
                     d = json.loads(r.read().decode())
                 msg = (d.get("choices") or [{}])[0].get("message", {}) or {}

@@ -1,5 +1,5 @@
 # alignment passport — Medical Harness (prompt / agent-protocol / answer-scoring dimension)
-# updated: 2026-06-21  host: ce483  scope: MedCTA + HAB prompts & MedCTA Gacc; NOT a full paper claim inventory
+# updated: 2026-06-22  host: ce483  scope: MedCTA + HAB prompts & MedCTA Gacc; NOT a full paper claim inventory
 gate_status: blocked          # has registered gaps
 counts: {aligned: 3, gap: 4, missing: 0, unknown: 0, extra: 1}
 claims:
@@ -8,6 +8,7 @@ claims:
     paper_ref: "benchmark/MedCTA/goal_accuracy.py:19,199"
     code_ref: "runner/scoring.py (gacc route); runner/gacc_judge.py"
     status: aligned
+    note: "2026-06-22 impl bug-fix: nested whitelist [[..]] flattened; gemini max_tokens 80->1024 (thinking-token starvation) + regex fallback. Path now produces real 0-1 end-to-end (was gacc_unparseable). Alignment unchanged (method/prompt verbatim)."
   - id: medcta-gacc-prompt
     paper: "GOAL_ACCURACY_SYSTEM/USER_PROMPT"
     paper_ref: "benchmark/MedCTA/goal_accuracy.py:33-66"

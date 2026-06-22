@@ -81,12 +81,27 @@ def run_checkpoint(cp, ctx):
                     "failure_mode": None if ok else "agent_failure",
                     "failure_tag": None if ok else "tool_selection_error",
                     "detail": {"mode": "contains", "expected": sorted(expected), "used": sorted(used)}}
-        if chk.get("method") == "arg_match":  # MedCTA ArgAcc
+        if chk.get("method") == "arg_match":  # MedCTA ArgAcc — argument-KEY coverage (relaxed from exact-match)
+            # Aligned to upstream semantic/subset spirit (NOT exact trace equality): for every reference tool,
+            # the agent must have invoked it AND supplied (non-empty) the same NON-system argument keys. The
+            # image path is system-injected by the env (agent never passes it) and exact values/order/count
+            # differ legitimately, so exact match (old) failed even correct runs (e.g. MCTA-1). #passport
             ref = ctx.get("ref_tool_calls", []); ag = ctx.get("agent_tool_calls", [])
-            ok = [n for n, _ in ag] == [n for n, _ in ref] and [a for _, a in ag] == [a for _, a in ref]
+            SYS = {"image", "image_path", "img", "image_url"}
+            ref_keys = {}
+            for n, a in ref: ref_keys.setdefault(n, set()).update(set((a or {}).keys()) - SYS)
+            ag_keys = {}
+            for n, a in ag:
+                ag_keys.setdefault(n, set()).update(
+                    {k for k, v in (a or {}).items() if k not in SYS and v not in (None, "", [], {}, ())})
+            missing = [n for n, ks in ref_keys.items() if n not in ag_keys or not (ks <= ag_keys[n])]
+            ok = bool(ref) and not missing
             return {**base, "checkpoint_status": "passed" if ok else "failed",
                     "failure_mode": None if ok else "agent_failure",
-                    "failure_tag": None if ok else "tool_argument_error"}
+                    "failure_tag": None if ok else "tool_argument_error",
+                    "detail": {"mode": "argkey_coverage", "missing": missing,
+                               "ref_keys": {k: sorted(v) for k, v in ref_keys.items()},
+                               "ag_keys": {k: sorted(v) for k, v in ag_keys.items()}}}
         if chk.get("method") == "jmespath" and ctx.get("full_state") is not None:
             try:
                 import jmespath
@@ -148,6 +163,11 @@ def run_checkpoint(cp, ctx):
                     "judge_backend": gv.get("model"), "score": sc, "score_eligible": True,
                     "detail": {"gacc_score": sc, "threshold": thr, "raw_truncated": gv.get("raw"),
                                "gold_n": len(gold), "judge_model": gv.get("model")}}
+        if cp.get("subdimension") == "context_grounding":
+            # 诚信门: a TEXT-only local judge cannot SEE the image -> NEVER let it score image-grounding.
+            # The multimodal route above handles grounding when MH_MM_JUDGE is set; else skip honestly.
+            return {**base, "checkpoint_status": "skipped", "failure_mode": None,
+                    "skip_reason": "missing_grounding_judge"}
         judge = ctx.get("judge")
         if judge is not None:  # real judge backend -> score-eligible local_model_judge (NOT expert/independent)
             obs_text, obs_meta = _judge_observations(ctx)

@@ -96,10 +96,73 @@ class LocalQwen3VL:
         out = self._model.generate(**inputs, max_new_tokens=max_new_tokens, do_sample=False)
         return self._proc.decode(out[0][inputs["input_ids"].shape[1]:], skip_special_tokens=True).strip()
 
+
+class ApiVLM:
+    """API-backed VLM (gateway multimodal model, default gemini-2.5-flash). Same interface as
+    LocalQwen3VL so MedCTA image tools run with NO local GPU. Real pixel grounding is preserved:
+    region_attribute_description crops the PIL image and sends ONLY the crop (not coordinates in text)."""
+    name = "api:gateway"
+    def __init__(self, model=None):
+        import urllib.request
+        self.model = model or os.environ.get("MH_VLM_API_MODEL", "gemini-2.5-flash")
+        _b = (os.environ.get("MH_VLM_API_BASE") or os.environ.get("MH_OPENAI_BASE") or "https://www.micuapi.ai").rstrip("/")
+        if _b.endswith("/v1"): _b = _b[:-3].rstrip("/")  # normalize: callers append /v1 (consistent with openai_agent/gacc/mm_judge)
+        self.base = _b
+        self.key = os.environ.get("MH_OPENAI_KEY") or os.environ.get("OPENAI_API_KEY")
+        if not self.key:
+            kp = os.path.expanduser("~/.xbai_key")
+            if os.path.exists(kp): self.key = open(kp).read().strip()
+    _MIME = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp"}
+    def _encode(self, image):
+        import io, base64
+        if isinstance(image, str):
+            ext = os.path.splitext(image)[1].lower()
+            with open(image, "rb") as f: raw = f.read()
+            return self._MIME.get(ext, "image/jpeg"), base64.b64encode(raw).decode()
+        buf = io.BytesIO(); image.convert("RGB").save(buf, format="PNG")
+        return "image/png", base64.b64encode(buf.getvalue()).decode()
+    def _call(self, image, prompt, max_tokens=256):
+        import json, time, urllib.request, urllib.error
+        mime, b64 = self._encode(image)
+        durl = "data:%s;base64,%s" % (mime, b64)
+        body = {"model": self.model, "max_tokens": max_tokens, "messages": [{"role": "user", "content": [
+            {"type": "text", "text": prompt}, {"type": "image_url", "image_url": {"url": durl}}]}]}
+        data = json.dumps(body).encode()
+        last = ""
+        for attempt in range(4):
+            try:
+                req = urllib.request.Request(self.base + "/v1/chat/completions", data=data, method="POST",
+                    headers={"Authorization": "Bearer %s" % self.key, "Content-Type": "application/json",
+                             "User-Agent": os.environ.get("MH_OPENAI_UA", "codex_cli_rs/0.20.0")})
+                with urllib.request.urlopen(req, timeout=120) as r:
+                    d = json.load(r)
+                c = (d.get("choices") or [{}])[0].get("message", {}).get("content")
+                if isinstance(c, list): c = "".join(x.get("text", "") for x in c if isinstance(x, dict))
+                if c and c.strip(): return c.strip()
+                last = "empty_response"
+            except urllib.error.HTTPError as e:
+                last = "http_%s:%s" % (e.code, e.read().decode("utf-8", "ignore")[:120])
+                if e.code in (401, 403): return "[vlm_api_error] " + last
+            except Exception as ex:
+                last = repr(ex)
+            time.sleep(min(8, 2 ** attempt))
+        return "[vlm_api_error] " + last
+    def image_description(self, image): return self._call(image, IMAGE_DESC_PROMPT)
+    def region_attribute_description(self, image, bbox=None, attribute=None):
+        img = Image.open(image).convert("RGB") if isinstance(image, str) else image
+        cropped, ok = (_crop_to_bbox(img, bbox) if bbox is not None else (img, False))
+        if not ok and attribute is None and isinstance(bbox, str): attribute = bbox
+        prompt = _region_prompt(attribute)
+        if bbox is not None and not ok: prompt += " (No pixel box could be applied; describing the full image.)"
+        return self._call(cropped, prompt)
+    def ocr(self, image): return self._call(image, OCR_PROMPT, max_tokens=512)
+
 @functools.lru_cache(maxsize=1)
 def get_backend():
     """Return the configured VLM backend (singleton). MH_VLM_BACKEND=local (default)."""
     kind = os.environ.get("MH_VLM_BACKEND", "local")
     if kind == "local":
         return LocalQwen3VL()
+    if kind == "api":
+        return ApiVLM()
     raise ValueError("unknown MH_VLM_BACKEND: %s (only local implemented; api backend = future)" % kind)

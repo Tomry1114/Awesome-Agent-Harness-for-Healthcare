@@ -62,6 +62,27 @@ def cleanup_stub(base):
             err = repr(ex)
     return {"deleted": n, "error": err}
 
+_FHIR_CANON_SEARCH = {"Patient":"fhir_patient_search_demographics","Condition":"fhir_condition_search_problems","MedicationRequest":"fhir_medication_request_search_orders","Procedure":"fhir_procedure_search_orders","DocumentReference":"fhir_document_reference_search_clinical_notes","ServiceRequest":"fhir_service_request_search"}
+_FHIR_CANON_CREATE = {"MedicationRequest":"fhir_medication_request_create","ServiceRequest":"fhir_service_request_create","Communication":"fhir_communication_create_message","Appointment":"fhir_appointment_create"}
+def _canon_fhir_tool(tool, args):
+    """Map our generic fhir_search/read/create(resourceType=X) to the upstream PhysicianBench granular
+    tool_name so native test_outputs.py checkpoints (which match metadata.tool_name) recognize the query.
+    Conservative: a category-less Observation search -> labs only (never auto-credits vitals/social)."""
+    a = args or {}
+    if tool == "fhir_create":
+        res = a.get("resource", a) or {}
+        rt = res.get("resourceType", a.get("resourceType", ""))
+        return _FHIR_CANON_CREATE.get(rt, tool)
+    if tool in ("fhir_search", "fhir_read"):
+        rt = a.get("resourceType", ""); cat = str(a.get("category", "")).lower()
+        if rt == "Observation":
+            if "vital" in cat: return "fhir_observation_search_vitals"
+            if "social" in cat: return "fhir_observation_search_social_history"
+            return "fhir_observation_search_labs"
+        return _FHIR_CANON_SEARCH.get(rt, tool)
+    return tool
+
+
 def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, job_dir=None, cleanup=True):
     # NOTE: in PhysicianBench the FHIR Patient.id == MRN, so context.patient_ref (an MRN) is also a
     # valid resource id and Patient/{patient_ref} resolves. If a future bench uses non-MRN ids,
@@ -84,6 +105,7 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
     _dm = _re.search(r"/?workspace/output/[\w.\-]+", task.get("goal", "") or "")
     _deliverable = _dm.group(0) if _dm else None
     _deliv_nudges = 0
+    _fail_sig = None; _fail_n = 0; _aborted = False  # circuit breaker: abort on repeated identical failing call
     if hasattr(env, "initial_observation"):
         _io = env.initial_observation()
         if _io is not None:
@@ -139,8 +161,17 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
                                       if ("HTTP " + c) in _es),
                                      "exception" if any(k in _es for k in ("Error", "Exception", "Traceback")) else "tool_error")
         trajectory.append(_ev)
+        if _err:
+            _sig = (action["tool"], json.dumps(action.get("args", {}), sort_keys=True), _ev.get("error_type"))
+            _fail_n = _fail_n + 1 if _sig == _fail_sig else 1; _fail_sig = _sig
+            if _fail_n >= 3:  # same (tool,args,error) 3x -> stuck; abort instead of burning to max_steps (cf. upstream mini_agent)
+                trajectory.append({"step": step, "event_type": "circuit_breaker", "error": "repeated_failing_call",
+                                   "tool": action["tool"], "repeats": _fail_n, "status": "error"})
+                _aborted = True; break
+        else:
+            _fail_sig = None; _fail_n = 0
         last_obs = obs; last_res = res
-    if not finished:  # #8 ran out of steps without a final answer
+    if not finished and not _aborted:  # #8 ran out of steps without a final answer (circuit-breaker abort logs its own event)
         trajectory.append({"step": max_steps, "event_type": "agent_error", "error": "max_steps_exceeded", "status": "error"})
     # deliverable enforcement (final): guarantee ONE write attempt if the required file is still missing
     # (covers both "finished early" and "ran out of steps"), then normalize a mis-named single file.
@@ -166,11 +197,12 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
                                    "error": "forced_deliverable_failed", "raw": repr(_fe)[:120], "status": "error"})
         if _ws and os.path.isdir(_ws) and _missing():  # mis-named single file -> normalize (transparent)
             _cands = [f for f in glob.glob(os.path.join(_ws, "*")) if os.path.isfile(f) and os.path.getsize(f) > 0]
-            if len(_cands) == 1:
-                shutil.copyfile(_cands[0], _want)
+            if _cands:  # >=1 candidate: copy the largest non-empty file to the required name (handles >=2 too)
+                _best = max(_cands, key=os.path.getsize)
+                shutil.copyfile(_best, _want)
                 trajectory.append({"step": max_steps, "event_type": "deliverable_renamed",
-                                   "from": os.path.basename(_cands[0]), "to": os.path.basename(_deliverable),
-                                   "status": "ok"})
+                                   "from": os.path.basename(_best), "to": os.path.basename(_deliverable),
+                                   "n_candidates": len(_cands), "status": "ok"})
     env.teardown()
 
     # upstream-format trajectory.log for native_pytest
@@ -178,7 +210,7 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
         for ev in trajectory:
             if ev.get("event_type") == "tool_call":
                 f.write(json.dumps({"timestamp": datetime.datetime.now().isoformat(), "type": "tool_call",
-                                    "content": ev["tool"], "metadata": {"tool_name": ev["tool"],
+                                    "content": ev["tool"], "metadata": {"tool_name": _canon_fhir_tool(ev["tool"], ev.get("args")),
                                     "input": ev.get("args"), "output": ev.get("result")}}) + "\n")
 
     # text sources for recommendation/documentation safety
@@ -214,13 +246,15 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
     if _gacc_on:
         import gacc_judge; _gacc_fn = gacc_judge.score
     # PB content checkpoints (upstream eval_helpers.llm_judge) need an OpenAI-compatible judge. Opt-in by
-    # setting LLM_JUDGE_MODEL; auto-fill key/base from the xbai gateway file so only the model is chosen.
+    # setting LLM_JUDGE_MODEL; auto-fill key/base from the gateway key file (default micuapi) so only the model is chosen.
     # (native_pytest propagates os.environ to the pytest subprocess.) Judge-model deviation -> passport.
     if os.environ.get("LLM_JUDGE_MODEL") and not os.environ.get("OPENAI_API_KEY"):
         _kf = os.path.expanduser("~/.xbai_key")
         if os.path.exists(_kf):
             os.environ["OPENAI_API_KEY"] = open(_kf).read().strip()
-            os.environ.setdefault("OPENAI_BASE_URL", "https://us-api.xbai.top/v1")
+            _jb = (os.environ.get("MH_JUDGE_BASE") or os.environ.get("MH_OPENAI_BASE", "https://www.micuapi.ai")).rstrip("/")
+            if _jb.endswith("/v1"): _jb = _jb[:-3].rstrip("/")
+            os.environ.setdefault("OPENAI_BASE_URL", _jb + "/v1")
     ctx = {"base": getattr(env, "base", None), "mrn": (task.get("context") or {}).get("patient_ref"),
            "trajectory": trajectory, "created_meds": scoring.created_meds(trajectory),
            "final_texts": final_texts, "note_texts": note_texts, "full_state": getattr(env, "full_state", None),
@@ -281,7 +315,7 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
     if _g: judges["grounding"] = _g
     _outc = judges.get("outcome", {})
     judge_model = _outc.get("model", "none")
-    judge_decoding = ({"temperature": 0, "max_new_tokens": 80} if _outc.get("tier") == "gacc_semantic" else
+    judge_decoding = ({"max_tokens": 1024} if _outc.get("tier") == "gacc_semantic" else  # matches gacc_judge actual (no temperature)
                       ({"temperature": 0, "do_sample": False, "max_new_tokens": 220} if _outc.get("tier") == "local_model_judge" else None))
     provenance = {"agent_model": agent_model, "tool_backend": tool_backend,
                   "tool_backend_model": tool_backend_model, "judge_model": judge_model,

@@ -83,7 +83,7 @@ class FhirEnv(EnvironmentAdapter):
                 return {"error": "path traversal rejected"}
             # workspace already ends with .../workspace/output — strip that prefix if the agent
             # echoed the conventional path (else we'd double-nest and native_pytest wouldn't find it)
-            for pre in ("workspace/output/", "workspace/"):
+            for pre in ("workspace/output/", "workspace/", "output/"):  # self.workspace already IS .../workspace/output -> also strip bare output/ (else output/X nests to output/output/X)
                 if rel.startswith(pre):
                     rel = rel[len(pre):]
                     break

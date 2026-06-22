@@ -58,3 +58,5 @@ runner/medcta_profile*.json
 
 # All per-run result dirs (regenerable bundles + reports)
 /results_*/
+results_*.done
+results_*.log

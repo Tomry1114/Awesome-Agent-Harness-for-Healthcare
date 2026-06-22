@@ -38,7 +38,7 @@ def _parse(txt):
 
 def judge_grounding(rubric, answer, image_path, question="", model=None):
     model = model or os.environ.get("MH_MM_JUDGE_MODEL", "gemini-2.5-flash")
-    base = os.environ.get("MH_OPENAI_BASE", "https://us-api.xbai.top").rstrip("/")
+    base = (os.environ.get("MH_JUDGE_BASE") or os.environ.get("MH_OPENAI_BASE", "https://www.micuapi.ai")).rstrip("/")  # judge gateway can differ from agent
     if not image_path or not os.path.exists(image_path):
         return {"passed": None, "reason": "image_not_found:%s" % image_path, "model": model, "judge_tier": "multimodal_judge"}
     raw = open(image_path, "rb").read()
@@ -53,7 +53,7 @@ def judge_grounding(rubric, answer, image_path, question="", model=None):
         try:
             req = urllib.request.Request(base + "/v1/chat/completions", data=data, method="POST", headers={
                 "Authorization": "Bearer " + _key(), "Content-Type": "application/json",
-                "User-Agent": "curl/8.4.0", "Accept": "application/json"})
+                "User-Agent": os.environ.get("MH_OPENAI_UA", "codex_cli_rs/0.20.0"), "Accept": "application/json"})
             with urllib.request.urlopen(req, timeout=120) as r:
                 d = json.loads(r.read().decode())
             content = (d.get("choices") or [{}])[0].get("message", {}).get("content")

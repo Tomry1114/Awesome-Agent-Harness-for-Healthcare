@@ -57,22 +57,36 @@ def _parse_score(txt):
                     return max(0.0, min(1.0, float(o["score"])))
             except Exception:
                 pass
+    import re as _re
+    m = _re.search(r'score\"?\'?\s*[:=]\s*(1(?:\.0+)?|0?\.\d+|0)', txt)
+    if m:
+        try: return max(0.0, min(1.0, float(m.group(1))))
+        except Exception: pass
     return None
+
+def _flatten_str(x):
+    if isinstance(x, str): return [x]
+    if isinstance(x, (list, tuple)):
+        out = []
+        for i in x: out.extend(_flatten_str(i))
+        return out
+    return [str(x)] if x is not None else []
+
 
 def score(prediction, gold_answers, model=None):
     """Return {score: 0-1 float | None, raw, model}. gold_answers: list[str] of acceptable gold answers."""
     model = model or os.environ.get("MH_GACC_MODEL", "deepseek-v3.2")
-    base = os.environ.get("MH_OPENAI_BASE", "https://us-api.xbai.top").rstrip("/")
-    gold = " | ".join(gold_answers) if isinstance(gold_answers, (list, tuple)) else str(gold_answers)
+    base = (os.environ.get("MH_JUDGE_BASE") or os.environ.get("MH_OPENAI_BASE", "https://www.micuapi.ai")).rstrip("/")  # judge gateway can differ from agent
+    gold = " | ".join(_flatten_str(gold_answers))
     user = GOAL_ACCURACY_USER_PROMPT.format(gold_final=gold, pred_final=(prediction or "")[:2000])
     body = {"model": model, "messages": [{"role": "system", "content": GOAL_ACCURACY_SYSTEM_PROMPT},
-                                         {"role": "user", "content": user}], "max_tokens": 80}
+                                         {"role": "user", "content": user}], "max_tokens": 1024}
     data = json.dumps(body).encode(); last = ""
     for attempt in range(4):
         try:
             req = urllib.request.Request(base + "/v1/chat/completions", data=data, method="POST", headers={
                 "Authorization": "Bearer " + _key(), "Content-Type": "application/json",
-                "User-Agent": "curl/8.4.0", "Accept": "application/json"})
+                "User-Agent": os.environ.get("MH_OPENAI_UA", "codex_cli_rs/0.20.0"), "Accept": "application/json"})
             with urllib.request.urlopen(req, timeout=120) as r:
                 d = json.loads(r.read().decode())
             content = (d.get("choices") or [{}])[0].get("message", {}).get("content")
