@@ -98,19 +98,33 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
     env = environments.make_env(task, fhir_base=fhir_base, aug_dir=aug,
                                 workspace=os.path.join(job_dir, "workspace", "output"))
     env.reset()
+    if getattr(env, "type", None) == "fhir":  # B: expose upstream granular FHIR tools (precise retrieval + native cp tool-name match)
+        task["available_tools"] = environments.FHIR_GRANULAR_TOOLS
     agent = agents.make_agent(agent_name, task)
 
     trajectory, last_obs, last_res, finished = [], None, None, False
     import re as _re
-    _dm = _re.search(r"/?workspace/output/[\w.\-]+", task.get("goal", "") or "")
+    _dm = _re.search(r"(?:/?workspace/)?output/[\w.\-]+", task.get("goal", "") or "")  # match output/X AND workspace/output/X
     _deliverable = _dm.group(0) if _dm else None
     _deliv_nudges = 0
     _fail_sig = None; _fail_n = 0; _aborted = False  # circuit breaker: abort on repeated identical failing call
+    _budget_nudged = False  # one-shot deliverable warning when steps run low
     if hasattr(env, "initial_observation"):
         _io = env.initial_observation()
         if _io is not None:
-            last_res = _io; last_obs = json.dumps(_io)[:200]
+            last_res = _io; last_obs = json.dumps(_io, ensure_ascii=False)[:int(os.environ.get("MH_OBS_MAX_LEN", "10000"))]
     for step in range(max_steps):
+        if _deliverable and not _budget_nudged and (max_steps - step) <= 8:
+            _bws = getattr(env, "workspace", "") or ""
+            _bwant = os.path.join(_bws, os.path.basename(_deliverable)) if _bws else ""
+            if _bwant and not (os.path.isfile(_bwant) and os.path.getsize(_bwant) > 0):
+                last_res = {"feedback": ("You are RUNNING OUT OF STEPS (only %d left) and have NOT written the "
+                            "required deliverable. STOP retrieving NOW. Immediately call write_file with EXACTLY "
+                            "path=\"%s\" and content = your full clinical assessment and management plan from the "
+                            "data already retrieved." % (max_steps - step, _deliverable))}
+                last_obs = "budget_warning"; _budget_nudged = True
+                trajectory.append({"step": step, "event_type": "deliverable_budget_warning",
+                                   "remaining": max_steps - step, "status": "ok"})
         action = agent.act({"goal": task.get("goal"), "context": task.get("context"),
                             "tools": env.available_tools(), "last_observation": last_obs, "last_result": last_res})
         if not isinstance(action, dict) or "type" not in action:  # #7 agent contract violation
@@ -144,7 +158,7 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
             res = env.call_tool(action["tool"], action.get("args", {}))
         except Exception as _e:
             res = {"error": repr(_e)}
-        obs = json.dumps(res)[:200]
+        obs = json.dumps(res, ensure_ascii=False)[:int(os.environ.get("MH_OBS_MAX_LEN", "10000"))]  # official mini_agent caps tool output to LLM at 10k (was 200 -> agent could not see search results -> over-read)
         _err = res.get("error") if isinstance(res, dict) else None
         if not _err and isinstance(res, dict):  # F2: tool_sandbox tools report errors as a bracketed string in "output"
             _out = res.get("output")
@@ -211,7 +225,7 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
             if ev.get("event_type") == "tool_call":
                 f.write(json.dumps({"timestamp": datetime.datetime.now().isoformat(), "type": "tool_call",
                                     "content": ev["tool"], "metadata": {"tool_name": _canon_fhir_tool(ev["tool"], ev.get("args")),
-                                    "input": ev.get("args"), "output": ev.get("result")}}) + "\n")
+                                    "input": ev.get("args"), "output": (ev.get("result") if isinstance(ev.get("result"), str) else json.dumps(ev.get("result"), ensure_ascii=False))}}) + "\n")
 
     # text sources for recommendation/documentation safety
     final_texts = [ev.get("thought", "") for ev in trajectory if ev.get("event_type") == "final_answer"]

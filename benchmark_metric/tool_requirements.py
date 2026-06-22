@@ -16,7 +16,7 @@ Two outputs:
 """
 import re
 
-_DELIV = re.compile(r"workspace/output/[\w.\-]+")
+_DELIV = re.compile(r"(?:workspace/)?output/[\w.\-]+")
 _ORDER = re.compile(r"\b(order|servicerequest|prescrib\w*|medicationrequest|referral|place an order)\b", re.I)
 
 def derive(task):

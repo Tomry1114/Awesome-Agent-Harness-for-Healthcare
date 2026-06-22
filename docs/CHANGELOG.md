@@ -1,3 +1,78 @@
+## 2026-06-22 (续10) — PB 深挖:对齐官方 mini_agent,找到并修 3 个真 bug(adc 0/7→3/7,行为正常化)
+
+用户多轮追问「没 review 到真实问题」,逐层挖出 adc「压根不写交付物」的真因——不是模型顽固,是**三个叠加的 harness bug** + 与官方 agent 的关键差异。
+
+**对照官方 PhysicianBench(`agent/mini_agent.py` / `prompts.py` / `tool_registry.py`)**
+- 官方:原生 function-calling API、`parallel_tool_calls=True`、`MAX_TOOL_OUTPUT_LEN=10_000`、reasoning_effort=high、通用 prompt、粒度命名工具。
+- 我们:文本 `<tool_call>` 协议、串行、obs 截断过小、prompt 偏规定性。
+
+**修复 1 — 交付物路径正则漏 `output/X`** `runner/run.py` + `benchmark_metric/tool_requirements.py`
+- adc goal 写「saved to `output/pulmonary_assessment.txt`」(无 workspace/ 前缀),但 `_deliverable` 正则 `/?workspace/output/...` 匹配不到 → `_deliverable=None` → 预算守卫/强制轮/final 拦截**全不触发** → agent 永不被提示写。PB-100 有 **4 个任务**这样被漏(必 0)。
+- 修：正则放宽为 `(?:/?workspace/)?output/[\w.\-]+`。
+
+**修复 2 — `max_tokens=2048` 被 reasoning token 饿死** `runner/openai_agent.py`
+- 实验:reasoning=high 用掉 ~516 reasoning_tokens,2048 里只剩 ~28 给内容 → 长 write_file 发不出(无 `</tool_call>`)；low effort 则完整 5487 字。和早先 Gacc(max_tokens=80)同类。
+- 修：`max(2048,…)` → `max(16000,…)`(`MH_OPENAI_MAX_TOKENS`)。验证：high + 16000 → 完整 write_file。
+
+**修复 3 — 工具输出 obs 截断过小(最大头)** `runner/qwen_agent.py`(+ run.py 日志侧)
+- agent 实际看到的工具结果在 `act()` 里截断到 **1500 字符**(run.py 的 200 只是日志)；官方给 LLM **10000**。→ agent 看不全搜索结果 → 逐个 `fhir_read` 取详情 → 狂读耗尽步数。
+- 修：1500 → 10000(`MH_OBS_MAX_LEN`)。**效果立竿见影**：adc `fhir_read` 37→**11**、tool_calls 50→**22**、提前干净完成。
+
+**修复 4 — B：粒度 FHIR 工具面** `environments.py`+`run.py`+`qwen_agent.py`(续9 起)
+- 13 个上游粒度工具 dispatch(Observation 带 category labs/vitals/social)+ fhir 任务 available_tools 换成粒度工具 + prompt 改粒度引导/及早交付。cp1 工具名原生匹配。
+
+**修复 5 — Bug A `.find()` 崩**(续9)：trajectory.log 的 output 序列化成字符串。
+
+**adc 单任务复盘(三修复叠加后)**：wrote_deliverable=true、9112 字、fhir_read 11、tool_calls 22、**success=False 但 subtask 0/7 → 3/7**。失败从「harness bug(没写)」变成「真实临床内容质量」(cp3 结论过度对冲 'cannot be excluded'、cp7 文书不全)——与官方「临床推理是第一失败源」一致。
+
+**结论**：PB 之前的低分大量是 harness 假象(漏检正则 + token 饿死 + obs 过小)。修后行为正常化、失败回到真实模型质量。仍存差异:文本协议 vs 原生 function-calling、串行 vs 并行。
+
+
+## 2026-06-22 (续9) — PB 诊断:修 .find() 崩(trajectory.log output 类型)+ 交付物过度探索
+
+用户判断「PB 肯定有问题」属实。PB-5 0/5 背后两个 bug：
+
+**🔴 Bug A — `.find()` 崩(真 harness bug)** `runner/run.py`
+- 现象：adrenal_incidentaloma / adrenal_insufficiency 的 `cp1_data_retrieval` 崩 `AttributeError: 'dict' object has no attribute 'find'`。
+- 根因：upstream-format trajectory.log 的 `metadata.output` 写的是 **dict**(FHIR 结果),但上游 `eval_helpers._strip_truncation_marker(raw)` / `get_*` 对工具输出调 `raw.find(...)`，期望**字符串** → 崩。凡是读工具输出的 cp（cp1 + 内容判官）在这些任务上系统性失败,与模型无关。
+- 修复：trajectory.log 的 `output` 改为 `result if isinstance(result,str) else json.dumps(result)`(对齐上游字符串约定)。验证：旧(dict)崩 50 次 → 新(string）崩 0 次。
+
+**🟠 Bug B — 交付物过度探索不写** 
+- 现象：adc_pulmonary_toxicity reasoning=high 下 50 步全查 FHIR、**从不调 write_file** → max_steps_exceeded、output 空 → 7 个内容 cp 全报「file not found」。强制交付物轮(单次)未救回。
+- 根因：generic `fhir_search` 检索低效(连工具面偏差 #3）→ 步数耗尽前未交付。属 agent 行为 + 工具面,非纯 harness。
+- 待办:强化交付物 prompt / 强制轮重试 / 暴露粒度工具(根治）。
+
+**结论**：PB-5 0/5 中,adrenal 两任务受 Bug A 拖累(已修)、adc 受 Bug B(待治）。修 Bug A 后 PB task_success 预期上升,需重跑确认（high 推理 ~3h，待定）。
+
+
+## 2026-06-22 (续8) — 各 10(PB-5 high)完整指标表 + MedCTA 口径问题
+
+gpt-5.5 / micuapi / reasoning=high,最新修复后代码。PB 因高推理极慢(~35min/任务)只跑 5。
+
+| 指标 | PhysicianBench(5) | HealthAdminBench(10) | MedCTA(10) |
+|---|---|---|---|
+| task_success | 0/5 | **3/10** | 1/10(严)/ **7/10**(口径B) |
+| subtask_success | 0.35 | 0.78 | 0.47 |
+| gacc_mean | n/a | n/a | 0.69 |
+| functional_tool_use | 1.00 | 0.50 | 1.00 |
+| required_tool_completion | 0.60 | 0.50 | 1.00 |
+| tool_call_success | 0.94 | 0.94 | 1.00 |
+| argument_validity | 0.95 | 1.00 | 1.00 |
+| workflow_completion | n/a | 0.60 | n/a |
+| redundant_action | 0.00 | 0.02 | 0.00 |
+| unsafe_action_rate | 0.00@cov1.0 | n/a | n/a |
+| required_check_completion | 0.50 | 1.00 | 1.00 |
+| patient_scope_correctness | 1.00@cov0.75 | 1.00@cov1.0 | n/a |
+| verifier_coverage | 0.98 | 0.42 | 0.80 |
+| qualification_integrity | 1.00 | 1.00 | 1.00 |
+
+**观察**
+- HAB 真门户:3/10 task_success、subtask 0.78（从结构性 0 到真通过）。
+- MedCTA：gacc_mean 0.69（答案好），但严口径 1/10 卡在 `cp_tool_selection`（agent 答对却走了别的有效工具路径，5 个满分被卡）。口径B（结果+grounding，工具质量单列）= 7/10，与 gacc 0.69 吻合。**待定 A/B/C。**
+- PB-5：0/5（reasoning=high 难任务 + 小样本）。⚠️ 待查：高推理+路径修复后仍 0/5,疑有系统性 checkpoint 问题(下一步诊断)。
+- 运维：本轮 NFS stale-handle glitch 杀了 PB/HAB 进程 + HAB 门户(next dev)→ 重启门户 + 重跑;poller 改为本地循环+短连接(抗节点踢)。
+
+
 ## 2026-06-22 (续7) — 评审审计:修 grounding 侧门(诚信门)+ _jb 崩溃 + 4 处累计
 
 用户审计清单逐条修复（🔴 严重 / 🟠🟡 次要）。

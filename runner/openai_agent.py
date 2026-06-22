@@ -29,7 +29,7 @@ class OpenAIToolAgent(QwenToolAgent):
     def _chat(self, messages, max_new_tokens=400):
         url = self.base + "/v1/chat/completions"
         body = {"model": self.model, "messages": messages,
-                "max_tokens": max(2048, int(max_new_tokens))}
+                "max_tokens": max(int(os.environ.get("MH_OPENAI_MAX_TOKENS", "16000")), int(max_new_tokens))}  # reasoning_effort eats budget; long write_file needs headroom
         if self.reasoning: body["reasoning_effort"] = self.reasoning
         data = json.dumps(body).encode()
         last = ""

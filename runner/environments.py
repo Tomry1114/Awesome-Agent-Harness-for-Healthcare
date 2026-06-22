@@ -53,6 +53,13 @@ class FhirEnv(EnvironmentAdapter):
         return p
 
     def call_tool(self, name, args):
+        if name in _FHIR_GRANULAR:
+            rt, cat = _FHIR_GRANULAR[name]; a = dict(args or {}); a["resourceType"] = rt
+            if cat and "category" not in a: a["category"] = cat
+            return self.call_tool("fhir_search", a)
+        if name in _FHIR_GRANULAR_CREATE:
+            res = dict((args or {}).get("resource", args or {})); res["resourceType"] = _FHIR_GRANULAR_CREATE[name]
+            return self.call_tool("fhir_create", {"resource": res})
         if name == "fhir_search":
             rt = args.get("resourceType", ""); params = {k: v for k, v in args.items() if k != "resourceType"}
             params = self._normalize_search(rt, params)
@@ -301,6 +308,43 @@ class GuiEnvReal(EnvironmentAdapter):
         except Exception: pass
         try: self._pw.stop()
         except Exception: pass
+
+_FHIR_GRANULAR = {
+    "fhir_patient_search_demographics": ("Patient", None),
+    "fhir_condition_search_problems": ("Condition", None),
+    "fhir_observation_search_labs": ("Observation", "laboratory"),
+    "fhir_observation_search_vitals": ("Observation", "vital-signs"),
+    "fhir_observation_search_social_history": ("Observation", "social-history"),
+    "fhir_medication_request_search_orders": ("MedicationRequest", None),
+    "fhir_procedure_search_orders": ("Procedure", None),
+    "fhir_document_reference_search_clinical_notes": ("DocumentReference", None),
+    "fhir_service_request_search": ("ServiceRequest", None),
+}
+_FHIR_GRANULAR_CREATE = {
+    "fhir_medication_request_create": "MedicationRequest",
+    "fhir_service_request_create": "ServiceRequest",
+    "fhir_communication_create_message": "Communication",
+    "fhir_appointment_create": "Appointment",
+}
+# Upstream PhysicianBench granular tool surface (replaces generic fhir_search for the agent prompt).
+FHIR_GRANULAR_TOOLS = [
+    {"name": "fhir_patient_search_demographics", "signature": "(patient) -> demographics"},
+    {"name": "fhir_condition_search_problems", "signature": "(patient) -> problems/diagnoses"},
+    {"name": "fhir_observation_search_labs", "signature": "(patient) -> laboratory results"},
+    {"name": "fhir_observation_search_vitals", "signature": "(patient) -> vital signs"},
+    {"name": "fhir_observation_search_social_history", "signature": "(patient) -> social history"},
+    {"name": "fhir_medication_request_search_orders", "signature": "(patient) -> medication orders"},
+    {"name": "fhir_procedure_search_orders", "signature": "(patient) -> procedures"},
+    {"name": "fhir_document_reference_search_clinical_notes", "signature": "(patient) -> clinical notes"},
+    {"name": "fhir_service_request_search", "signature": "(patient) -> service requests/orders"},
+    {"name": "fhir_read", "signature": "(resourceType, id) -> read one resource by id"},
+    {"name": "fhir_medication_request_create", "signature": "(resource) -> place a medication order"},
+    {"name": "fhir_service_request_create", "signature": "(resource) -> place a lab/imaging/service order"},
+    {"name": "fhir_communication_create_message", "signature": "(resource) -> send a message"},
+    {"name": "fhir_appointment_create", "signature": "(resource) -> schedule an appointment"},
+    {"name": "get_lab_reference_range", "signature": "(loinc, sex, age, unit) -> reference range"},
+    {"name": "write_file", "signature": "(path, content) -> save the required deliverable"},
+]
 
 ENV_REGISTRY = {"fhir": FhirEnv, "gui": GuiEnvMock, "tool_sandbox": ToolSandboxEnv}
 

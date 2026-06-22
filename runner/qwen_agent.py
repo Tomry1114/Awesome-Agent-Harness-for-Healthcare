@@ -7,7 +7,7 @@ and the perceive-via-tools framing differ by environment.type:
   - gui (HealthAdminBench): (uses observation snapshots; basic support).
 Reasoning via vlm_backend.chat() (text-only). One action per act() (run.py protocol).
 """
-import json, re
+import json, re, os
 
 PROTOCOL = """Respond with EXACTLY ONE of these, nothing else:
   - a tool call:    <tool_call>{{"name": "<ToolName>", "arguments": {{...}}}}</tool_call>
@@ -29,10 +29,8 @@ Rules:
 """ + PROTOCOL,
     "fhir": """You are a clinical agent working in an EHR. Use the FHIR tools to retrieve the patient's
 data and complete the clinical task in the instructions. The patient resource id / MRN is: {patient}.
-Query with fhir_search (args: resourceType, patient, ...) and fhir_read (resourceType, id).
-The patient is ALREADY identified by the MRN above — first do exactly ONE Patient query (fhir_search or fhir_read) to confirm identity (this single Patient query is EXPECTED and scored as a required retrieval), then do NOT query Patient again. The patient= argument is ONLY for clinical resources: Observation, MedicationRequest, Condition, AllergyIntolerance, DiagnosticReport, DocumentReference, etc. Use
-get_lab_reference_range for lab interpretation. Save any required deliverable with write_file
-(args: path, content) under the path the instructions specify. Available tools:
+Each search tool is NAMED for what it returns (demographics/problems/labs/vitals/medications/notes/...) — call the specific tool you need; START with fhir_patient_search_demographics ONCE to confirm identity (this single demographics query is EXPECTED and scored). Pass patient={patient} to the clinical search tools. Use fhir_read(resourceType, id) ONLY for a specific resource you must inspect in full — the search tools ALREADY return the data you need, so do NOT read resources one-by-one (that wastes all your steps). get_lab_reference_range for lab interpretation, and the *_create tools to place orders / send messages / schedule.
+IMPORTANT — do NOT spend all your steps retrieving. As soon as you have the data the task needs, WRITE the required deliverable with write_file(path, content) under the EXACT path the instructions specify, BEFORE finishing or running out of steps. Available tools:
 {tools}
 """ + PROTOCOL,
     "gui": """You are an agent operating a REAL web admin portal to complete the task. Each step you
@@ -151,7 +149,7 @@ class QwenToolAgent:
         if self._pending:
             lr = state.get("last_result")
             obs = lr.get("output") if isinstance(lr, dict) and "output" in lr else lr
-            if not isinstance(obs, str): obs = json.dumps(obs, ensure_ascii=False)[:1500]
+            if not isinstance(obs, str): obs = json.dumps(obs, ensure_ascii=False)[:int(os.environ.get("MH_OBS_MAX_LEN", "10000"))]  # was 1500; official caps tool output to LLM at 10k
             self.messages.append({"role": "user", "content": "TOOL RESULT (%s): %s" % (self._last_tool, obs)})
             self._pending = False
         out = self._chat(self.messages, max_new_tokens=1500)
