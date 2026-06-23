@@ -298,8 +298,15 @@ class GuiEnvReal(EnvironmentAdapter):
                     self.page.click("button[type=submit]", timeout=8000)
             elif name == "snapshot":
                 return self._snap()
+            elif name == "back":                       # FAIRNESS: upstream HAB action parity
+                self.page.go_back(wait_until="domcontentloaded", timeout=20000)
+            elif name == "scroll":
+                dy = -600 if str(a.get("direction", "down")).lower() == "up" else 600
+                self.page.mouse.wheel(0, dy)
+            elif name == "done":                       # explicit completion signal (maps to final)
+                return {"done": True}
             else:
-                return {"error": "unknown gui tool %s" % name}
+                return {"error": "unknown gui tool %s (download/upload need stage-2 file handling)" % name}
         except Exception as e:
             try:
                 self.page.wait_for_timeout(300)

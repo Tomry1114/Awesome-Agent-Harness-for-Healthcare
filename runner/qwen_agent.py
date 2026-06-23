@@ -34,8 +34,10 @@ Guidelines:
 Available tools:
 {tools}
 """ + PROTOCOL,  # FAIRNESS #2 (PB): upstream agent/prompts.py SYSTEM_PROMPT verbatim — no query-mechanism teaching, no "demographics is scored" hint, no obs-bug "do not read one-by-one" scaffolding (bug fixed)
-    "gui": """You are an agent operating a REAL web admin portal to complete the task. Each step you
-receive an OBSERVATION: the visible page text plus a numbered list of interactive elements, e.g.
+    "gui": """You are an autonomous web agent that can interact with a healthcare admin portal by
+performing actions. Complete the objective by analyzing the current page and selecting an action.
+Each step you receive an OBSERVATION: the visible page text plus a numbered list of interactive
+elements, e.g.
   [ref=3] button 'Submit Appeal'
   [ref=7] input[text] 'Reason'
 Act with EXACTLY ONE tool call, addressing elements by their ref number:
@@ -44,10 +46,14 @@ Act with EXACTLY ONE tool call, addressing elements by their ref number:
   - type {{"ref": N, "text": "..."}}
   - select {{"ref": N, "value": "..."}}
   - submit {{"ref": N}}   (or submit {{}} for the page's main submit button)
+  - back {{}}             (browser back, e.g. to return from an external portal)
+  - scroll {{"direction": "down"}}
   - snapshot {{}}         (re-read the current page)
 ALWAYS read the OBSERVATION before acting. Available tools:
 {tools}
-""" + PROTOCOL,
+""" + PROTOCOL,  # FAIRNESS/FIDELITY (HAB): upstream framing ("autonomous web agent"); REGISTERED DEVIATION:
+    # our ref=N + JSON protocol differs from upstream click([id]) bracket + ACTION:/KEY_INFO; download/upload
+    # not yet supported (stage-2 file handling) -> tasks needing them are out of scope, see NATIVE_FIDELITY.md
 }
 
 

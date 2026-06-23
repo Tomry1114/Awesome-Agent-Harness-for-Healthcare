@@ -28,3 +28,14 @@
 |---|---|---|---|
 | F2 | prompt/obs 中性不污染(公平暴露工具、不藏不教、不截断、无 fail-by-construction)| 否则测的是我们的偏置(MedCTA 藏 GoogleSearch、obs 截断 200;PB 教策略+暗示 demographics 被评分)| ✅ obs→10k;**MedCTA**(91b5301)与 **PB**(本次)均中性化——PB 直接用上游 `agent/prompts.py` SYSTEM_PROMPT 原文(无机制教学/无 scored 暗示/无 obs-bug 脚手架)|
 | F3 | 协议选公平标准(native function-calling),别用 text `<tool_call>` 怪协议 | text 统一但偏袒——惩罚更擅长原生 function-calling 的前沿模型 | ✅ `MH_PROTOCOL=function_calling`(openai_agent),gateway 实测支持,MedCTA replay 闭环跑通 |
+
+
+## prompt 一致性审计(三家 vs 上游仓库)
+
+| Bench | 上游源 | 一致性 | 偏差 |
+|---|---|---|---|
+| PB | `PhysicianBench/agent/prompts.py` SYSTEM_PROMPT | **guidelines 逐字一致** | + {tools} 暴露 + 文本协议(unified track) |
+| MedCTA | Lagent ReAct(`lagent/agents/react.py`) | **语义一致**(中性、全工具) | 非 Lagent 精确模板(协议偏差) |
+| HAB | `harness/prompts.py` GENERAL("autonomous web agent" + click([id])/fill/select/scroll/back/download/upload/done) | **不一致** | 协议:我们 ref=N+JSON vs 上游 click([id]) bracket;**动作缺口**:已补 back/scroll/done,**仍缺 download/upload**(stage-2 文件处理)→ 需要下载/上传的任务暂 out-of-scope |
+
+**HAB 行动项**:① download/upload(Playwright 文件处理)② 可选:上游 click([id]) bracket 协议 + screenshot 观测(完整 stage-2)。在补齐前,涉及文件下载/上传的 HAB 任务应排除,避免 fail-by-construction。
