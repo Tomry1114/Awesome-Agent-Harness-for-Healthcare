@@ -39,7 +39,8 @@ def main():
     ap.add_argument("--has-subdimension", default=None)
     ap.add_argument("--governance-only", action="store_true")
     ap.add_argument("--out", default="results/")
-    ap.add_argument("--max-steps", type=int, default=12)
+    ap.add_argument("--max-steps", type=int, default=0)  # 0 = use NATIVE_MAX_STEPS per bench
+    NATIVE_MAX_STEPS = {"PhysicianBench": 30, "MedCTA": 10, "HealthAdminBench": 30}  # native-faithful caps
     args = ap.parse_args()
 
     base_out = os.path.join(ROOT, args.out) if not os.path.isabs(args.out) else args.out
@@ -59,7 +60,8 @@ def main():
     for tid in tids:
         if args.reset_mode == "per_task": R.reset_fhir("per_task")
         try:
-            res = R.run_task(args.bench, tid, args.agent, args.fhir_base, max_steps=args.max_steps)
+            _ms = args.max_steps or NATIVE_MAX_STEPS.get(args.bench, 12)
+            res = R.run_task(args.bench, tid, args.agent, args.fhir_base, max_steps=_ms)
         except Exception as e:
             buckets["task_error"] += 1; rows.append({"task": tid, "error": repr(e)}); continue
         # --- per-task bundle (A) ---
