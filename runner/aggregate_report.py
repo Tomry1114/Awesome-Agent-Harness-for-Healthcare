@@ -61,9 +61,12 @@ def _remap(results, bench):
             w = idmap.get(c.get("id"), (None, None, 1.0))[2]
             st = c.get("checkpoint_status")
             if st in ("passed", "failed"):
+                # graded judges carry a numeric `score` (e.g. tool_use_quality, gacc) -> use it;
+                # binary checkpoints contribute 1.0/0.0. Weighted mean per dimension.
+                sc = c.get("score")
+                val = sc if isinstance(sc, (int, float)) else (1.0 if st == "passed" else 0.0)
                 totw[c["dimension"]] += w
-                if st == "passed":
-                    passw[c["dimension"]] += w
+                passw[c["dimension"]] += w * val
         # recompute dimension_scores from remapped checkpoints (old precomputed dict used stale tags)
         r["dimension_scores"] = {m: (round(passw[m] / totw[m], 3) if totw[m] else None) for m in MODULES}
     return results
@@ -173,6 +176,30 @@ def _proxy_dims(agent_dir, strict_covered):
             "by_dimension": gap_only}
 
 
+def _tool_use_quality(results):
+    """First-class harness-native Tooling metric (LLM judge, alternative-path tolerant). Reported
+    standalone so it is not drowned by a benchmark's deterministic reference-chain checkpoints (which
+    wrongly penalize legitimate alternative tool paths). Distinct from tool_execution_hygiene (proxy)."""
+    subs = ["relevance", "necessity", "argument", "sequence", "evidence_use"]
+    scores, sub_acc, unnec = [], {s: [] for s in subs}, []
+    for r in results:
+        for c in (r.get("checkpoints") or []):
+            if c.get("id") == "cp_tool_use_quality":
+                if isinstance(c.get("score"), (int, float)):
+                    scores.append(c["score"])
+                for s in subs:
+                    if isinstance((c.get("subscores") or {}).get(s), (int, float)):
+                        sub_acc[s].append(c["subscores"][s])
+                if isinstance(c.get("unnecessary"), (int, float)):
+                    unnec.append(c["unnecessary"])
+    if not scores:
+        return None
+    return {"mean": round(sum(scores) / len(scores), 3), "n": len(scores),
+            "subscore_means": {s: (round(sum(v) / len(v), 2) if v else None) for s, v in sub_acc.items()},
+            "unnecessary_mean": round(sum(unnec) / len(unnec), 2) if unnec else None,
+            "judge": "llm_judge (gpt-5.5), 0-2 per sub x5 -> [0,1]"}
+
+
 def build(agent_dir, bench):
     results = _remap(_load(agent_dir), bench)
     hd = _harness_dims(results)
@@ -183,6 +210,7 @@ def build(agent_dir, bench):
         "bench": bench,
         "n_tasks": len(results),
         "native_metrics": _native_metrics(bench, results),
+        "tool_use_quality": _tool_use_quality(results),
         "harness_dimensions": hd,
         "proxy_dimensions": _proxy_dims(agent_dir, strict_covered),
         "integrity": _integrity(results),
