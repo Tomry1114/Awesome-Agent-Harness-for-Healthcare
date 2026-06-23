@@ -26,5 +26,5 @@
 
 | # | 要求 | 为何是前提 | 状态 |
 |---|---|---|---|
-| F2 | prompt/obs 中性不污染(公平暴露工具、不藏不教、不截断、无 fail-by-construction)| 否则测的是我们的偏置(MedCTA 藏 GoogleSearch、obs 截断 200)| ✅ obs→10k;MedCTA prompt 中性化(暴露全 5 工具、不教用法)commit 91b5301 |
+| F2 | prompt/obs 中性不污染(公平暴露工具、不藏不教、不截断、无 fail-by-construction)| 否则测的是我们的偏置(MedCTA 藏 GoogleSearch、obs 截断 200;PB 教策略+暗示 demographics 被评分)| ✅ obs→10k;**MedCTA**(91b5301)与 **PB**(本次)均中性化——PB 直接用上游 `agent/prompts.py` SYSTEM_PROMPT 原文(无机制教学/无 scored 暗示/无 obs-bug 脚手架)|
 | F3 | 协议选公平标准(native function-calling),别用 text `<tool_call>` 怪协议 | text 统一但偏袒——惩罚更擅长原生 function-calling 的前沿模型 | ✅ `MH_PROTOCOL=function_calling`(openai_agent),gateway 实测支持,MedCTA replay 闭环跑通 |
