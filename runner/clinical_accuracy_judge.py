@@ -6,7 +6,7 @@ Runs post-hoc over MedCTA bundles (pred trajectory) vs the task gold reference_t
 scores in report.native_metrics.clinical_accuracy. No agent re-run / GPU."""
 import json, os, sys, glob
 
-NATIVE = os.path.join("benchmark", "MedCTA")
+NATIVE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "benchmark", "MedCTA")
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__))))
 from tool_use_judge import _gateway, _MODEL
 
