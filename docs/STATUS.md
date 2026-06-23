@@ -76,17 +76,26 @@ runner 已加健壮性(工具错误→observation 不崩溃)——纯文本 brai
 | 各 bench `tasks_unified` 接入统一 harness 运行器 | 全量跑分 | harness runner(待建)|
 | policy 临床/行政专家复核(`review_status: pending`→reviewed)| Governance 可信度 | 医生/行政专家 |
 
-## 2. 7 模块覆盖(当前)
+## 2. 7 模块覆盖(每个数据集 7/7,10 题基线)
 
-| 模块 | 主来源 | 状态 |
-|---|---|---|
-| Execution | 三个环境(FHIR/GUI/tool-sandbox)| FHIR 真实 + GUI(mock portal v0)跑通;tool-sandbox 待做 |
-| Tooling | FHIR 工具 / GUI 动作 / MedCTA 5 工具 | FHIR 真实;GUI 动作;MedCTA ToolAcc+ArgAcc(replay)跑通 |
-| Context | EHR / portal / 影像 | 规范就绪 |
-| Lifecycle | 多步工作流(由 task_type/轨迹推断,非 eval 顺序)| 规范就绪;+ encounter_index(就诊级)增强 |
-| Observability | 统一 trajectory schema(tool_call+gui_action 同构)| ✅ runner 已记录统一轨迹(FhirEnv) |
-| Verification | deterministic/native_pytest + **ref_ranges 异常 lab(✅ 增强#1)** | ✅ PB native_pytest 执行器跑通(区分 agent/verifier/environment 失败);llm_judge 待 judge 模型 |
-| Governance | 统一 policy overlay(临床安全=PB+#2 / 行政合规=HAB / 影像证据=MedCTA)| ✅ #2 全量:26 任务注入 allergy + 104 governance cp 并入 unified + 5 verifier(frozen)+ 8 项审计过;余:B 线端到端跑分 + 专家复核(review_status=pending)|
+> 口径 B:Execution=完成度、Verification=正确性。来源分级:strict(正式题,进主分)/ retag(category=reasoning→Verification)/ post-hoc(对已存产出补判,gateway 判官,不重跑)/ proxy(轨迹软信号,score_eligible=False,不进主分、仅填 strict 未覆盖格)。详见 `docs/DATASET_PROCESSING.md`。
+
+| 维度 | PB | MedCTA | HAB |
+|---|---|---|---|
+| Execution | strict 0.30 | proxy 1.0 | proxy 0.70 |
+| Tooling | proxy 0.99 | strict 0.20 | proxy 0.50 |
+| Context | strict 0.40 | strict 0.90 | strict 0.75 |
+| Lifecycle | proxy 0.90 | proxy 1.0 | strict 0.60 |
+| Observability | strict 0.60 | proxy 1.0 | strict 0.27 |
+| Verification | strict 0.66 | strict 0.70 | strict 0.0 |
+| Governance | strict 1.0 | post-hoc 0.70 | post-hoc 0.90 |
+| **小计** | **7/7** | **7/7** | **7/7** |
+
+- HAB Verification=0.0:从轨迹恢复的 triage note 经 rubric 判官全 fail(真实严苛结果,非缺失)。
+- MedCTA 的 Execution/Lifecycle/Observability proxy 多为 1.0:任务结构(观察→工具→答)保证,软信号信息量低。
+- 指标 roll-up 见各 results 目录 `report.json`(native Pass@1/GAcc + 7 维两大类 + integrity + failure taxonomy)。
+
+**更正(诚信门)**:旧表「Verification ◎ = native_pytest」是过度归因——native_pytest 是跑所有确定性 cp 的*引擎*,不等于 Verification 维度有题。经 `category=reasoning→Verification` 重标(b12bcb2)后才有真实 strict 覆盖。
 
 ## 3. 复现 / 校验
 
