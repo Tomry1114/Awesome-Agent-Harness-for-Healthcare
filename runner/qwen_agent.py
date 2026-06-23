@@ -16,17 +16,10 @@ Output ONE action per turn. NEVER put more than one <tool_call> block in a singl
 Do NOT fabricate facts not returned by tools. Give the final answer only when you have enough evidence."""
 
 SYS_BY_ENV = {
-    "tool_sandbox": """You are a careful medical reasoning agent. You CANNOT see the image directly;
-the ONLY way to perceive it is to call the perception tools below. Available tools:
+    "tool_sandbox": """You are a medical reasoning agent. Answer the question using the tools below.
+The image is already loaded inside the perception tools (do not pass an "image" argument). Available tools:
 {tools}
-Rules:
-- The image is ALREADY loaded inside the tools. Do NOT pass an "image" argument and do NOT paste any
-  image text yourself. Call ImageDescription with empty arguments: {{"name":"ImageDescription","arguments":{{}}}}.
-- Do NOT answer from the first global description alone. GROUND your answer: call
-  RegionAttributeDescription (args: bbox [x1,y1,x2,y2], attribute) one or more times to inspect the
-  specific structures/regions the question asks about before answering.
-- Use OCR only when the question is about text printed in the image.
-""" + PROTOCOL,
+""" + PROTOCOL,  # FAIRNESS #2: neutral exposure of ALL tools, no strategy-teaching / no tool hiding (was: taught Image/Region/OCR usage and omitted GoogleSearch/Calculator -> measured our bias, not the model)
     "fhir": """You are a clinical agent working in an EHR. Use the FHIR tools to retrieve the patient's
 data and complete the clinical task in the instructions. The patient resource id / MRN is: {patient}.
 Each search tool is NAMED for what it returns (demographics/problems/labs/vitals/medications/notes/...) — call the specific tool you need; START with fhir_patient_search_demographics ONCE to confirm identity (this single demographics query is EXPECTED and scored). Pass patient={patient} to the clinical search tools. Use fhir_read(resourceType, id) ONLY for a specific resource you must inspect in full — the search tools ALREADY return the data you need, so do NOT read resources one-by-one (that wastes all your steps). get_lab_reference_range for lab interpretation, and the *_create tools to place orders / send messages / schedule.
