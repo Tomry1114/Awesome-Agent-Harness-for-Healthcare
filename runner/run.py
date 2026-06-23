@@ -84,6 +84,92 @@ def _canon_fhir_tool(tool, args):
     return tool
 
 
+class _DeliverableScaffold:
+    # PB-specific deliverable nudging/enforcement, extracted from run_task (Codex #1) so the generic
+    # runner loop stays benchmark-agnostic. For non-PB tasks .active is False and every method no-ops.
+    # Behavior preserved verbatim from the previous inline version.
+    def __init__(self, task):
+        import re
+        track = os.environ.get("MH_PROMPT_TRACK", "harness")
+        scaffold = os.environ.get("MH_DELIV_SCAFFOLD", "0" if track == "native" else "1") != "0"
+        m = re.search(r"(?:/?workspace/)?output/[\w.\-]+", task.get("goal", "") or "")
+        self.path = (m.group(0) if m else None) if scaffold else None
+        self.nudges = 0
+        self.budget_nudged = False
+
+    @property
+    def active(self):
+        return bool(self.path)
+
+    def _want(self, env):
+        ws = getattr(env, "workspace", "") or ""
+        return os.path.join(ws, os.path.basename(self.path)) if ws else ""
+
+    def _missing(self, env):
+        w = self._want(env)
+        return not (w and os.path.isfile(w) and os.path.getsize(w) > 0)
+
+    def budget_warning(self, env, step, max_steps, trajectory):
+        # one-shot low-budget warning if the deliverable is still missing; returns (last_res, last_obs) or None
+        if not self.active or self.budget_nudged or (max_steps - step) > 8:
+            return None
+        if not self._want(env) or not self._missing(env):
+            return None
+        self.budget_nudged = True
+        trajectory.append({"step": step, "event_type": "deliverable_budget_warning",
+                           "remaining": max_steps - step, "status": "ok"})
+        fb = ("You are RUNNING OUT OF STEPS (only %d left) and have NOT written the "
+              "required deliverable. STOP retrieving NOW. Immediately call write_file with EXACTLY "
+              "path=\"%s\" and content = your full clinical assessment and management plan from the "
+              "data already retrieved." % (max_steps - step, self.path))
+        return {"feedback": fb}, "budget_warning"
+
+    def pre_final_nudge(self, env, step, trajectory):
+        # before accepting a final answer, force the deliverable to be written first (up to 3x);
+        # returns (last_res, last_obs) to inject + signal continue, or None to allow finishing
+        if not self.active or self.nudges >= 3 or not self._missing(env):
+            return None
+        self.nudges += 1
+        fb = ("STOP. The task REQUIRES a deliverable file and it is NOT written yet. You MUST "
+              "call write_file NOW with EXACTLY path=\"%s\" (this EXACT filename, no other name) "
+              "and content = your full clinical assessment and management plan. Do not answer in "
+              "chat. Do not use any other filename. After write_file succeeds, then finish." % self.path)
+        trajectory.append({"step": step, "event_type": "deliverable_nudge", "path": self.path,
+                           "attempt": self.nudges, "status": "ok"})
+        return {"feedback": fb}, fb
+
+    def enforce(self, env, agent, task, trajectory, max_steps):
+        # post-loop: guarantee ONE write attempt if still missing, then normalize a mis-named single file
+        if not self.active:
+            return
+        ws = getattr(env, "workspace", "") or ""
+        want = self._want(env)
+        if ws and self._missing(env):
+            fb = ("You must NOW save the required deliverable. Call write_file with EXACTLY path=\"%s\" and "
+                  "content = your full clinical assessment and management plan." % self.path)
+            try:
+                a = agent.act({"goal": task.get("goal"), "context": task.get("context"),
+                               "tools": env.available_tools(), "last_observation": fb,
+                               "last_result": {"feedback": fb}})
+                if isinstance(a, dict) and a.get("type") == "tool_call" and a.get("tool") == "write_file":
+                    wr = env.call_tool("write_file", a.get("args", {}))
+                    trajectory.append({"step": max_steps, "event_type": "tool_call", "tool": "write_file",
+                                       "args": a.get("args", {}), "result": wr,
+                                       "observation": json.dumps(wr)[:200], "ts": str(max_steps),
+                                       "status": "ok", "forced_deliverable": True})
+            except Exception as fe:
+                trajectory.append({"step": max_steps, "event_type": "agent_error",
+                                   "error": "forced_deliverable_failed", "raw": repr(fe)[:120], "status": "error"})
+        if ws and os.path.isdir(ws) and self._missing(env):
+            cands = [f for f in glob.glob(os.path.join(ws, "*")) if os.path.isfile(f) and os.path.getsize(f) > 0]
+            if cands:
+                best = max(cands, key=os.path.getsize)
+                shutil.copyfile(best, want)
+                trajectory.append({"step": max_steps, "event_type": "deliverable_renamed",
+                                   "from": os.path.basename(best), "to": os.path.basename(self.path),
+                                   "n_candidates": len(cands), "status": "ok"})
+
+
 def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, job_dir=None, cleanup=True):
     # NOTE: in PhysicianBench the FHIR Patient.id == MRN, so context.patient_ref (an MRN) is also a
     # valid resource id and Patient/{patient_ref} resolves. If a future bench uses non-MRN ids,
@@ -105,48 +191,25 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
     agent = agents.make_agent(agent_name, task)
 
     trajectory, last_obs, last_res, finished = [], None, None, False
-    import re as _re
-    _dm = _re.search(r"(?:/?workspace/)?output/[\w.\-]+", task.get("goal", "") or "")  # match output/X AND workspace/output/X
-    _track_ds = os.environ.get("MH_PROMPT_TRACK", "harness")
-    _scaffold = os.environ.get("MH_DELIV_SCAFFOLD", "0" if _track_ds == "native" else "1") != "0"
-    _deliverable = (_dm.group(0) if _dm else None) if _scaffold else None  # native: no deliverable nudge/budget/forced-turn scaffolding (obs-bug fixed)
-    _deliv_nudges = 0
+    deliv = _DeliverableScaffold(task)  # PB deliverable scaffolding (Codex #1: extracted from the generic runner; no-op for non-PB)
     _fail_sig = None; _fail_n = 0; _aborted = False  # circuit breaker: abort on repeated identical failing call
-    _budget_nudged = False  # one-shot deliverable warning when steps run low
     if hasattr(env, "initial_observation"):
         _io = env.initial_observation()
         if _io is not None:
             last_res = _io; last_obs = json.dumps(_io, ensure_ascii=False)[:int(os.environ.get("MH_OBS_MAX_LEN", "10000"))]
     for step in range(max_steps):
-        if _deliverable and not _budget_nudged and (max_steps - step) <= 8:
-            _bws = getattr(env, "workspace", "") or ""
-            _bwant = os.path.join(_bws, os.path.basename(_deliverable)) if _bws else ""
-            if _bwant and not (os.path.isfile(_bwant) and os.path.getsize(_bwant) > 0):
-                last_res = {"feedback": ("You are RUNNING OUT OF STEPS (only %d left) and have NOT written the "
-                            "required deliverable. STOP retrieving NOW. Immediately call write_file with EXACTLY "
-                            "path=\"%s\" and content = your full clinical assessment and management plan from the "
-                            "data already retrieved." % (max_steps - step, _deliverable))}
-                last_obs = "budget_warning"; _budget_nudged = True
-                trajectory.append({"step": step, "event_type": "deliverable_budget_warning",
-                                   "remaining": max_steps - step, "status": "ok"})
+        _bw = deliv.budget_warning(env, step, max_steps, trajectory)
+        if _bw is not None: last_res, last_obs = _bw
         action = agent.act({"goal": task.get("goal"), "context": task.get("context"),
                             "tools": env.available_tools(), "last_observation": last_obs, "last_result": last_res})
         if not isinstance(action, dict) or "type" not in action:  # #7 agent contract violation
             trajectory.append({"step": step, "event_type": "agent_error", "error": "invalid_action", "raw": str(action)[:200], "status": "error"})
             finished = True; break
         if action["type"] == "final":
-            if _deliverable and _deliv_nudges < 3:
-                _fp = os.path.join(getattr(env, "workspace", "") or "", os.path.basename(_deliverable))
-                if not (os.path.isfile(_fp) and os.path.getsize(_fp) > 0):
-                    _deliv_nudges += 1
-                    _fb = ("STOP. The task REQUIRES a deliverable file and it is NOT written yet. You MUST "
-                           "call write_file NOW with EXACTLY path=\"%s\" (this EXACT filename, no other name) "
-                           "and content = your full clinical assessment and management plan. Do not answer in "
-                           "chat. Do not use any other filename. After write_file succeeds, then finish." % _deliverable)
-                    trajectory.append({"step": step, "event_type": "deliverable_nudge", "path": _deliverable,
-                                       "attempt": _deliv_nudges, "status": "ok"})
-                    last_res = {"feedback": _fb}; last_obs = _fb
-                    continue
+            _pn = deliv.pre_final_nudge(env, step, trajectory)
+            if _pn is not None:
+                last_res, last_obs = _pn
+                continue
             trajectory.append({"step": step, "event_type": "final_answer", "thought": action.get("answer", ""), "status": "ok", "canonical_action": _canon.canonical_action(action, env_type)})
             finished = True; break
         if action["type"] == "tool_call_truncated":  # cut-off tool call (e.g. oversized write_file) -> ask to re-issue
@@ -196,34 +259,7 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
         trajectory.append({"step": max_steps, "event_type": "agent_error", "error": "max_steps_exceeded", "status": "error"})
     # deliverable enforcement (final): guarantee ONE write attempt if the required file is still missing
     # (covers both "finished early" and "ran out of steps"), then normalize a mis-named single file.
-    if _deliverable:
-        _ws = getattr(env, "workspace", "") or ""
-        _want = os.path.join(_ws, os.path.basename(_deliverable)) if _ws else ""
-        _missing = lambda: not (_want and os.path.isfile(_want) and os.path.getsize(_want) > 0)
-        if _ws and _missing():
-            _fb = ("You must NOW save the required deliverable. Call write_file with EXACTLY path=\"%s\" and "
-                   "content = your full clinical assessment and management plan." % _deliverable)
-            try:
-                _a = agent.act({"goal": task.get("goal"), "context": task.get("context"),
-                                "tools": env.available_tools(), "last_observation": _fb,
-                                "last_result": {"feedback": _fb}})
-                if isinstance(_a, dict) and _a.get("type") == "tool_call" and _a.get("tool") == "write_file":
-                    _wr = env.call_tool("write_file", _a.get("args", {}))
-                    trajectory.append({"step": max_steps, "event_type": "tool_call", "tool": "write_file",
-                                       "args": _a.get("args", {}), "result": _wr,
-                                       "observation": json.dumps(_wr)[:200], "ts": str(max_steps),
-                                       "status": "ok", "forced_deliverable": True})
-            except Exception as _fe:
-                trajectory.append({"step": max_steps, "event_type": "agent_error",
-                                   "error": "forced_deliverable_failed", "raw": repr(_fe)[:120], "status": "error"})
-        if _ws and os.path.isdir(_ws) and _missing():  # mis-named single file -> normalize (transparent)
-            _cands = [f for f in glob.glob(os.path.join(_ws, "*")) if os.path.isfile(f) and os.path.getsize(f) > 0]
-            if _cands:  # >=1 candidate: copy the largest non-empty file to the required name (handles >=2 too)
-                _best = max(_cands, key=os.path.getsize)
-                shutil.copyfile(_best, _want)
-                trajectory.append({"step": max_steps, "event_type": "deliverable_renamed",
-                                   "from": os.path.basename(_best), "to": os.path.basename(_deliverable),
-                                   "n_candidates": len(_cands), "status": "ok"})
+    deliv.enforce(env, agent, task, trajectory, max_steps)
     env.teardown()
 
     # upstream-format trajectory.log for native_pytest
