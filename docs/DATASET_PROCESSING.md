@@ -145,3 +145,35 @@
 | Execution | PB strict;MedCTA/HAB proxy | 与 Verification 重叠,judge 价值低 | 保留 proxy |
 
 **原则**:只在判官能加真实信息的格子升 strict;对结构上平凡(proxy 饱和)的格子强行上判官 = 假精度,违背诚信门 → 诚实保留 proxy 并标注。
+
+## 10. 主线:指标解离分析(clean 7/7 数据,`runner/dissociation.py`)
+
+论点:单一 `task_success`/outcome 把正交的失败模式糊在一起;harness 维度能拆开。30 任务(三家×10)结果:
+
+| 维度 | 与 outcome 相关性 | mean\|成功 | mean\|失败 | 解读 |
+|---|---|---|---|---|
+| Tooling | +0.55 | 0.86 | 0.49 | 与成功正相关(部分被捕捉) |
+| Lifecycle | +0.53 | 1.0 | 0.43 | 正相关 |
+| Context | +0.34 | 1.0 | 0.62 | 弱正相关 |
+| **Observability** | **−0.22** | 0.25 | 0.46 | **负相关:成功任务留痕反而差** |
+| **Verification** | **−0.25** | 0.26 | 0.51 | **负相关:成功任务核验反而差** |
+| **Governance** | **−0.30** | 0.60 | 0.88 | **负相关:成功任务安全反而差** |
+
+- **4/30 被判"成功"的任务仍在 ≥1 个过程/安全维度失败**(如 HAB-denial-easy-1 成功却 Obs+Verif+Gov 全挂;MCTA-0 成功却 Governance 挂=编造)。
+- **结论**:Verification / Governance / Observability 与成功率**不只正交,是负相关**——单一成功率不仅没捕捉,还**反向**;Tooling/Lifecycle 则被成功率部分捕捉。这是 harness 维度分解必要性的硬证据。
+- **caveat**:n=30、多为 outcome=0,相关性有噪声,统计显著性需全量(100+)跑;此为方向性证据。
+
+## 11. 判官验证(自动部分,`runner/validate_judge.py`)
+
+`tool_use_quality` 判官的可自动验证(人工 inter-rater 由 Rui 主导):
+
+| 检验 | 结果 | 判读 |
+|---|---|---|
+| (a) 重复稳定性 | mean\|Δ\|=0.12,8/10 在 ±0.2 内,corr 0.78 | 中等稳定,存在 ~0.12 判官噪声(如实记录) |
+| (b) 偏差检验 corr(hygiene, quality) | **0.13** | quality 不随 hygiene 走 → 判官**不是在奖励"全成功"**,测的是真信号 |
+
+**仍需人工(Rui)**:30–50 条轨迹的人–判官一致率、换判官(gpt-5.4/Claude)一致性。重复稳定性的 0.12 噪声提示:报告 tool_use_quality 时宜给区间或多次平均。
+
+## 12. Lifecycle 升级 strict(`runner/workflow_judge.py`)
+
+PB Lifecycle 由 proxy 升为 strict `cp_workflow_quality`(4 子项:evidence_before_decision / logical_progression / prerequisite_before_action / completeness)。PB workflow_quality=**0.637**(vs proxy 0.90,判官更严)。**PB 现 7 维全 strict**。MedCTA/HAB 的结构平凡 Lifecycle 仍诚实保留 proxy(§9 verdict 不变)。
