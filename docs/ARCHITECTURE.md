@@ -15,26 +15,6 @@
 保留 native metrics(Pass@1 / GAcc / task-subtask) + 新增 harness metrics
 ```
 
-## 1. 两条 track(协议含义不同,判据不同)
-
-| Track | 协议要求 | **判据** |
-|---|---|---|
-| **Native replication** | 保留 原 prompt / 原 observation / 原 action protocol / 原终止规则 / 原 native metrics | **与原实验设置语义等价**;所有不可避免偏差进入 alignment passport |
-| **Unified Medical Harness** | 规定自己的 canonical action interface(FHIR→canonical tool_call,MedCTA tools→canonical tool_call,GUI→canonical gui_action),底层各 env 执行自己的动作 | **canonical 接口完整保留任务表达能力,并支持统一审计** |
-
-**关键**:统一轨道**故意只用一种 canonical 输出语法**是特性而非缺陷;三种原生输出语法(function-call / ReAct / `click([id])`)混在一起反而无法统一审计。
-
-### Native 判据 = 实验语义等价(不是逐字复现)
-
-允许的无损偏差(登记进 alignment passport 即可,不判定为不 native):
-- FHIR URL、文件路径等运行时变量替换
-- 工具名称无损映射
-- API wrapper 不同,但工具能力与返回语义一致
-- 输出格式最小适配
-- 模型 / API 版本差异如实登记
-
-真正判据:**原任务信息、观测能力、动作空间、提示强度、终止条件、评分规则是否保持实验语义等价**。仅工具函数名不同 ≠ 不 native。
-
 ## 2. Adapter 是双向契约(不只是 canonical→env)
 
 现 `FhirEnv / ToolSandboxEnv / GuiEnvReal.act()` 已构成隐式 adapter,但完整 adapter 必须双向,否则只能统一"发动作",不能保证三类环境的 observation / 错误 / 状态变化具有统一可审计语义。
