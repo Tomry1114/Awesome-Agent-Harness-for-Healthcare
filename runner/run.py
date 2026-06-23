@@ -342,7 +342,7 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
                         "independence": "n/a" if ek == "proxy" else _ind_str(jb)}
         return None
     judges = {}
-    _o = _judge_for("clinical_task_success")
+    _o = _judge_for("result_verification") or _judge_for("clinical_task_success")
     if _o: judges["outcome"] = _o
     _g = _judge_for("context_grounding")
     if _g: judges["grounding"] = _g
@@ -401,7 +401,7 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
     if validation_only: quals.append("scorer_validation_only")
     if env_type == "gui" and env_cls != "GuiEnvReal": quals.append("mock_env")
     if env_type == "tool_sandbox" and not real_ts: quals.append("replay_tool_backend")
-    if any(c.get("evaluator_kind") == "proxy" and c.get("subdimension") == "clinical_task_success"
+    if any(c.get("evaluator_kind") == "proxy" and c.get("subdimension") in ("clinical_task_success", "result_verification")
            for c in result.get("checkpoints", [])): quals.append("outcome_proxy")
     if any(j.get("independence") == "shared_model_with_agent_or_tool" for j in judges.values()):
         quals.append("non_independent_judge")

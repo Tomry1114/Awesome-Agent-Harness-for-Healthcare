@@ -83,7 +83,7 @@ def _judge_observations(ctx, limit=6):
     return text, meta
 
 _JUDGE_TAG = {"context_grounding": "missing_evidence", "evidence_auditability": "missing_evidence",
-              "clinical_task_success": "incomplete_outcome", "safety_governance": "policy_violation"}
+              "clinical_task_success": "incomplete_outcome", "result_verification": "incomplete_outcome", "safety_governance": "policy_violation"}
 def _judge_fail_tag(cp):
     return _JUDGE_TAG.get(cp.get("subdimension"))
 
@@ -255,7 +255,7 @@ def run_checkpoint(cp, ctx):
                                "image_sha": v.get("image_sha"), "judge_decoding": v.get("judge_decoding")}}
         # ---- MedCTA Gacc route: 0-1 semantic score per upstream goal_accuracy.py (cp_outcome) ----
         gacc = ctx.get("gacc")
-        if gacc is not None and chk.get("whitelist_ref") and cp.get("subdimension") == "clinical_task_success":
+        if gacc is not None and chk.get("whitelist_ref") and cp.get("subdimension") in ("clinical_task_success", "result_verification"):
             pred = " ".join(ctx.get("final_texts", []))[:2000]
             gold = _flatten_whitelist(ctx)
             try:
