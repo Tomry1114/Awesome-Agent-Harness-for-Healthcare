@@ -1,3 +1,19 @@
+## 2026-06-24 (续2) — Codex 结构性遗留 5 项并行清完 + score_eligible 两层单一真源
+
+大 review 里 P1/P2 结构债一次性清完。代码全在远端 ce483。提交：`418bc97` / `1842173` / `69c2d49`。
+
+**🔴 score_eligible 两层分叉（`418bc97`）** `scoring.py` + `aggregate_report.py` + `rescore_judges.py`
+- `_remap` 由 opt-out(`is False`)改为复用 `scoring.is_score_eligible`（fail-closed，单一真源）；`is_score_eligible` 用 `.get(checkpoint_status)` 防 KeyError；post-hoc Governance 判官补 `score_eligible=True` + 同判据重算 per-task 维度分 → result.json 与 report.json 零分叉（Governance per-task 0.8 == report 0.8）。
+
+**并行清完 5 项（`1842173` + `69c2d49`）**
+- **#5** `canonical_observation` 已接线（tool_call 事件携带）。
+- **#7** 判官独立性 fail-closed 强制：judge==agent/tool → 该 cp `score_eligible=False`（聚合前），`MH_ALLOW_SHARED_JUDGE=1` 放行，`judge_independence_policy` 入 provenance。
+- **#8** `error_class` 分层 taxonomy(not_evaluated / evaluation_failure / environment_failure)，由现有字段派生，不改判分。
+- **#4** `native_parsers.py` 死代码删除（全仓 0 import 复核）。
+- **#1** PB 交付物脚手架（~70 行）抽成 `_DeliverableScaffold` 类；run_task 336→304 行，循环 benchmark-无关。验证：6 单元测试 + MedCTA 端到端（live PB 需 FHIR，未起未跑）。
+
+剩余 Codex：#11 子串判错收紧、#9 FHIR 工具名单映射、#10 死参/旧脚本卫生 = P2/P3。详 `docs/CODEX_REVIEW_FIXES.md`。
+
 ## 2026-06-24 — Codex 架构审计 P0 全修 + MedCTA 工具中介忠实化(跑出正常结果)
 
 修复 Codex 11 条审计中所有腐蚀分数可信度的 P0,并把 MedCTA 调用修到产出正常、有区分度的分数。提交:`63ee0ad` / `c2263d9` / `75a949e`。

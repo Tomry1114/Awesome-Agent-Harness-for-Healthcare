@@ -9,11 +9,11 @@ Codex 架构审计(11 条)逐条核实属实(抽查 5 条全中)。修复按"是
 | — | 🔴 P0 | RegionAttributeDescription 协议自相矛盾(盲 agent 被逼给 bbox + 静默整图 fallback + 扣分) | ✅ **已修**:bbox OR region_query 都合法;工具返显式 localization 状态(无静默);arg_match bbox/region 等价 + attribute 可选 |
 | 2 | 🔴→🟠 | gateway HTTP 客户端复制 7 份、retry/timeout 不一致 | 🟡 **统一客户端已建**(`runner/gateway.py`:单一 key/retry/timeout/billing/结构化 error);判官迁移到它 = 机械跟进(P1) |
 | 4 | 🟠 | `native_parsers.py` 死代码(0 import) | ✅ **已删除**(本轮:全仓 0 import 复核确认 = 死代码,`rm runner/native_parsers.py`;git 历史保留) |
-| 5 | 🟠 | `canonical_observation` 定义未接线 | 🟡 **已诚实标注**(CLAUDE.md「已定义未接线」);接线 = P1 |
+| 5 | 🟠 | `canonical_observation` 定义未接线 | ✅ **已接线**(`run.py` tool_call 事件带 `canonical_observation`;commit 1842173) |
 | 11 | 🟠 | `"error" in obs` 子串判错(误判 error_rate) | 🔜 待修:proxy_verifiers 已优先读 status 字段;子串 fallback 收紧 = P1(批次跑完动,proxy_verifiers 在用) |
-| 7 | 🟠 | 判官独立性只事后记,不在 init 拦 | 🟡 部分:provenance + `non_independent_judge` 已记录;init 拦截(strict 拒/exploratory 标 score_eligible=False)= P1 |
-| 8 | 🟠 | skip/error/environment_error 语义不一致 | 🔜 待修:分层 error taxonomy(not_evaluated / evaluation_failure / environment_failure)= P1 |
-| 1 | 🟠 | `run_task()` 442 行 god-function + PB 脚手架塞进通用 runner | 🔴 **未做(P2)**:风险高,需把 deliverable nudge/budget/forced-write 抽到 PBPolicy、MedCTA/HAB hook;通用 runner 只留循环。dedicated 重构 pass |
+| 7 | 🟠 | 判官独立性只事后记,不在 init 拦 | ✅ **已强制(fail-closed)**:judge==agent/tool → 该 cp `score_eligible=False`(聚合前),`MH_ALLOW_SHARED_JUDGE=1` 放行;`judge_independence_policy` 入 provenance;commit 1842173 |
+| 8 | 🟠 | skip/error/environment_error 语义不一致 | ✅ **已修**:加 `error_class`(not_evaluated / evaluation_failure / environment_failure),由现有字段派生,不改判分;commit 1842173 |
+| 1 | 🟠 | `run_task()` god-function + PB 脚手架塞进通用 runner | ✅ **已抽取**:PB deliverable 脚手架(detection/budget/nudge/enforce/rename ~70 行)→ `_DeliverableScaffold` 类;run_task 336→304 行,循环 benchmark-无关;6 单元测试 + MedCTA 端到端验证(live PB 需 FHIR,未跑);commit 69c2d49 |
 | 9 | 🟡 | FHIR 工具名三跳映射 | 🔴 未做(P2):单一 canonical tool ID + adapter 一次映射 + trajectory 存 {canonical, native} |
 | 10 | 🟡 | `_as_entries` 挂基类、`--source-benchmark` 死参、旧 `dissociation.py` | 🔜 卫生(P3):基类抽象、删死参/旧脚本 |
 
