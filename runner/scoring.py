@@ -377,6 +377,23 @@ def aggregate(results):
 
 UNSUPPORTED_SKIP = {"unsupported_in_skeleton", "missing_judge_backend", "missing_native_verifier", "missing_policy_verifier", "disabled_by_config"}
 
+def error_class(r):
+    """Codex #8: ONE additive classification of failure shape, derived from existing fields.
+    Disambiguates the overlapping skipped/error semantics WITHOUT changing any existing field.
+      not_evaluated      -> expected non-evaluation (checkpoint_status == skipped, has skip_reason)
+      environment_failure-> infra/env failure (failure_mode == environment_error)
+      evaluation_failure -> our verifier/judge crashed (failure_mode == verifier_error, or error w/o env)
+      None               -> normal passed/failed agent outcome (a real result, not an error)"""
+    status = r.get("checkpoint_status")
+    fmode = r.get("failure_mode")
+    if status == "skipped":
+        return "not_evaluated"
+    if fmode == "environment_error":
+        return "environment_failure"
+    if fmode == "verifier_error" or status == "error":
+        return "evaluation_failure"
+    return None
+
 def build_result(task, trajectory, results, provenance):
     cps = []
     for r in results:
@@ -388,6 +405,8 @@ def build_result(task, trajectory, results, provenance):
         if r.get("evaluator_kind"): c["evaluator_kind"] = r["evaluator_kind"]
         if "score" in r: c["score"] = r["score"]
         if "score_eligible" in r: c["score_eligible"] = r["score_eligible"]
+        _ec = error_class(r)
+        if _ec is not None: c["error_class"] = _ec
         cps.append(c)
     dim, cov, proxy_dim, proxy_cov = aggregate(results)
     # Codex #3: every null dimension score carries an EXPLICIT status (never an unexplained void).

@@ -174,7 +174,8 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
                "args": action.get("args", {}), "result": res, "observation": obs, "ts": str(step),
                "status": "error" if _err else "ok",
                "canonical_action": _canon.canonical_action(action, env_type),
-               "canonical_result": _canon.canonical_result(res)}  # F2: explicit per-action status (no obs-substring heuristic downstream)
+               "canonical_result": _canon.canonical_result(res),
+               "canonical_observation": _canon.canonical_observation(res, env_type)}  # F2: explicit per-action status + canonical observation (Codex #5: wire the defined-but-unused observation)
         if _err:
             _es = str(_err)
             _ev["error_type"] = next(("http_" + c for c in ("400", "401", "403", "404", "409", "422", "500", "502", "503")
@@ -346,6 +347,22 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
     if _o: judges["outcome"] = _o
     _g = _judge_for("context_grounding")
     if _g: judges["grounding"] = _g
+    # Codex #7: judge independence is ENFORCED at scoring time, not merely recorded. A judge sharing the
+    # agent's or tool-backend's model is not a valid scorer -> fail-closed: demote the checkpoints it
+    # scored OUT of the main score (score_eligible=False) BEFORE build_result aggregates, so dimension
+    # scores + both report layers stay consistent. Exploratory runs opt in via MH_ALLOW_SHARED_JUDGE=1
+    # (the non_independent_judge qualification tag still records the deviation).
+    _allow_shared = os.environ.get("MH_ALLOW_SHARED_JUDGE", "").lower() in ("1", "on", "true")
+    _shared_subs = {sub for sub, j in (("result_verification", judges.get("outcome")),
+                                       ("clinical_task_success", judges.get("outcome")),
+                                       ("context_grounding", judges.get("grounding")))
+                    if j and j.get("independence") == "shared_model_with_agent_or_tool"}
+    if _shared_subs and not _allow_shared:
+        for _r in results:
+            if _r.get("subdimension") in _shared_subs and _r.get("score_eligible") is True:
+                _r["score_eligible"] = False
+                _r["score_demoted_reason"] = "non_independent_judge"
+    _judge_policy = "exploratory_allowed_shared" if _allow_shared else "fail_closed"
     _outc = judges.get("outcome", {})
     judge_model = _outc.get("model", "none")
     judge_decoding = ({"max_tokens": 1024} if _outc.get("tier") == "gacc_semantic" else  # matches gacc_judge actual (no temperature)
@@ -387,6 +404,7 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
                   "tool_backend_model": tool_backend_model, "judge_model": judge_model,
                   "judge_tier": _outc.get("tier", "none"),
                   "judge_independence": _outc.get("independence", "n/a"),
+                  "judge_independence_policy": _judge_policy,
                   "judge_decoding": judge_decoding, "judges": judges,
                   "uses_hidden_reference": uses_hidden_ref, "scorer_validation_only": validation_only,
                   "fidelity": fidelity, "medcta_config": _medcta_cfg}

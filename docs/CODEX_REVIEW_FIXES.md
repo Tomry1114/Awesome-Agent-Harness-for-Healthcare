@@ -8,7 +8,7 @@ Codex 架构审计(11 条)逐条核实属实(抽查 5 条全中)。修复按"是
 | 3 | 🔴 P0 | null 维度无状态静默传播(mctaD 六维空之根因) | ✅ **已修**:`build_result` 加 `dimension_status`(valid_score / proxy_only / evaluation_error / not_exercised / not_applicable) |
 | — | 🔴 P0 | RegionAttributeDescription 协议自相矛盾(盲 agent 被逼给 bbox + 静默整图 fallback + 扣分) | ✅ **已修**:bbox OR region_query 都合法;工具返显式 localization 状态(无静默);arg_match bbox/region 等价 + attribute 可选 |
 | 2 | 🔴→🟠 | gateway HTTP 客户端复制 7 份、retry/timeout 不一致 | 🟡 **统一客户端已建**(`runner/gateway.py`:单一 key/retry/timeout/billing/结构化 error);判官迁移到它 = 机械跟进(P1) |
-| 4 | 🟠 | `native_parsers.py` 死代码(0 import) | 🟡 **已诚实标注**(CLAUDE.md「未兑现」);接线或删除 = P3 |
+| 4 | 🟠 | `native_parsers.py` 死代码(0 import) | ✅ **已删除**(本轮:全仓 0 import 复核确认 = 死代码,`rm runner/native_parsers.py`;git 历史保留) |
 | 5 | 🟠 | `canonical_observation` 定义未接线 | 🟡 **已诚实标注**(CLAUDE.md「已定义未接线」);接线 = P1 |
 | 11 | 🟠 | `"error" in obs` 子串判错(误判 error_rate) | 🔜 待修:proxy_verifiers 已优先读 status 字段;子串 fallback 收紧 = P1(批次跑完动,proxy_verifiers 在用) |
 | 7 | 🟠 | 判官独立性只事后记,不在 init 拦 | 🟡 部分:provenance + `non_independent_judge` 已记录;init 拦截(strict 拒/exploratory 标 score_eligible=False)= P1 |
