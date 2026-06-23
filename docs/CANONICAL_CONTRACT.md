@@ -122,3 +122,15 @@ HAB 任务 capability 统计(regex 粗估):download ~41%、fax ~13%。属 canoni
 3. conformance test(upload:canonical→file chooser→页面显示文件→trace 记 hash/path;download:canonical→等 download event→存 workspace→trace 记 hash/path)
 4. 恢复这些任务进有效集合
 暂不补则标 `not_exercised_due_to_missing_capability`(非模型失败)。
+
+## 11. 判官独立性与跨模型方差(实测)
+
+agent=gpt-5.5,判官默认改为 **gpt-5.4**(独立),消除 `non_independent_judge` 资格警示。tool_use_quality 跨判官一致性实测:
+
+| 检验 | 同模型(5.5 重复) | 跨模型(5.5 vs 5.4) |
+|---|---|---|
+| mean\|Δ\| | 0.12 | **0.21** |
+| corr | 0.78 | **0.38** |
+| bias corr(hygiene,quality) | 0.13 | 0.13 |
+
+**发现**:tool_use_quality 对判官模型敏感(跨模型方差 0.21 >> 同模型噪声 0.12)。**口径**:报告 tool_use_quality 必须注明判官模型;建议多模型平均(MH_JUDGE_SAMPLES 可扩展为多模型)。bias check 两模型都 0.13 → quality≠hygiene 的结论稳健。
