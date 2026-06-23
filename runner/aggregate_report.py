@@ -17,8 +17,13 @@ Does NOT re-run any model. Pure read over existing bundles. Usage:
   python runner/aggregate_report.py <results_dir/agent> [--bench PhysicianBench|MedCTA|HealthAdminBench]
 """
 import json, os, sys, glob, collections, argparse
+try:
+    from proxy_verifiers import proxy_dimensions, average_proxy
+except Exception:
+    proxy_dimensions = average_proxy = None
 
 MODULES = ["Execution", "Tooling", "Context", "Lifecycle", "Observability", "Verification", "Governance"]
+_ROOT = "benchmark_dataprocess"
 CATEGORIES = {
     "task_competence": ["Execution", "Tooling", "Context", "Lifecycle"],   # 事做没做对
     "trustworthiness": ["Observability", "Verification", "Governance"],     # 能不能信任它
@@ -33,6 +38,35 @@ def _load(agent_dir):
         except Exception as e:
             sys.stderr.write("skip %s: %r\n" % (rp, e))
     return out
+
+
+def _remap(results, bench):
+    """Re-map each result checkpoint's dimension/subdimension to the CURRENT tasks_unified tags
+    (by checkpoint id), so reports on pre-retag runs reflect the current taxonomy WITHOUT a model
+    re-run. In-memory only. Silently no-ops if the task file is unavailable."""
+    tf = os.path.join(_ROOT, bench, "tasks_unified.jsonl")
+    if not os.path.exists(tf):
+        return results
+    idmap = {}
+    for l in open(tf):
+        for cp in (json.loads(l).get("checkpoints") or []):
+            idmap[cp.get("id")] = (cp.get("dimension"), cp.get("subdimension"), cp.get("weight", 1.0))
+    for r in results:
+        passw, totw = collections.defaultdict(float), collections.defaultdict(float)
+        for c in (r.get("checkpoints") or []):
+            if c.get("id") in idmap:
+                c["dimension"], c["subdimension"], _ = idmap[c["id"]]
+            if c.get("score_eligible") is False:
+                continue
+            w = idmap.get(c.get("id"), (None, None, 1.0))[2]
+            st = c.get("checkpoint_status")
+            if st in ("passed", "failed"):
+                totw[c["dimension"]] += w
+                if st == "passed":
+                    passw[c["dimension"]] += w
+        # recompute dimension_scores from remapped checkpoints (old precomputed dict used stale tags)
+        r["dimension_scores"] = {m: (round(passw[m] / totw[m], 3) if totw[m] else None) for m in MODULES}
+    return results
 
 
 def _native_metrics(bench, results):
@@ -119,14 +153,38 @@ def _failure_taxonomy(results):
             "task_failure_tags": dict(tags)}
 
 
+def _proxy_dims(agent_dir, strict_covered):
+    """Trajectory-derived soft signals (score_eligible=False). GAP-FILL ONLY: emitted only for
+    dimensions a benchmark does NOT formally test, so proxy never conflicts with / overrides a
+    strict score. Honest heuristic; NEVER mixed into harness_dimensions or success."""
+    if proxy_dimensions is None:
+        return {"note": "proxy_verifiers unavailable"}
+    per_task = []
+    for tp in sorted(glob.glob(os.path.join(agent_dir, "*", "trajectory.jsonl"))):
+        try:
+            evs = [json.loads(l) for l in open(tp) if l.strip()]
+            per_task.append(proxy_dimensions(evs))
+        except Exception as e:
+            sys.stderr.write("proxy skip %s: %r\n" % (tp, e))
+    allp = average_proxy(per_task)
+    gap_only = {d: v for d, v in allp.items() if d not in strict_covered}
+    return {"kind": "trajectory_heuristic_soft", "score_eligible": False,
+            "note": "gap-fill only; dims with strict coverage excluded",
+            "by_dimension": gap_only}
+
+
 def build(agent_dir, bench):
-    results = _load(agent_dir)
+    results = _remap(_load(agent_dir), bench)
+    hd = _harness_dims(results)
+    strict_covered = {m for cat in hd["by_category"].values() for m, v in cat.items()
+                      if v["status"] == "covered"}
     return {
         "source": agent_dir,
         "bench": bench,
         "n_tasks": len(results),
         "native_metrics": _native_metrics(bench, results),
-        "harness_dimensions": _harness_dims(results),
+        "harness_dimensions": hd,
+        "proxy_dimensions": _proxy_dims(agent_dir, strict_covered),
         "integrity": _integrity(results),
         "failure_taxonomy": _failure_taxonomy(results),
     }
