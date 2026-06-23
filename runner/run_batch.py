@@ -111,6 +111,14 @@ def main():
     print(json.dumps({k: summary[k] for k in ("bench", "n_tasks", "schema_valid", "success_buckets",
                       "dimension_means", "checkpoint_status_histogram", "failure_tag_counts")},
                      indent=1, ensure_ascii=False))
+    # --- enhanced report (native_metrics + 2-category dims w/ honest coverage + integrity + taxonomy) ---
+    try:
+        from aggregate_report import build as _build_report
+        _rep = _build_report(agent_out, args.bench)
+        json.dump(_rep, open(os.path.join(agent_out, "report.json"), "w"), indent=1, ensure_ascii=False)
+        print("enhanced report -> report.json :", json.dumps(_rep["native_metrics"], ensure_ascii=False))
+    except Exception as _e:
+        print("report.json skipped:", repr(_e))
     print("bundles + summary.json ->", agent_out)
 
 if __name__ == "__main__":
