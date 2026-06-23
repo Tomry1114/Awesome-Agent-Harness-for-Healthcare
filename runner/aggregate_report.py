@@ -17,6 +17,7 @@ Does NOT re-run any model. Pure read over existing bundles. Usage:
   python runner/aggregate_report.py <results_dir/agent> [--bench PhysicianBench|MedCTA|HealthAdminBench]
 """
 import json, os, sys, glob, collections, argparse
+from scoring import is_score_eligible
 try:
     from proxy_verifiers import proxy_dimensions, average_proxy
 except Exception:
@@ -56,7 +57,7 @@ def _remap(results, bench):
         for c in (r.get("checkpoints") or []):
             if c.get("id") in idmap:
                 c["dimension"], c["subdimension"], _ = idmap[c["id"]]
-            if c.get("score_eligible") is False:
+            if not is_score_eligible(c):   # single source of truth w/ scoring (fail-closed: missing flag -> excluded)
                 continue
             w = idmap.get(c.get("id"), (None, None, 1.0))[2]
             st = c.get("checkpoint_status")

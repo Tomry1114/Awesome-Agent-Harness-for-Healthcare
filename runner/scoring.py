@@ -360,7 +360,7 @@ def run_checkpoint(cp, ctx):
 def is_score_eligible(r):
     """Strict (formal) checkpoints only — proxy/replay verifiers set score_eligible=False and are
     excluded from success + dimension_scores (they go to the proxy_* tracks instead)."""
-    return r.get("score_eligible", False) is True and r["checkpoint_status"] in ("passed", "failed")
+    return r.get("score_eligible", False) is True and r.get("checkpoint_status") in ("passed", "failed")
 
 def aggregate(results):
     scores, coverage, proxy_scores, proxy_coverage = {}, {}, {}, {}
