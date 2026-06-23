@@ -89,6 +89,7 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
     # valid resource id and Patient/{patient_ref} resolves. If a future bench uses non-MRN ids,
     # split into patient_ref (resource id) + patient_identifier (MRN) before reusing this.
     task = load_task(bench, task_id)
+    env_type = (task.get("environment") or {}).get("type")  # needed inside the step loop (canonical_action); was only set post-loop -> UnboundLocalError
     aug = os.path.join(ROOT, "benchmark_dataprocess", "PhysicianBench", "augmentation")
     pb_repo = os.path.join(ROOT, "benchmark", "PhysicianBench", "PhysicianBench")
     job_dir = job_dir or os.path.join("/tmp/mh_jobs", bench, task_id)
