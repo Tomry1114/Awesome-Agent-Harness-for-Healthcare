@@ -18,6 +18,7 @@ Does NOT re-run any model. Pure read over existing bundles. Usage:
 """
 import json, os, sys, glob, collections, argparse
 from scoring import is_score_eligible
+from scoring import compute_dim_status
 try:
     from proxy_verifiers import proxy_dimensions, average_proxy
 except Exception:
@@ -70,6 +71,10 @@ def _remap(results, bench):
                 passw[c["dimension"]] += w * val
         # recompute dimension_scores from remapped checkpoints (old precomputed dict used stale tags)
         r["dimension_scores"] = {m: (round(passw[m] / totw[m], 3) if totw[m] else None) for m in MODULES}
+        # Codex #3: status is a single source of truth with the recomputed scores at report time too.
+        _st, _rsn = compute_dim_status(r.get("checkpoints") or [], r["dimension_scores"], r.get("proxy_dimension_scores") or {})
+        r["dimension_status"] = _st
+        r["dimension_status_reason"] = _rsn
     return results
 
 

@@ -13,13 +13,10 @@ sub-dimensions 0/1/2 with an explicit rubric, plus an unnecessary-use score repo
 Writes a strict checkpoint cp_tool_use_quality (dimension=Tooling, score_eligible=True) into each
 result.json. Post-hoc over existing bundles; reuses the gateway (gpt-5.5). No agent re-run / GPU.
 """
-import json, os, sys, glob, urllib.request, collections
+import json, os, sys, glob, collections
+import gateway
 
-_BASE = (os.environ.get("MH_JUDGE_BASE") or os.environ.get("MH_OPENAI_BASE", "https://www.micuapi.ai")).rstrip("/")
-if _BASE.endswith("/v1"):
-    _BASE = _BASE[:-3].rstrip("/")
 _MODEL = os.environ.get("MH_JUDGE_MODEL", "gpt-5.4")
-_UA = os.environ.get("MH_OPENAI_UA", "codex_cli_rs/0.20.0")
 SUBS = ["relevance", "necessity", "argument", "sequence", "evidence_use"]
 
 _SYS = """You are an expert evaluator of a medical AI agent's TOOL USE. You are given a task, the
@@ -47,20 +44,9 @@ Reply with ONLY a JSON object, no prose:
 
 
 def _gateway(system, user):
-    body = {"model": _MODEL, "max_tokens": 1500,
-            "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}]}
-    key = os.environ.get("MH_OPENAI_KEY") or os.environ.get("OPENAI_API_KEY")
-    if not key:
-        kp = os.path.expanduser("~/.xbai_key")
-        if os.path.exists(kp):
-            key = open(kp).read().strip()
-    req = urllib.request.Request(_BASE + "/v1/chat/completions", data=json.dumps(body).encode(), method="POST",
-        headers={"Authorization": "Bearer " + key, "Content-Type": "application/json", "User-Agent": _UA})
-    d = json.load(urllib.request.urlopen(req, timeout=200))
-    c = (d.get("choices") or [{}])[0].get("message", {}).get("content") or ""
-    if isinstance(c, list):
-        c = "".join(x.get("text", "") for x in c if isinstance(x, dict))
-    return c
+    res = gateway.chat([{"role": "system", "content": system}, {"role": "user", "content": user}],
+                       model=_MODEL, max_tokens=1500, judge=True, timeout=200)
+    return res["content"] if res["ok"] else ""
 
 
 def _parse(raw):

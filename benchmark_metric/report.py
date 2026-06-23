@@ -23,7 +23,7 @@ def load_bundles(root):
         out[bench].append({"task": task, "res": res, "traj": traj})
     return out
 
-def _strict(c): return c.get("score_eligible", True) is not False
+def _strict(c): return c.get("score_eligible", False) is True   # fail-CLOSED: missing flag -> NOT strict (matches scoring.is_score_eligible)
 def _eval(c): return c["checkpoint_status"] in ("passed", "failed")
 def _tool_events(traj): return [e for e in traj if e.get("event_type") == "tool_call"]
 def _rate(num, den): return (num / den) if den else None

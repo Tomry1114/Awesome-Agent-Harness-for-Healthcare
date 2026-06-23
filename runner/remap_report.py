@@ -24,7 +24,7 @@ def recompute(agent_dir, bench):
     for rp in sorted(glob.glob(os.path.join(agent_dir, "*", "result.json"))):
         r = json.load(open(rp))
         for c in (r.get("checkpoints") or []):
-            if c.get("score_eligible") is False:
+            if c.get("score_eligible", False) is not True:   # fail-CLOSED: only explicitly-eligible cps count
                 continue
             dim = idmap.get(c.get("id"), (c.get("dimension"), None, 1.0))[0]
             w = idmap.get(c.get("id"), (None, None, 1.0))[2]

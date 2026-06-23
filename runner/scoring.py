@@ -433,6 +433,7 @@ def build_result(task, trajectory, results, provenance):
         if r.get("failure_tag"): c["failure_tag"] = r["failure_tag"]
         if r.get("judge_backend"): c["judge_backend"] = r["judge_backend"]
         if r.get("evaluator_kind"): c["evaluator_kind"] = r["evaluator_kind"]
+        if r.get("detail"): c["detail"] = r["detail"]   # was dropped by the whitelist -> arg_accuracy/three_class/gacc detail all surfaced now
         if "score" in r: c["score"] = r["score"]
         if "score_eligible" in r: c["score_eligible"] = r["score_eligible"]
         _ec = error_class(r)

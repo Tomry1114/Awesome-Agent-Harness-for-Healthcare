@@ -9,6 +9,7 @@ Config (env):
   MH_OPENAI_KEY    API key; if unset, read ~/.xbai_key (chmod 600, never committed)
 """
 import os, json, time, re, urllib.request, urllib.error
+import gateway
 from qwen_agent import (QwenToolAgent, _MEDCTA_MM, _MEDCTA_MM_NOTOOLS,
                         resolve_medcta_image, image_data_url)
 
@@ -150,39 +151,16 @@ class OpenAIToolAgent(QwenToolAgent):
         return super().act(state)
 
     def _chat(self, messages, max_new_tokens=400):
-        url = self.base + "/v1/chat/completions"
-        body = {"model": self.model, "messages": messages,
-                "max_tokens": max(int(os.environ.get("MH_OPENAI_MAX_TOKENS", "16000")), int(max_new_tokens))}  # reasoning_effort eats budget; long write_file needs headroom
-        if self.reasoning: body["reasoning_effort"] = self.reasoning
-        data = json.dumps(body).encode()
-        last = ""
-        for attempt in range(5):
-            try:
-                req = urllib.request.Request(url, data=data, method="POST", headers={
-                    "Authorization": "Bearer " + self._key, "Content-Type": "application/json",
-                    "User-Agent": os.environ.get("MH_OPENAI_UA", "codex_cli_rs/0.20.0"), "Accept": "application/json"})
-                with urllib.request.urlopen(req, timeout=int(os.environ.get("MH_OPENAI_TIMEOUT", '300'))) as r:
-                    d = json.loads(r.read().decode())
-                msg = (d.get("choices") or [{}])[0].get("message", {}) or {}
-                content = msg.get("content")
-                if isinstance(content, list):
-                    content = "".join(x.get("text", "") for x in content if isinstance(x, dict))
-                if content and content.strip():
-                    return content
-                last = "empty_content: " + json.dumps(d)[:200]
-            except urllib.error.HTTPError as e:
-                try: eb = e.read().decode()[:300]
-                except Exception: eb = ""
-                last = "http_%s: %s" % (e.code, eb)
-                low = eb.lower()
-                # billing/quota is non-retryable (backoff is useless) -> fail fast with a clear tag
-                if any(k in eb for k in ("额度", "欠费", "预扣费")) or \
-                   any(k in low for k in ("insufficient", "balance", "quota", "exceeded your current")):
-                    return "<answer>API_BRAIN_ERROR: BILLING/QUOTA %s</answer>" % last
-                if e.code in (400, 401):
-                    break  # config/auth error -> no retry
-                # non-billing 403 / 429 / 5xx -> fall through to backoff retry
-            except Exception as e:
-                last = "err: %s" % e
-            time.sleep(min(16, 2 ** attempt))
-        return "<answer>API_BRAIN_ERROR: %s</answer>" % last
+        # Migrated to the unified gateway HTTP client (Codex #2). Same brain model/prompts; gateway
+        # owns retry/backoff/timeout/billing detection. Preserve the EXACT text contract: a plain
+        # content string on success, an <answer>API_BRAIN_ERROR ...</answer> sentinel on failure
+        # (BILLING/QUOTA variant when the gateway classifies the error as billing).
+        max_tokens = max(int(os.environ.get("MH_OPENAI_MAX_TOKENS", "16000")), int(max_new_tokens))  # reasoning_effort eats budget; long write_file needs headroom
+        extra = {"reasoning_effort": self.reasoning} if self.reasoning else None
+        res = gateway.chat(messages, model=self.model, max_tokens=max_tokens, judge=False,
+                           timeout=int(os.environ.get("MH_OPENAI_TIMEOUT", "300")), extra=extra)
+        if res.get("ok"):
+            return res["content"]
+        if res.get("error_type") == "billing":
+            return "<answer>API_BRAIN_ERROR: BILLING/QUOTA %s</answer>" % res.get("raw", "")
+        return "<answer>API_BRAIN_ERROR: %s</answer>" % res.get("raw", "")

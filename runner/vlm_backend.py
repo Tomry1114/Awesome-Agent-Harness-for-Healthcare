@@ -8,6 +8,7 @@ Select model via env MH_VLM_PATH (default ~/hf_models/Qwen3-VL-2B-Instruct). Val
 on an A40 ~6s load / ~8s per image.
 """
 import os, functools
+import gateway
 from PIL import Image
 
 IMAGE_DESC_PROMPT = ("You are a medical imaging assistant. Describe this image factually: the imaging "
@@ -115,7 +116,6 @@ class ApiVLM:
     region_attribute_description crops the PIL image and sends ONLY the crop (not coordinates in text)."""
     name = "api:gateway"
     def __init__(self, model=None):
-        import urllib.request
         self.model = model or os.environ.get("MH_VLM_API_MODEL", "gpt-5.5")  # micuapi has gpt-5.x, no gemini
         _b = (os.environ.get("MH_VLM_API_BASE") or os.environ.get("MH_OPENAI_BASE") or "https://www.micuapi.ai").rstrip("/")
         if _b.endswith("/v1"): _b = _b[:-3].rstrip("/")  # normalize: callers append /v1 (consistent with openai_agent/gacc/mm_judge)
@@ -134,31 +134,30 @@ class ApiVLM:
         buf = io.BytesIO(); image.convert("RGB").save(buf, format="PNG")
         return "image/png", base64.b64encode(buf.getvalue()).decode()
     def _call(self, image, prompt, max_tokens=256):
-        import json, time, urllib.request, urllib.error
-        mime, b64 = self._encode(image)
-        durl = "data:%s;base64,%s" % (mime, b64)
-        body = {"model": self.model, "max_tokens": max_tokens, "messages": [{"role": "user", "content": [
-            {"type": "text", "text": prompt}, {"type": "image_url", "image_url": {"url": durl}}]}]}
-        data = json.dumps(body).encode()
-        last = ""
-        for attempt in range(4):
-            try:
-                req = urllib.request.Request(self.base + "/v1/chat/completions", data=data, method="POST",
-                    headers={"Authorization": "Bearer %s" % self.key, "Content-Type": "application/json",
-                             "User-Agent": os.environ.get("MH_OPENAI_UA", "codex_cli_rs/0.20.0")})
-                with urllib.request.urlopen(req, timeout=120) as r:
-                    d = json.load(r)
-                c = (d.get("choices") or [{}])[0].get("message", {}).get("content")
-                if isinstance(c, list): c = "".join(x.get("text", "") for x in c if isinstance(x, dict))
-                if c and c.strip(): return c.strip()
-                last = "empty_response"
-            except urllib.error.HTTPError as e:
-                last = "http_%s:%s" % (e.code, e.read().decode("utf-8", "ignore")[:120])
-                if e.code in (401, 403): return "[vlm_api_error] " + last
-            except Exception as ex:
-                last = repr(ex)
-            time.sleep(min(8, 2 ** attempt))
-        return "[vlm_api_error] " + last
+        # Migrated to the unified gateway HTTP client (Codex #2). gateway makes the last user message
+        # multimodal from image_path, so write the (possibly cropped) PIL image to a temp file and pass
+        # its path -- this preserves REAL pixel grounding: the model still sees only the crop bytes, not
+        # coordinates in text. A str image is used directly. Contract unchanged: stripped text on
+        # success, "[vlm_api_error] <reason>" on failure.
+        import tempfile
+        tmp = None
+        try:
+            if isinstance(image, str):
+                img_path = image
+            else:
+                fd, tmp = tempfile.mkstemp(suffix=".png")
+                os.close(fd)
+                image.convert("RGB").save(tmp, format="PNG")
+                img_path = tmp
+            res = gateway.chat([{"role": "user", "content": prompt}], model=self.model,
+                               max_tokens=max_tokens, judge=False, timeout=120, image_path=img_path)
+        finally:
+            if tmp and os.path.exists(tmp):
+                try: os.remove(tmp)
+                except Exception: pass
+        if res.get("ok"):
+            return res["content"].strip()
+        return "[vlm_api_error] " + (res.get("raw") or res.get("error_type") or "unknown")
     def image_description(self, image): return self._call(image, IMAGE_DESC_PROMPT)
     def region_attribute_description(self, image, bbox=None, attribute=None, region_query=None):
         img = Image.open(image).convert("RGB") if isinstance(image, str) else image

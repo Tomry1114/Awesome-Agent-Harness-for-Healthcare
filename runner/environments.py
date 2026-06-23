@@ -11,14 +11,6 @@ class EnvironmentAdapter:
     def __init__(self, task, **kw): self.task = task; self.cfg = (task.get("environment") or {}).get("config", {})
     def reset(self): ...
     def available_tools(self): return [t["name"] for t in self.task.get("available_tools", [])]
-    def _as_entries(self, res):
-        """Flatten a FHIR search Bundle into {"entries":[resource,...], "total", "pages"} to match the
-        upstream PhysicianBench tool output (eval_helpers/get_all_fhir_resources_from_trajectory expects
-        an `entries` key; raw Bundle uses `entry` -> cp data-retrieval checks falsely fail)."""
-        if isinstance(res, dict) and res.get("resourceType") == "Bundle":
-            entries = [e["resource"] for e in res.get("entry", []) if isinstance(e, dict) and "resource" in e]
-            return {"entries": entries, "total": res.get("total"), "pages": 1}
-        return res
 
     def call_tool(self, name, args): raise NotImplementedError
     def teardown(self): ...
@@ -32,6 +24,14 @@ class FhirEnv(EnvironmentAdapter):
         self.aug_dir = aug_dir
         os.makedirs(self.workspace, exist_ok=True)
         self._lab = None
+    def _as_entries(self, res):
+        """Flatten a FHIR search Bundle into {"entries":[resource,...], "total", "pages"} to match the
+        upstream PhysicianBench tool output (eval_helpers/get_all_fhir_resources_from_trajectory expects
+        an `entries` key; raw Bundle uses `entry` -> cp data-retrieval checks falsely fail)."""
+        if isinstance(res, dict) and res.get("resourceType") == "Bundle":
+            entries = [e["resource"] for e in res.get("entry", []) if isinstance(e, dict) and "resource" in e]
+            return {"entries": entries, "total": res.get("total"), "pages": 1}
+        return res
     def _get(self, path):
         req = urllib.request.Request(self.base + path, headers={"Accept": "application/fhir+json"})
         try:
@@ -375,6 +375,26 @@ _FHIR_GRANULAR_CREATE = {
     "fhir_communication_create_message": "Communication",
     "fhir_appointment_create": "Appointment",
 }
+_FHIR_CANON_SEARCH = {"Patient":"fhir_patient_search_demographics","Condition":"fhir_condition_search_problems","MedicationRequest":"fhir_medication_request_search_orders","Procedure":"fhir_procedure_search_orders","DocumentReference":"fhir_document_reference_search_clinical_notes","ServiceRequest":"fhir_service_request_search"}
+_FHIR_CANON_CREATE = {"MedicationRequest":"fhir_medication_request_create","ServiceRequest":"fhir_service_request_create","Communication":"fhir_communication_create_message","Appointment":"fhir_appointment_create"}
+def _canon_fhir_tool(tool, args):
+    """Map our generic fhir_search/read/create(resourceType=X) to the upstream PhysicianBench granular
+    tool_name so native test_outputs.py checkpoints (which match metadata.tool_name) recognize the query.
+    Conservative: a category-less Observation search -> labs only (never auto-credits vitals/social)."""
+    a = args or {}
+    if tool == "fhir_create":
+        res = a.get("resource", a) or {}
+        rt = res.get("resourceType", a.get("resourceType", ""))
+        return _FHIR_CANON_CREATE.get(rt, tool)
+    if tool in ("fhir_search", "fhir_read"):
+        rt = a.get("resourceType", ""); cat = str(a.get("category", "")).lower()
+        if rt == "Observation":
+            if "vital" in cat: return "fhir_observation_search_vitals"
+            if "social" in cat: return "fhir_observation_search_social_history"
+            return "fhir_observation_search_labs"
+        return _FHIR_CANON_SEARCH.get(rt, tool)
+    return tool
+
 # Upstream PhysicianBench granular tool surface (replaces generic fhir_search for the agent prompt).
 FHIR_GRANULAR_TOOLS = [
     {"name": "fhir_patient_search_demographics", "signature": "(patient) -> demographics"},

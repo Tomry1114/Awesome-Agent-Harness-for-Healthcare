@@ -11,6 +11,7 @@ Event schema (trajectory.jsonl): {event_type: tool_call|final_answer|..., tool, 
 result|observation, step, thought}.
 """
 import json
+import re
 
 
 def _is_retrieval(t):
@@ -33,7 +34,14 @@ def _errored(e):
     r = _observation(e).lower()
     if s and s not in ("ok", "success", "done"):
         return True
-    return ("error" in r) or ("not found" in r) or ('"total": 0' in r) or ("traceback" in r)
+    # #11: tighten bare-substring "error" (misfires on legit text mentioning "error").
+    # Treat as error ONLY on an explicit structured indicator: a JSON "error" key, a leading
+    # [error... marker, or an "error:"/"error " token at the start of a line — NOT any word "error".
+    if '"error"' in r:
+        return True
+    if re.search(r'(^|[\n>\]\}])\s*\[?error[:\s\]"]', r):
+        return True
+    return ("not found" in r) or ('"total": 0' in r) or ("traceback" in r)
 
 
 def proxy_dimensions(events):

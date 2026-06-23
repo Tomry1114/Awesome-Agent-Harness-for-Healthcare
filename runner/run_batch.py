@@ -34,7 +34,6 @@ def main():
     ap.add_argument("--agent", default="stub")
     ap.add_argument("--fhir-base", default=None)
     ap.add_argument("--reset-mode", default="none", choices=["none", "restore_pristine", "per_task"])
-    ap.add_argument("--source-benchmark", default=None)  # reserved (single-bench batch for now)
     ap.add_argument("--has-dimension", default=None)
     ap.add_argument("--has-subdimension", default=None)
     ap.add_argument("--governance-only", action="store_true")

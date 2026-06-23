@@ -5,7 +5,8 @@ deepseek-v3.2) — the judge-model deviation is registered in the paper-align pa
 
 Config (env): MH_OPENAI_BASE / MH_OPENAI_KEY (~/.xbai_key) / MH_GACC_MODEL (default deepseek-v3.2)
 """
-import os, json, time, urllib.request, urllib.error
+import os, json
+import gateway
 
 GOAL_ACCURACY_SYSTEM_PROMPT = """You are a medical answer evaluator.
 
@@ -41,12 +42,6 @@ Predicted final answer:
 {pred_final}
 """
 
-def _key():
-    k = os.environ.get("MH_OPENAI_KEY")
-    if k: return k.strip()
-    p = os.path.expanduser("~/.xbai_key")
-    return open(p).read().strip() if os.path.exists(p) else ""
-
 def _parse_score(txt):
     dec = json.JSONDecoder()
     for i, c in enumerate(txt):
@@ -76,33 +71,14 @@ def _flatten_str(x):
 def score(prediction, gold_answers, model=None):
     """Return {score: 0-1 float | None, raw, model}. gold_answers: list[str] of acceptable gold answers."""
     model = model or os.environ.get("MH_GACC_MODEL", "deepseek-v3.2")
-    base = (os.environ.get("MH_JUDGE_BASE") or os.environ.get("MH_OPENAI_BASE", "https://www.micuapi.ai")).rstrip("/")  # judge gateway can differ from agent
     gold = " | ".join(_flatten_str(gold_answers))
     user = GOAL_ACCURACY_USER_PROMPT.format(gold_final=gold, pred_final=(prediction or "")[:2000])
-    body = {"model": model, "messages": [{"role": "system", "content": GOAL_ACCURACY_SYSTEM_PROMPT},
-                                         {"role": "user", "content": user}], "max_tokens": 1024}
-    data = json.dumps(body).encode(); last = ""
-    for attempt in range(4):
-        try:
-            req = urllib.request.Request(base + "/v1/chat/completions", data=data, method="POST", headers={
-                "Authorization": "Bearer " + _key(), "Content-Type": "application/json",
-                "User-Agent": os.environ.get("MH_OPENAI_UA", "codex_cli_rs/0.20.0"), "Accept": "application/json"})
-            with urllib.request.urlopen(req, timeout=120) as r:
-                d = json.loads(r.read().decode())
-            content = (d.get("choices") or [{}])[0].get("message", {}).get("content")
-            if isinstance(content, list):
-                content = "".join(x.get("text", "") for x in content if isinstance(x, dict))
-            if content and content.strip():
-                return {"score": _parse_score(content), "raw": content[:200], "model": model}
-            last = "empty"
-        except urllib.error.HTTPError as e:
-            try: eb = e.read().decode()[:200]
-            except Exception: eb = ""
-            last = "http_%s:%s" % (e.code, eb)
-            if any(k in eb for k in ("额度", "欠费", "预扣费")) or any(k in eb.lower() for k in ("insufficient", "balance", "quota")):
-                return {"score": None, "raw": "BILLING/QUOTA " + last, "model": model}
-            if e.code in (400, 401): break
-        except Exception as e:
-            last = "err:%s" % e
-        time.sleep(min(12, 2 ** attempt))
-    return {"score": None, "raw": "gacc_error:" + last, "model": model}
+    res = gateway.chat([{"role": "system", "content": GOAL_ACCURACY_SYSTEM_PROMPT},
+                        {"role": "user", "content": user}],
+                       model=model, max_tokens=1024, judge=True, timeout=120)
+    if res["ok"]:
+        content = res["content"]
+        return {"score": _parse_score(content), "raw": content[:200], "model": model}
+    if res["error_type"] == "billing":
+        return {"score": None, "raw": "BILLING/QUOTA " + res["raw"], "model": model}
+    return {"score": None, "raw": "gacc_error:" + res["raw"], "model": model}
