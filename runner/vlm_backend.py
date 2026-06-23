@@ -104,7 +104,7 @@ class ApiVLM:
     name = "api:gateway"
     def __init__(self, model=None):
         import urllib.request
-        self.model = model or os.environ.get("MH_VLM_API_MODEL", "gemini-2.5-flash")
+        self.model = model or os.environ.get("MH_VLM_API_MODEL", "gpt-5.5")  # micuapi has gpt-5.x, no gemini
         _b = (os.environ.get("MH_VLM_API_BASE") or os.environ.get("MH_OPENAI_BASE") or "https://www.micuapi.ai").rstrip("/")
         if _b.endswith("/v1"): _b = _b[:-3].rstrip("/")  # normalize: callers append /v1 (consistent with openai_agent/gacc/mm_judge)
         self.base = _b
@@ -160,9 +160,9 @@ class ApiVLM:
 @functools.lru_cache(maxsize=1)
 def get_backend():
     """Return the configured VLM backend (singleton). MH_VLM_BACKEND=local (default)."""
-    kind = os.environ.get("MH_VLM_BACKEND", "local")
+    kind = os.environ.get("MH_VLM_BACKEND", "api")  # default gpt-5.5 vision via gateway (was local Qwen3-VL-2B; gpt is multimodal, no reason to bottleneck perception on a weak 2B)
     if kind == "local":
         return LocalQwen3VL()
     if kind == "api":
         return ApiVLM()
-    raise ValueError("unknown MH_VLM_BACKEND: %s (only local implemented; api backend = future)" % kind)
+    raise ValueError("unknown MH_VLM_BACKEND: %s (use api=gateway gpt-5.5 [default] or local=Qwen3-VL)" % kind)
