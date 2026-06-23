@@ -105,7 +105,9 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
     trajectory, last_obs, last_res, finished = [], None, None, False
     import re as _re
     _dm = _re.search(r"(?:/?workspace/)?output/[\w.\-]+", task.get("goal", "") or "")  # match output/X AND workspace/output/X
-    _deliverable = _dm.group(0) if _dm else None
+    _track_ds = os.environ.get("MH_PROMPT_TRACK", "harness")
+    _scaffold = os.environ.get("MH_DELIV_SCAFFOLD", "0" if _track_ds == "native" else "1") != "0"
+    _deliverable = (_dm.group(0) if _dm else None) if _scaffold else None  # native: no deliverable nudge/budget/forced-turn scaffolding (obs-bug fixed)
     _deliv_nudges = 0
     _fail_sig = None; _fail_n = 0; _aborted = False  # circuit breaker: abort on repeated identical failing call
     _budget_nudged = False  # one-shot deliverable warning when steps run low

@@ -49,6 +49,29 @@ ALWAYS read the OBSERVATION before acting. Available tools:
 """ + PROTOCOL,
 }
 
+
+# --- NATIVE prompt track (MH_PROMPT_TRACK=native): upstream-faithful system prompts. Clinical text is the
+# official benchmark prompt verbatim; only the tool-calling MECHANISM (our text PROTOCOL) is appended as a
+# REGISTERED deviation (we do not yet use native function-calling). See docs/PROMPT_PROVENANCE.md. ---
+_PB_NATIVE = """You are a clinical AI assistant designed to support healthcare professionals.
+You have access to an EHR system via FHIR API tools and can write files to disk.
+
+Guidelines:
+- Use the FHIR search tools to retrieve patient data before making clinical decisions.
+- Use the FHIR create tools to place orders, send messages, or schedule appointments.
+- Use the write_file tool to save deliverables (notes, assessments, reports) to disk.
+- Be thorough: retrieve all relevant clinical data before writing your assessment.
+- Be accurate: base your clinical reasoning on the actual patient data retrieved.
+- Complete all tasks specified in the instruction before finishing.
+
+Available tools:
+{tools}
+""" + PROTOCOL
+_MEDCTA_NATIVE = '''You are an assistant who can utilize external tools to answer the user question. You have access to the following tools:
+{tools}
+''' + PROTOCOL
+NATIVE_SYS_BY_ENV = {"fhir": _PB_NATIVE, "tool_sandbox": _MEDCTA_NATIVE}  # gui (HAB) = stage-2 (protocol+screenshot coupled)
+
 ANSWER_RE = re.compile(r"<answer>\s*(.*?)\s*</answer>", re.S)
 # Perception tools whose image is provided by the backend; agent must not pass an image arg.
 PERCEPTION_TOOLS = {"ImageDescription", "RegionAttributeDescription", "OCR"}
@@ -93,7 +116,9 @@ class QwenToolAgent:
         tools = task.get("available_tools", []) or []
         tool_lines = "\n".join("- %s : %s" % (t.get("name"), t.get("signature", "")) for t in tools)
         patient = (task.get("context") or {}).get("patient_ref") or ""
-        sys = SYS_BY_ENV.get(et, SYS_BY_ENV["tool_sandbox"]).format(tools=tool_lines, patient=patient)
+        _track = os.environ.get("MH_PROMPT_TRACK", "harness")
+        _tbl = NATIVE_SYS_BY_ENV if (_track == "native" and et in NATIVE_SYS_BY_ENV) else SYS_BY_ENV
+        sys = _tbl.get(et, SYS_BY_ENV["tool_sandbox"]).format(tools=tool_lines, patient=patient)
         q = str((task.get("context") or {}).get("text") or "") or str(task.get("goal") or "")
         self.messages = [{"role": "system", "content": sys}, {"role": "user", "content": q}]
         self._pending = False; self._last_tool = None
