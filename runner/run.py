@@ -6,6 +6,7 @@ Runs end-to-end with the stub agent (no API key). native_pytest executes via sub
 deterministic/llm_judge are skipped (skip_reason) pending B-line. Result validated vs spec/result.schema.json.
 """
 import os, sys, json, glob, argparse, shutil, datetime
+import canonical_schema as _canon
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, HERE)
@@ -145,7 +146,7 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
                                        "attempt": _deliv_nudges, "status": "ok"})
                     last_res = {"feedback": _fb}; last_obs = _fb
                     continue
-            trajectory.append({"step": step, "event_type": "final_answer", "thought": action.get("answer", ""), "status": "ok"})
+            trajectory.append({"step": step, "event_type": "final_answer", "thought": action.get("answer", ""), "status": "ok", "canonical_action": _canon.canonical_action(action, env_type)})
             finished = True; break
         if action["type"] == "tool_call_truncated":  # cut-off tool call (e.g. oversized write_file) -> ask to re-issue
             trajectory.append({"step": step, "event_type": "agent_error", "error": "truncated_tool_call",
@@ -170,7 +171,9 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
                     _err = _out[:120]
         _ev = {"step": step, "event_type": "tool_call", "tool": action["tool"],
                "args": action.get("args", {}), "result": res, "observation": obs, "ts": str(step),
-               "status": "error" if _err else "ok"}  # F2: explicit per-action status (no obs-substring heuristic downstream)
+               "status": "error" if _err else "ok",
+               "canonical_action": _canon.canonical_action(action, env_type),
+               "canonical_result": _canon.canonical_result(res)}  # F2: explicit per-action status (no obs-substring heuristic downstream)
         if _err:
             _es = str(_err)
             _ev["error_type"] = next(("http_" + c for c in ("400", "401", "403", "404", "409", "422", "500", "502", "503")

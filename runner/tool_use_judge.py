@@ -18,7 +18,7 @@ import json, os, sys, glob, urllib.request, collections
 _BASE = (os.environ.get("MH_JUDGE_BASE") or os.environ.get("MH_OPENAI_BASE", "https://www.micuapi.ai")).rstrip("/")
 if _BASE.endswith("/v1"):
     _BASE = _BASE[:-3].rstrip("/")
-_MODEL = os.environ.get("MH_JUDGE_MODEL", "gpt-5.5")
+_MODEL = os.environ.get("MH_JUDGE_MODEL", "gpt-5.4")
 _UA = os.environ.get("MH_OPENAI_UA", "codex_cli_rs/0.20.0")
 SUBS = ["relevance", "necessity", "argument", "sequence", "evidence_use"]
 
