@@ -94,12 +94,31 @@ def _evidence(bdir):
             % (goal[:2500], tool_lines, traj[:6000], answer[:1500]))
 
 
+def _judge_sampled(system, user, n):
+    """#4 judge multi-sampling: average n independent judgments to reduce judge noise (~0.12 measured
+    at n=1). MH_JUDGE_SAMPLES controls n. Sub-scores become averaged floats."""
+    runs = []
+    for _ in range(max(1, n)):
+        v = _parse(_gateway(system, user))
+        if v:
+            runs.append(v)
+    if not runs:
+        return None
+    keys = SUBS + ["unnecessary"]
+    avg = {k: round(sum(float(r.get(k, 0)) for r in runs) / len(runs), 3)
+           for k in keys if any(k in r for r in runs)}
+    avg["_n_samples"] = len(runs)
+    avg["reason"] = runs[0].get("reason")
+    return avg
+
+
 def judge_dir(agent_dir):
     rows = []
+    n = int(os.environ.get("MH_JUDGE_SAMPLES", "1"))
     for rp in sorted(glob.glob(os.path.join(agent_dir, "*", "result.json"))):
         bdir = os.path.dirname(rp)
         try:
-            v = _parse(_gateway(_SYS, _evidence(bdir)))
+            v = _judge_sampled(_SYS, _evidence(bdir), n)
         except Exception as e:
             v = None
             sys.stderr.write("judge err %s: %r\n" % (bdir, e))
@@ -117,7 +136,7 @@ def judge_dir(agent_dir):
             "weight": 1.0, "score": round(quality, 3), "score_eligible": True,
             "evaluator_kind": "tool_use_judge", "judge_backend": _MODEL,
             "subscores": {k: v.get(k) for k in SUBS}, "unnecessary": v.get("unnecessary"),
-            "detail": {"reason": v.get("reason")}})
+            "n_samples": v.get("_n_samples"), "detail": {"reason": v.get("reason")}})
         json.dump(r, open(rp, "w"), indent=1, ensure_ascii=False)
         rows.append((os.path.basename(bdir), round(quality, 3)))
     return rows
