@@ -11,6 +11,15 @@ class EnvironmentAdapter:
     def __init__(self, task, **kw): self.task = task; self.cfg = (task.get("environment") or {}).get("config", {})
     def reset(self): ...
     def available_tools(self): return [t["name"] for t in self.task.get("available_tools", [])]
+    def _as_entries(self, res):
+        """Flatten a FHIR search Bundle into {"entries":[resource,...], "total", "pages"} to match the
+        upstream PhysicianBench tool output (eval_helpers/get_all_fhir_resources_from_trajectory expects
+        an `entries` key; raw Bundle uses `entry` -> cp data-retrieval checks falsely fail)."""
+        if isinstance(res, dict) and res.get("resourceType") == "Bundle":
+            entries = [e["resource"] for e in res.get("entry", []) if isinstance(e, dict) and "resource" in e]
+            return {"entries": entries, "total": res.get("total"), "pages": 1}
+        return res
+
     def call_tool(self, name, args): raise NotImplementedError
     def teardown(self): ...
 
@@ -63,7 +72,8 @@ class FhirEnv(EnvironmentAdapter):
         if name == "fhir_search":
             rt = args.get("resourceType", ""); params = {k: v for k, v in args.items() if k != "resourceType"}
             params = self._normalize_search(rt, params)
-            return self._get(f"/{rt}?" + urllib.parse.urlencode(params))
+            res = self._get(f"/{rt}?" + urllib.parse.urlencode(params))
+            return self._as_entries(res)  # match upstream PhysicianBench tool format {"entries":[...resources...]} (FHIR Bundle .entry -> flat list)
         if name == "fhir_read":
             return self._get(f"/{args['resourceType']}/{args['id']}")
         if name == "fhir_create":

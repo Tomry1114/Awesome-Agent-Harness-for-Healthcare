@@ -38,7 +38,7 @@ class OpenAIToolAgent(QwenToolAgent):
                 req = urllib.request.Request(url, data=data, method="POST", headers={
                     "Authorization": "Bearer " + self._key, "Content-Type": "application/json",
                     "User-Agent": os.environ.get("MH_OPENAI_UA", "codex_cli_rs/0.20.0"), "Accept": "application/json"})
-                with urllib.request.urlopen(req, timeout=120) as r:
+                with urllib.request.urlopen(req, timeout=int(os.environ.get("MH_OPENAI_TIMEOUT", '300'))) as r:
                     d = json.loads(r.read().decode())
                 msg = (d.get("choices") or [{}])[0].get("message", {}) or {}
                 content = msg.get("content")

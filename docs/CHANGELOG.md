@@ -1,3 +1,27 @@
+## 2026-06-23 — PB 输出格式对齐(entries 伪信号)+ 超时 + 动作安全判官;为"指标解离"清伪信号
+
+延续 06-22 PB 深挖,继续清 harness 伪信号,为「指标解离」研究主线做干净基线。
+
+**🔴 修1 — FHIR 输出格式 `entry` vs `entries`(伪 context_grounding 失败)** `runner/environments.py`
+- 上游工具(`tools/fhir_api_functions.py`)返回 `{"entries":[resource,...], "total", "pages"}`(Bundle.entry 摊平);我们返回**原生 FHIR Bundle**(`entry`)。
+- 后果:`eval_helpers.get_all_fhir_resources_from_trajectory` 找 `"entries"` 键 → 在我们输出里提取 0 个 → cp1 数据检索检查报「No patient demographics / lab found in trajectory」**伪失败**(agent 其实全检索了)。adrenal_incidentaloma 推理 5/5 却 context_grounding=0/1 即此故。
+- 修：`FhirEnv._as_entries` 把 search Bundle 转成 `{"entries":[...]}`(配合 .find-fix 的字符串序列化,上游 str-branch 流式解码可提取)。验证:demographics 提取 1、labs 提取 20 → cp1 found=True。
+
+**🟡 修2 — API 超时**(`openai_agent.py`)：`timeout` 120→300（`MH_OPENAI_TIMEOUT`）。reasoning=high 单次可 >120s,超时→`API_BRAIN_ERROR`→turns=0→整任务 0（alcohol_use_disorder 即此故）。
+
+**🟢 修3 — 动作安全判官(填 unsafe_action_rate 的 n/a)** `benchmark_metric/risk_annotator.py`
+- HAB(form_submission)文字判 + MedCTA(final answer)看图判,gated `MH_ACTION_SAFETY_JUDGE`。补上后:HAB unsafe=1.00（存疑:只喂 submit 稀疏 args,倾向乱判;待喂 full_state 校准）、MedCTA=0.10（合理）。
+
+**指标解离主线 — 现状诚实评估**
+- 探索性看 3×10 数据：task_success 确实把不同失败模式压成同一个 0（答错/过程错/不安全/不完整）。
+- 但「清伪信号」一查即发现:之前列的解离证据**大半是 harness 伪信号**(entries 格式、交付物正则、obs 截断、超时,均已修)。
+- 结论:**当前数据被已修伪信号污染,解离分析不可信;需在干净 harness 上重跑 PB/MedCTA 再评估。** 真正"在干净 harness 上仍存在的解离"才是可写论文的 motivation。
+
+**PB-10(全修复,污染前)结果留档**:task_success 2/10、subtask 0.60（vs 早先假 0）。仅作过程记录,非干净基线。
+
+**待办**:① 干净重跑 PB-10/MedCTA-10 看伪解离是否消失;② cp_tool_selection 口径(过严?);③ HAB 动作判官喂 full_state;④ 多模型(立解离需重排序证据);⑤ DocumentReference base64 附件解码(对齐上游)。
+
+
 ## 2026-06-22 (续10) — PB 深挖:对齐官方 mini_agent,找到并修 3 个真 bug(adc 0/7→3/7,行为正常化)
 
 用户多轮追问「没 review 到真实问题」,逐层挖出 adc「压根不写交付物」的真因——不是模型顽固,是**三个叠加的 harness bug** + 与官方 agent 的关键差异。
