@@ -214,6 +214,9 @@ class GuiEnvReal(EnvironmentAdapter):
         self._pw = self._browser = self.page = None
         self.full_state = None
         self._init_obs = None
+        self.workspace = os.environ.get("MH_GUI_WORKSPACE", "/tmp/hab_ws_%d" % os.getpid())
+        self._last_download = None
+        self._prev_hash = None  # NoProgress: detect API-success-but-no-state-change
 
     def reset(self):
         from playwright.sync_api import sync_playwright
@@ -252,7 +255,13 @@ class GuiEnvReal(EnvironmentAdapter):
 
     def _snap(self):
         self._read_state()
-        return {"ok": True, "url": self.page.url, "title": self.page.title(), "observation": self._observe()}
+        obs = self._observe()
+        import hashlib
+        h = hashlib.md5((self.page.url + obs).encode("utf-8", "ignore")).hexdigest()
+        changed = self._prev_hash is not None and h != self._prev_hash  # API success != semantic progress
+        self._prev_hash = h
+        return {"ok": True, "url": self.page.url, "title": self.page.title(), "observation": obs,
+                "state_changed": bool(changed), "semantic_progress": bool(changed)}
 
     def _sel(self, a):
         if a.get("ref") not in (None, ""):
@@ -305,8 +314,31 @@ class GuiEnvReal(EnvironmentAdapter):
                 self.page.mouse.wheel(0, dy)
             elif name == "done":                       # explicit completion signal (maps to final)
                 return {"done": True}
+            elif name == "download":                   # FileAction: download -> workspace, record path+hash
+                try:
+                    with self.page.expect_download(timeout=20000) as _di:
+                        self._click(a)
+                    _dl = _di.value
+                    os.makedirs(self.workspace, exist_ok=True)
+                    _dest = os.path.join(self.workspace, _dl.suggested_filename or "download.bin")
+                    _dl.save_as(_dest)
+                    self._last_download = _dest
+                    import hashlib
+                    _h = hashlib.md5(open(_dest, "rb").read()).hexdigest()[:12]
+                    _r = self._snap(); _r["downloaded"] = {"path": _dest, "hash": _h}; return _r
+                except Exception as _e:
+                    _r = self._snap(); _r["error"] = "download_failed: " + repr(_e)[:140]; return _r
+            elif name == "upload":                     # FileAction: upload a (downloaded) file to an input
+                try:
+                    _fref = a.get("file_ref") or "last"
+                    _fp = self._last_download if _fref == "last" else os.path.join(self.workspace, _fref)
+                    _sel, _ = self._sel(a)
+                    self.page.set_input_files(_sel, _fp, timeout=10000)
+                    _r = self._snap(); _r["uploaded"] = {"path": _fp}; return _r
+                except Exception as _e:
+                    _r = self._snap(); _r["error"] = "upload_failed: " + repr(_e)[:140]; return _r
             else:
-                return {"error": "unknown gui tool %s (download/upload need stage-2 file handling)" % name}
+                return {"error": "unknown gui tool %s" % name}
         except Exception as e:
             try:
                 self.page.wait_for_timeout(300)

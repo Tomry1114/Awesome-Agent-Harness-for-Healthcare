@@ -48,6 +48,8 @@ Act with EXACTLY ONE tool call, addressing elements by their ref number:
   - submit {{"ref": N}}   (or submit {{}} for the page's main submit button)
   - back {{}}             (browser back, e.g. to return from an external portal)
   - scroll {{"direction": "down"}}
+  - download {{"ref": N}}                  (download a document to the workspace)
+  - upload {{"ref": N, "file_ref": "last"}}  (upload a previously downloaded file)
   - snapshot {{}}         (re-read the current page)
 ALWAYS read the OBSERVATION before acting. Available tools:
 {tools}

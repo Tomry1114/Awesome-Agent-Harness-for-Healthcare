@@ -14,7 +14,7 @@ ENV_CAPABILITIES = {
     },
     "healthadminbench": {
         "gui_operations": ["navigate", "click", "type", "select", "scroll", "back", "submit", "snapshot"],
-        "file_operations": [],  # upload/download NOT yet implemented (stage-2) -> declared missing
+        "file_operations": ["upload", "download"],  # implemented in GuiEnvReal (Playwright file chooser/download event)
         "observation_modalities": ["text", "structured_elements"],
     },
     "medcta": {

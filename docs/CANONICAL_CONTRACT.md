@@ -107,11 +107,11 @@ Native PB 才需:官方 prompt + 官方工具暴露 + 官方 function-calling/ru
 |---|---|---|
 | 5 动作类型 | ToolCall/GUIAction/FileAction/ControlAction/FinalAnswer | 🔴 现仅 tool_call + gui_action(扁平);final 用 <answer> |
 | GUIAction operations | +check/scroll/back | 🟡 已补 back/scroll/done,缺 check |
-| FileAction | upload/download/write 正式列出 | 🔴 write 有(write_file);**upload/download 缺**(HAB download 41%) |
+| FileAction | upload/download/write 正式列出 | 🟡 write_file 有;**upload/download 已实现**(GuiEnvReal Playwright,HAB 135/135 可跑);canonical 分类仍待 |
 | ControlAction | done/abort/retry/wait/escalate | 🔴 仅隐式 |
 | CanonicalTarget 可扩展 | element_id/role/name/text/coords | 🔴 现仅 ref=N |
 | CanonicalObservation envelope | 多模态容器 | 🟡 各 env 各自渲染,未统一 envelope |
-| NoProgress / state_changed | API success≠progress | 🔴 未区分 |
+| NoProgress / state_changed | API success≠progress | ✅ GuiEnvReal _snap 记 state_changed/semantic_progress |
 | Capability manifest + precheck | required ⊆ env | 🔴 未实现(本轮起步) |
 
 ## 9. HAB download/upload 行动项(§9)
