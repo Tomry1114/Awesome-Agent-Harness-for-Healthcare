@@ -8,7 +8,7 @@ Config (env):
   MH_OPENAI_MODEL  default gpt-5.5
   MH_OPENAI_KEY    API key; if unset, read ~/.xbai_key (chmod 600, never committed)
 """
-import os, json, time, urllib.request, urllib.error
+import os, json, time, re, urllib.request, urllib.error
 from qwen_agent import QwenToolAgent
 
 def _load_key():
@@ -26,6 +26,83 @@ class OpenAIToolAgent(QwenToolAgent):
         self.model = os.environ.get("MH_OPENAI_MODEL", "gpt-5.5")
         self.reasoning = os.environ.get("MH_OPENAI_REASONING", "high")  # PhysicianBench official default = high
         self._key = _load_key()
+        # FAIRNESS #3: native function-calling protocol (fair standard; frontier models are
+        # trained for it) instead of our text <tool_call> protocol. Opt-in MH_PROTOCOL=function_calling.
+        self.fc = os.environ.get("MH_PROTOCOL", "text") == "function_calling"
+        if self.fc:
+            self._init_fc()
+    def _init_fc(self):
+        tools = self.task.get("available_tools", []) or []
+        def _schema(sig):
+            m = re.match(r"\(([^)]*)\)", sig or "")
+            props = {}
+            if m and m.group(1).strip():
+                for part in m.group(1).split(","):
+                    nm = part.strip().split(":")[0].split("=")[0].strip()
+                    if nm and nm.lower() != "image":
+                        props[nm] = {"type": "string"}
+            return {"type": "object", "properties": props}
+        self.tools_schema = [{"type": "function", "function": {
+            "name": t.get("name"), "description": (t.get("signature") or "")[:200],
+            "parameters": _schema(t.get("signature"))}} for t in tools if t.get("name")]
+        base = {"fhir": "You are a clinical AI assistant with access to an EHR via FHIR API tools and a write_file tool.",
+                "tool_sandbox": "You are a medical reasoning agent. The image is already loaded inside the perception tools.",
+                "gui": "You are a web agent operating a healthcare portal."}.get(self.et, "You are a medical agent.")
+        q = self.messages[-1]["content"] if self.messages else self.task.get("goal", "")
+        self.messages = [{"role": "system", "content": base + " Use the available tools as needed; give your final answer as plain text when done."},
+                         {"role": "user", "content": q}]
+        self._fc_call_id = None
+
+    def _chat_fc(self, messages):
+        url = self.base + "/v1/chat/completions"
+        body = {"model": self.model, "messages": messages, "tools": self.tools_schema,
+                "tool_choice": "auto", "max_tokens": int(os.environ.get("MH_OPENAI_MAX_TOKENS", "16000"))}
+        if self.reasoning:
+            body["reasoning_effort"] = self.reasoning
+        data = json.dumps(body).encode()
+        for attempt in range(5):
+            try:
+                req = urllib.request.Request(url, data=data, method="POST", headers={
+                    "Authorization": "Bearer " + self._key, "Content-Type": "application/json",
+                    "User-Agent": os.environ.get("MH_OPENAI_UA", "codex_cli_rs/0.20.0")})
+                with urllib.request.urlopen(req, timeout=int(os.environ.get("MH_OPENAI_TIMEOUT", "300"))) as r:
+                    d = json.loads(r.read().decode())
+                return (d.get("choices") or [{}])[0].get("message", {}) or {}
+            except Exception:
+                time.sleep(2 ** attempt)
+        return {"content": "API_BRAIN_ERROR"}
+
+    def act_fc(self, state):
+        if self._fc_call_id is not None:
+            lr = state.get("last_result")
+            obs = lr.get("output") if isinstance(lr, dict) and "output" in lr else lr
+            if not isinstance(obs, str):
+                obs = json.dumps(obs, ensure_ascii=False)
+            obs = obs[:int(os.environ.get("MH_OBS_MAX_LEN", "10000"))]
+            self.messages.append({"role": "tool", "tool_call_id": self._fc_call_id, "content": obs})
+            self._fc_call_id = None
+        msg = self._chat_fc(self.messages)
+        tcs = msg.get("tool_calls") or []
+        am = {"role": "assistant", "content": msg.get("content") or ""}
+        if tcs:
+            am["tool_calls"] = tcs
+        self.messages.append(am)
+        if tcs:
+            tc = tcs[0]
+            self._fc_call_id = tc.get("id")
+            fn = tc.get("function", {})
+            try:
+                args = json.loads(fn.get("arguments") or "{}")
+            except Exception:
+                args = {}
+            return {"type": "tool_call", "tool": fn.get("name"), "args": args}
+        return {"type": "final", "answer": msg.get("content") or ""}
+
+    def act(self, state):
+        if getattr(self, "fc", False):
+            return self.act_fc(state)
+        return super().act(state)
+
     def _chat(self, messages, max_new_tokens=400):
         url = self.base + "/v1/chat/completions"
         body = {"model": self.model, "messages": messages,
