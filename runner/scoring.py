@@ -46,6 +46,33 @@ def _flatten_whitelist(ctx):
     wl = ((ctx.get("reference") or {}).get("gold_answer") or {}).get("whitelist") or []
     return [p for grp in wl for p in (grp if isinstance(grp, list) else [grp]) if isinstance(p, str)]
 
+def _tool_requirements(reference, env):
+    """Classify a task's tools into the 3-class model used by the deterministic tool-SELECTION check:
+      required     : tools the task/safety rule explicitly MANDATES (missing => penalize).
+      optional     : tools that HELP but are not needed if the answer is already obtainable
+                     (e.g. a perception tool when the model can read the visible image). Skipping => NO penalty.
+      alternatives : list of tool-sets where ANY one set is a complete valid path (multiple valid routes).
+
+    Design invariant: the harness makes the image VISIBLE to a multimodal agent by default, so for
+    MedCTA NO perception tool is truly mandatory once the image is visible. Therefore MedCTA's
+    `sufficient_tools` are OPTIONAL and `required_tool_groups` are ALTERNATIVE paths (NOT hard requirements).
+    PB/HAB do not route through the toolset_contains branch at all, but if a future task carries an explicit
+    `required_tools` list (e.g. allergy + current-meds before a high-risk order) it stays REQUIRED here.
+    """
+    reference = reference or {}
+    env = env or {}
+    etype = env.get("type") if isinstance(env, dict) else None
+    sufficient = list(reference.get("sufficient_tools") or [])
+    groups = [list(g) for g in (reference.get("required_tool_groups") or []) if g]
+    # ONLY a tool list the schema explicitly marks as hard-required is treated as REQUIRED.
+    required = set(reference.get("required_tools") or [])
+    # MedCTA (tool_sandbox) -- and, conservatively, any task that only carries sufficient/alternative
+    # perception paths -- treats those paths as OPTIONAL/ALTERNATIVE, never as hard requirements.
+    optional = set(sufficient)
+    alternatives = [set(g) for g in groups]
+    return {"required": required, "optional": optional, "alternatives": alternatives,
+            "env_type": etype}
+
 def _judge_observations(ctx, limit=6):
     obs = [(ev.get("tool"), ev.get("observation") or ev.get("result")) for ev in ctx.get("trajectory", [])
            if ev.get("event_type") == "tool_call" and (ev.get("observation") or ev.get("result"))]
@@ -73,14 +100,38 @@ def run_checkpoint(cp, ctx):
         return {**base, **run_native_pytest(ref, ctx["pb_repo"], ctx.get("base") or "", ctx["job_dir"])}
     if t == "deterministic":
         chk = cp.get("check") or {}
-        if chk.get("method") in ("toolset_contains", "toolset_match"):  # MedCTA ToolAcc v0 = SUBSET(contains)
-            expected = set((ctx.get("reference") or {}).get("sufficient_tools") or [])
+        if chk.get("method") in ("toolset_contains", "toolset_match"):  # tool-SELECTION (3-class: required/optional/alternative)
+            # Reframed: do NOT treat reference.sufficient_tools as MANDATORY. They are SUFFICIENT/ALTERNATIVE
+            # paths. A correct answer reached WITHOUT them (e.g. read directly from the visible image) must
+            # NOT lower Tooling. Only genuinely REQUIRED tools failing => tool_selection_error. Execution
+            # hygiene (call success / arg validity / redundancy) is reported SEPARATELY via
+            # tool_execution_hygiene and the alternative-path-tolerant tool_use_quality LLM judge.
+            req = _tool_requirements(ctx.get("reference") or {}, ctx.get("env") or {})
             used = {n for n, _ in ctx.get("agent_tool_calls", [])}
-            ok = bool(expected) and expected <= used
+            missing_required = sorted(req["required"] - used)
+            alt_groups = req["alternatives"]
+            # an ALTERNATIVE group is satisfied if the agent used ALL tools of any one group
+            alt_satisfied = (not alt_groups) or any(g <= used for g in alt_groups)
+            # PASS when every truly-required tool was used AND (an alternative path was satisfied OR there
+            # are no hard requirements at all). Skipping OPTIONAL/sufficient tools is NOT a failure.
+            ok = (not missing_required) and (alt_satisfied or not req["required"])
+            note = None
+            if ok and not req["required"] and (req["optional"] or alt_groups):
+                # the only "expected" tools were optional/alternative; if none of them were used the
+                # agent answered without needing tools -- record, do NOT fail.
+                expected_any = set(req["optional"])
+                for g in alt_groups: expected_any |= g
+                if not (used & expected_any):
+                    note = "optional_tools_not_required"
             return {**base, "checkpoint_status": "passed" if ok else "failed",
                     "failure_mode": None if ok else "agent_failure",
                     "failure_tag": None if ok else "tool_selection_error",
-                    "detail": {"mode": "contains", "expected": sorted(expected), "used": sorted(used)}}
+                    "note": note,
+                    "detail": {"mode": "three_class", "env_type": req["env_type"],
+                               "required": sorted(req["required"]), "optional": sorted(req["optional"]),
+                               "alternatives": [sorted(g) for g in alt_groups],
+                               "used": sorted(used), "missing_required": missing_required,
+                               "alternative_satisfied": alt_satisfied}}
         if chk.get("method") == "arg_match":  # MedCTA ArgAcc — argument-KEY coverage (relaxed from exact-match)
             # Aligned to upstream semantic/subset spirit (NOT exact trace equality): for every reference tool,
             # the agent must have invoked it AND supplied (non-empty) the same NON-system argument keys. The
