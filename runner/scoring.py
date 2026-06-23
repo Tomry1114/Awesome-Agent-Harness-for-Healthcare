@@ -394,6 +394,36 @@ def error_class(r):
         return "evaluation_failure"
     return None
 
+def compute_dim_status(results, dim_scores, proxy_scores):
+    """Codex #3 (SINGLE SOURCE OF TRUTH): derive each dimension's status from the SAME (results,
+    dim_scores) used to compute the scores, so status can NEVER decouple from the score (the
+    post-hoc-Governance bug: scored 1.0 yet read 'not_exercised'). Returns (status, reason); every
+    non-scored dim carries a reason so an n/a never looks like a breakage.
+    `results` items may be raw run results OR result.json checkpoints (both carry dimension/
+    checkpoint_status/skip_reason)."""
+    status, reason = {}, {}
+    for mod in MODULES:
+        all_r = [r for r in results if r.get("dimension") == mod]
+        if dim_scores.get(mod) is not None:
+            status[mod] = "valid_score"
+        elif proxy_scores.get(mod) is not None:
+            status[mod] = "proxy_only"; reason[mod] = "trajectory_proxy_only_no_strict_cp"
+        elif any(r.get("checkpoint_status") == "error" for r in all_r):
+            status[mod] = "evaluation_error"; reason[mod] = "verifier_or_environment_error"
+        elif all_r:
+            srs = sorted({r.get("skip_reason") for r in all_r
+                          if r.get("checkpoint_status") == "skipped" and r.get("skip_reason")})
+            if srs:
+                # skip caused by missing evaluator capability -> not_exercised; structural -> not_applicable
+                status[mod] = "not_exercised" if any(x in UNSUPPORTED_SKIP for x in srs) else "not_applicable"
+                reason[mod] = ",".join(srs)
+            else:
+                status[mod] = "not_exercised"; reason[mod] = "checkpoints_present_no_score"
+        else:
+            status[mod] = "not_applicable"; reason[mod] = "no_checkpoint_for_dimension"
+    return status, reason
+
+
 def build_result(task, trajectory, results, provenance):
     cps = []
     for r in results:
@@ -410,15 +440,7 @@ def build_result(task, trajectory, results, provenance):
         cps.append(c)
     dim, cov, proxy_dim, proxy_cov = aggregate(results)
     # Codex #3: every null dimension score carries an EXPLICIT status (never an unexplained void).
-    dim_status = {}
-    for _mod in MODULES:
-        _all = [r for r in results if r["dimension"] == _mod]
-        if dim.get(_mod) is not None: dim_status[_mod] = "valid_score"
-        elif proxy_dim.get(_mod) is not None: dim_status[_mod] = "proxy_only"
-        elif any(r["checkpoint_status"] == "error" for r in _all): dim_status[_mod] = "evaluation_error"
-        elif any(r["checkpoint_status"] == "skipped" for r in _all): dim_status[_mod] = "not_exercised"
-        elif not _all: dim_status[_mod] = "not_applicable"
-        else: dim_status[_mod] = "unknown"
+    dim_status, dim_status_reason = compute_dim_status(results, dim, proxy_dim)
     evaluated = [r for r in results if is_score_eligible(r)]
     proxy_evaluated = [r for r in results if r.get("score_eligible") is False and r["checkpoint_status"] in ("passed", "failed")]
     errs = [r for r in results if r["checkpoint_status"] == "error"]
@@ -450,6 +472,7 @@ def build_result(task, trajectory, results, provenance):
             "checkpoints": cps, "dimension_scores": dim, "dimension_coverage": cov,
             "proxy_dimension_scores": proxy_dim, "proxy_dimension_coverage": proxy_cov,
             "dimension_status": dim_status,
+            "dimension_status_reason": dim_status_reason,
             "tool_calls": sum(1 for e in trajectory if e.get("event_type") == "tool_call"),
             "failure_tags": sorted(tags), "provenance": provenance,
             "_checkpoints_full": results}

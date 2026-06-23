@@ -9,7 +9,7 @@ Writes updated checkpoint_status into result.json (keeps original under _rescore
 before/after dimension coverage. Reuses the same gateway contract as risk_annotator.
 """
 import json, os, sys, glob, base64, urllib.request, collections
-from scoring import is_score_eligible
+from scoring import is_score_eligible, compute_dim_status
 
 MODULES = ["Execution", "Tooling", "Context", "Lifecycle", "Observability", "Verification", "Governance"]
 _BASE = (os.environ.get("MH_JUDGE_BASE") or os.environ.get("MH_OPENAI_BASE", "https://www.micuapi.ai")).rstrip("/")
@@ -162,6 +162,11 @@ def rescore(agent_dir, bench):
             if totw.get(m):
                 ds[m] = round(passw[m] / totw[m], 3)
         r["dimension_scores"] = ds
+        # SSOT: refresh dimension_status from the SAME recomputed scores so post-hoc Governance never
+        # reads "not_exercised" while scoring 1.0 (the decoupling bug).
+        _st, _rsn = compute_dim_status(r.get("checkpoints") or [], ds, r.get("proxy_dimension_scores") or {})
+        r["dimension_status"] = _st
+        r["dimension_status_reason"] = _rsn
         json.dump(r, open(rp, "w"), indent=1, ensure_ascii=False)
     return n_judged, dict(before), dict(after)
 
