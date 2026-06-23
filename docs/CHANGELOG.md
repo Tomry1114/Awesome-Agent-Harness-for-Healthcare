@@ -20,7 +20,8 @@
 
 **✅ 验证 — MedCTA 10/10 跑出正常结果**(`results_mctaFix/gpt5/`,tool-mediated 默认 image_visible=0)
 - GAcc n=10 mean=**0.455**,分布 `[0,0,0,0,0,0.55,1,1,1,1]`——真分、满区分度(非全 0 / 非 proxy 水分)。
-- 每题 `evaluation_status=partial`,`dimension_status` 3/7 valid(Context/Tooling/Verification),工具中介行为 1–7 工具/题。
+- 七维 **7/7 覆盖**(看 `report.json`,非 result.json):strict{Tooling 0.50 · Context 0.80 · Verification 0.455} + proxy{Execution 1.0 · Lifecycle 1.0 · Observability 1.0} + post-hoc{Governance 0.80,`rescore_judges.py` 补判 `fabricate_finding_absent_in_image`}。
+- native checkpoint_pass_rate 0.62(31/50)、GAcc 0.455、**task success 0/10**(二值门被 arg_accuracy strict 卡,见 `75a949e`)。工具中介 1–7 工具/题。
 - 详见 `docs/CODEX_REVIEW_FIXES.md`(11 条逐条状态)。剩 #1 god-function / #2 判官迁移 / #7 init 拦截 / #8 taxonomy / #9 工具名单映射 = P1/P2(不 blind 蛮改正在工作的系统)。
 
 ## 2026-06-23 — PB 输出格式对齐(entries 伪信号)+ 超时 + 动作安全判官;为"指标解离"清伪信号
