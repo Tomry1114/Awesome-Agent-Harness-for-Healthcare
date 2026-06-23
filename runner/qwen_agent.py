@@ -81,6 +81,51 @@ _MEDCTA_NATIVE = '''You are an assistant who can utilize external tools to answe
 ''' + PROTOCOL
 NATIVE_SYS_BY_ENV = {"fhir": _PB_NATIVE, "tool_sandbox": _MEDCTA_NATIVE}  # gui (HAB) = stage-2 (protocol+screenshot coupled)
 
+
+# --- MedCTA single-system DEFAULT (image VISIBLE to the brain, tools OPTIONAL). This is the correct
+# eval: gpt-5.5 is multimodal and sees the task image directly; the 5 tools are offered but NOT forced.
+# tool_sandbox image-hidden prompt (SYS_BY_ENV["tool_sandbox"]) and the tools-disabled prompt below are
+# now ABLATION configs of this one system, selected via MH_MEDCTA_IMAGE_VISIBLE / MH_MEDCTA_TOOLS_ENABLED.
+_MEDCTA_MM = """You are a medical reasoning agent. The relevant medical image is ATTACHED to this conversation (you can see it directly). Answer the question about the image.
+You also have access to these OPTIONAL tools:
+{tools}
+Use a tool ONLY if it genuinely helps (e.g. to zoom into a region, read embedded text, search a fact, or
+compute). If you can answer from the image directly, just answer -- do NOT call tools you do not need.
+""" + PROTOCOL
+# Tools-disabled ablation (~ pure VQA): image visible, NO tools at all.
+_MEDCTA_MM_NOTOOLS = """You are a medical reasoning agent. The relevant medical image is ATTACHED to this conversation (you can see it directly). Answer the question about the image directly.
+No tools are available -- reason from the image alone.
+""" + PROTOCOL
+
+
+def medcta_config():
+    """Resolve the MedCTA single-system config flags (only meaningful when env type == tool_sandbox).
+    Defaults make the CORRECT eval the default: image visible to the brain + tools offered (optional)."""
+    return (os.environ.get("MH_MEDCTA_IMAGE_VISIBLE", "1") == "1",
+            os.environ.get("MH_MEDCTA_TOOLS_ENABLED", "1") == "1")
+
+
+def resolve_medcta_image(task):
+    """Resolve task.context.images[0].path to an absolute path under MH_MEDCTA_IMG_ROOT
+    (same root convention as MedCTAToolSandbox._resolve_image). Returns None if absent."""
+    imgs = (task.get("context") or {}).get("images") or []
+    if not imgs:
+        return None
+    rel = imgs[0].get("path") or ""
+    root = os.environ.get("MH_MEDCTA_IMG_ROOT", os.path.join(
+        os.path.dirname(__file__), "..", "benchmark", "MedCTA", "opencompass", "data", "medcta_dataset"))
+    fp = os.path.join(root, rel)
+    return fp if os.path.exists(fp) else (rel if os.path.exists(rel) else None)
+
+
+def image_data_url(path):
+    """Read an image file and return a data: URL (base64) suitable for OpenAI multimodal image_url."""
+    import base64, mimetypes
+    mime = mimetypes.guess_type(path)[0] or "image/jpeg"
+    with open(path, "rb") as f:
+        b64 = base64.b64encode(f.read()).decode()
+    return "data:%s;base64,%s" % (mime, b64)
+
 ANSWER_RE = re.compile(r"<answer>\s*(.*?)\s*</answer>", re.S)
 # Perception tools whose image is provided by the backend; agent must not pass an image arg.
 PERCEPTION_TOOLS = {"ImageDescription", "RegionAttributeDescription", "OCR"}
@@ -123,11 +168,22 @@ class QwenToolAgent:
         et = (task.get("environment") or {}).get("type", "tool_sandbox")
         self.et = et
         tools = task.get("available_tools", []) or []
-        tool_lines = "\n".join("- %s : %s" % (t.get("name"), t.get("signature", "")) for t in tools)
         patient = (task.get("context") or {}).get("patient_ref") or ""
         _track = os.environ.get("MH_PROMPT_TRACK", "harness")
-        _tbl = NATIVE_SYS_BY_ENV if (_track == "native" and et in NATIVE_SYS_BY_ENV) else SYS_BY_ENV
-        sys = _tbl.get(et, SYS_BY_ENV["tool_sandbox"]).format(tools=tool_lines, patient=patient)
+        # MedCTA single-system config: image-visible (default) -> multimodal prompt; tools optional
+        # (default) vs disabled ablation -> hide the tool list. Flags only apply to tool_sandbox.
+        self.medcta_image_visible, self.medcta_tools_enabled = (False, True)
+        if et == "tool_sandbox":
+            self.medcta_image_visible, self.medcta_tools_enabled = medcta_config()
+            if not self.medcta_tools_enabled:
+                tools = []  # tools-disabled ablation: present an empty tool list
+        tool_lines = "\n".join("- %s : %s" % (t.get("name"), t.get("signature", "")) for t in tools)
+        if et == "tool_sandbox" and self.medcta_image_visible and _track != "native":
+            _prompt = _MEDCTA_MM if self.medcta_tools_enabled else _MEDCTA_MM_NOTOOLS
+            sys = _prompt.format(tools=tool_lines, patient=patient)
+        else:
+            _tbl = NATIVE_SYS_BY_ENV if (_track == "native" and et in NATIVE_SYS_BY_ENV) else SYS_BY_ENV
+            sys = _tbl.get(et, SYS_BY_ENV["tool_sandbox"]).format(tools=tool_lines, patient=patient)
         q = str((task.get("context") or {}).get("text") or "") or str(task.get("goal") or "")
         self.messages = [{"role": "system", "content": sys}, {"role": "user", "content": q}]
         self._pending = False; self._last_tool = None

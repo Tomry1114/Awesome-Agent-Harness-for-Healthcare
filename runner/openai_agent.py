@@ -9,7 +9,8 @@ Config (env):
   MH_OPENAI_KEY    API key; if unset, read ~/.xbai_key (chmod 600, never committed)
 """
 import os, json, time, re, urllib.request, urllib.error
-from qwen_agent import QwenToolAgent
+from qwen_agent import (QwenToolAgent, _MEDCTA_MM, _MEDCTA_MM_NOTOOLS,
+                        resolve_medcta_image, image_data_url)
 
 def _load_key():
     k = os.environ.get("MH_OPENAI_KEY")
@@ -31,6 +32,11 @@ class OpenAIToolAgent(QwenToolAgent):
         self.fc = os.environ.get("MH_PROTOCOL", "text") == "function_calling"
         if self.fc:
             self._init_fc()
+        # MedCTA single-system: inject the task image into the brain's first user message (default
+        # MH_MEDCTA_IMAGE_VISIBLE=1) and override the system prompt to the image-visible / tools-optional
+        # text. Runs AFTER _init_fc so the image survives the FC message rebuild. Tools-disabled ablation
+        # (MH_MEDCTA_TOOLS_ENABLED=0) is handled in qwen __init__ (empty tool list) + FC schema below.
+        self._apply_medcta_mm()
     def _init_fc(self):
         tools = self.task.get("available_tools", []) or []
         def _schema(sig):
@@ -45,6 +51,9 @@ class OpenAIToolAgent(QwenToolAgent):
         self.tools_schema = [{"type": "function", "function": {
             "name": t.get("name"), "description": (t.get("signature") or "")[:200],
             "parameters": _schema(t.get("signature"))}} for t in tools if t.get("name")]
+        # MedCTA tools-disabled ablation: present an empty tool list to the FC brain too.
+        if self.et == "tool_sandbox" and not getattr(self, "medcta_tools_enabled", True):
+            self.tools_schema = []
         base = {"fhir": "You are a clinical AI assistant with access to an EHR via FHIR API tools and a write_file tool.",
                 "tool_sandbox": "You are a medical reasoning agent. The image is already loaded inside the perception tools.",
                 "gui": "You are a web agent operating a healthcare portal."}.get(self.et, "You are a medical agent.")
@@ -52,6 +61,43 @@ class OpenAIToolAgent(QwenToolAgent):
         self.messages = [{"role": "system", "content": base + " Use the available tools as needed; give your final answer as plain text when done."},
                          {"role": "user", "content": q}]
         self._fc_call_id = None
+
+    def _apply_medcta_mm(self):
+        """MedCTA single-system default: make gpt-5.5 see the task image directly and offer tools as
+        optional. Only for env type == tool_sandbox with MH_MEDCTA_IMAGE_VISIBLE=1 (default)."""
+        if self.et != "tool_sandbox" or not getattr(self, "medcta_image_visible", False):
+            return
+        if os.environ.get("MH_PROMPT_TRACK", "harness") == "native":
+            return  # native track keeps its upstream-faithful prompt untouched
+        img = resolve_medcta_image(self.task)
+        # Override the system message with the image-visible / tools-optional prompt (matches the
+        # text-protocol prompt qwen __init__ chose; needed because _init_fc rebuilt a generic one).
+        tools = self.task.get("available_tools", []) or []
+        if not getattr(self, "medcta_tools_enabled", True):
+            tools = []
+        tool_lines = "\n".join("- %s : %s" % (t.get("name"), t.get("signature", "")) for t in tools)
+        prompt = _MEDCTA_MM if getattr(self, "medcta_tools_enabled", True) else _MEDCTA_MM_NOTOOLS
+        sys_text = prompt.format(tools=tool_lines, patient="")
+        if self.messages and self.messages[0].get("role") == "system":
+            self.messages[0]["content"] = sys_text
+        else:
+            self.messages.insert(0, {"role": "system", "content": sys_text})
+        if not img:
+            return  # no resolvable image -> keep text-only (prompt still says "attached" harmlessly)
+        try:
+            url = image_data_url(img)
+        except Exception:
+            return
+        # Find the first user message and convert its content to multimodal [text, image_url].
+        for m in self.messages:
+            if m.get("role") == "user":
+                txt = m.get("content")
+                if isinstance(txt, list):
+                    txt = " ".join(x.get("text", "") for x in txt if isinstance(x, dict))
+                m["content"] = [{"type": "text", "text": txt or ""},
+                                {"type": "image_url", "image_url": {"url": url}}]
+                break
+        self._medcta_image_injected = True
 
     def _chat_fc(self, messages):
         url = self.base + "/v1/chat/completions"
