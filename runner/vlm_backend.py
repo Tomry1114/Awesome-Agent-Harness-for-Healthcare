@@ -44,6 +44,25 @@ def _crop_to_bbox(img, bbox):
     except Exception:
         return img, False
 
+def _region_attr(gen_fn, img, bbox=None, attribute=None, region_query=None):
+    """RegionAttributeDescription supporting bbox (precise pixel crop) OR region_query (semantic region,
+    for a blind tool-mediated agent that cannot produce pixel coords). Returns an EXPLICIT localization
+    status -- never a silent full-image fallback masquerading as a successful region analysis."""
+    q = region_query or attribute or (bbox if isinstance(bbox, str) else None)
+    cropped, ok = (_crop_to_bbox(img, bbox) if bbox is not None else (img, False))
+    if ok:
+        prompt = _region_prompt(attribute); mode, resolved = "bbox", True
+    elif q:
+        prompt = ("You are a medical imaging assistant. Focus ONLY on this region of the image: %s. "
+                  "Describe its shape, density/intensity, margins, and size if estimable. Do NOT invent "
+                  "findings that are not visible." % q)
+        cropped = img; mode, resolved = "semantic", True
+    else:
+        prompt = _region_prompt(None); cropped = img; mode, resolved = "none", False
+    text = gen_fn(cropped, prompt)
+    return {"text": text, "localization": {"requested": (region_query or bbox), "mode": mode, "resolved": resolved}}
+
+
 class LocalQwen3VL:
     name = "local:qwen3vl"
     def __init__(self, model_path=None):
@@ -68,17 +87,10 @@ class LocalQwen3VL:
         gen = out[0][inputs["input_ids"].shape[1]:]
         return self._proc.decode(gen, skip_special_tokens=True).strip()
     def image_description(self, image): return self._gen(image, IMAGE_DESC_PROMPT)
-    def region_attribute_description(self, image, bbox=None, attribute=None):
+    def region_attribute_description(self, image, bbox=None, attribute=None, region_query=None):
         from PIL import Image as _Image
         img = _Image.open(image).convert("RGB") if isinstance(image, str) else image
-        cropped, ok = (_crop_to_bbox(img, bbox) if bbox is not None else (img, False))
-        # Free-text region (e.g. "left lung apex") cannot be cropped — use it as the focus attribute.
-        if not ok and attribute is None and isinstance(bbox, str):
-            attribute = bbox
-        prompt = _region_prompt(attribute)
-        if bbox is not None and not ok:
-            prompt += " (No pixel box could be applied to this request; describing the full image.)"
-        return self._gen(cropped, prompt)
+        return _region_attr(lambda im, pr: self._gen(im, pr), img, bbox, attribute, region_query)
     def ocr(self, image): return self._gen(image, OCR_PROMPT, max_new_tokens=512)
     def chat(self, messages, max_new_tokens=512):
         """Text-only generation for the agent BRAIN (no image in context). messages = list of
@@ -148,13 +160,9 @@ class ApiVLM:
             time.sleep(min(8, 2 ** attempt))
         return "[vlm_api_error] " + last
     def image_description(self, image): return self._call(image, IMAGE_DESC_PROMPT)
-    def region_attribute_description(self, image, bbox=None, attribute=None):
+    def region_attribute_description(self, image, bbox=None, attribute=None, region_query=None):
         img = Image.open(image).convert("RGB") if isinstance(image, str) else image
-        cropped, ok = (_crop_to_bbox(img, bbox) if bbox is not None else (img, False))
-        if not ok and attribute is None and isinstance(bbox, str): attribute = bbox
-        prompt = _region_prompt(attribute)
-        if bbox is not None and not ok: prompt += " (No pixel box could be applied; describing the full image.)"
-        return self._call(cropped, prompt)
+        return _region_attr(lambda im, pr: self._call(im, pr), img, bbox, attribute, region_query)
     def ocr(self, image): return self._call(image, OCR_PROMPT, max_tokens=512)
 
 @functools.lru_cache(maxsize=1)

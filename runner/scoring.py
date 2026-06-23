@@ -88,6 +88,52 @@ def _judge_fail_tag(cp):
     return _JUDGE_TAG.get(cp.get("subdimension"))
 
 
+def _localization_status(ctx):
+    """How many RegionAttributeDescription calls ACTUALLY resolved a region (bbox crop or semantic focus)
+    vs silently failed (mode none / resolved False). Reads the tool's explicit localization status."""
+    calls = resolved = unresolved = 0
+    for ev in (ctx.get("trajectory") or []):
+        if ev.get("event_type") != "tool_call" or ev.get("tool") != "RegionAttributeDescription":
+            continue
+        calls += 1
+        res = ev.get("result"); loc = res.get("localization") if isinstance(res, dict) else None
+        if isinstance(loc, dict) and loc.get("resolved"):
+            resolved += 1
+        else:
+            unresolved += 1
+    return {"region_calls": calls, "resolved": resolved, "unresolved": unresolved}
+
+
+def _arg_semantic_judge(ctx, ag):
+    """Opt-in (MH_ARG_SEMANTIC=1) LLM judge: are the agent's requested regions relevant to the question?
+    Returns {"appropriate": bool, ...} or None (axis not scored). Uses the unified gateway (independent judge)."""
+    import os
+    if os.environ.get("MH_ARG_SEMANTIC", "0") != "1":
+        return None
+    regions = []
+    for n, a in ag:
+        if n == "RegionAttributeDescription":
+            r = (a or {}).get("region") or (a or {}).get("region_query") or (a or {}).get("bbox")
+            if r: regions.append(str(r))
+    q = str(ctx.get("medcta_question") or "")
+    if not regions or not q:
+        return None
+    try:
+        import gateway
+        sysp = ("You judge whether the IMAGE REGIONS an agent chose to inspect are relevant to answering "
+                "the medical question. Reply with exactly APPROPRIATE or INAPPROPRIATE first, then a brief reason.")
+        usr = "QUESTION: %s\n\nREGIONS INSPECTED:\n- %s" % (q[:1200], "\n- ".join(regions)[:800])
+        r = gateway.chat([{"role": "system", "content": sysp}, {"role": "user", "content": usr}],
+                         model=os.environ.get("MH_JUDGE_MODEL", "gpt-5.4"), max_tokens=300, judge=True)
+        if not r.get("ok"):
+            return None
+        head = (r.get("content") or "").strip().upper()
+        return {"appropriate": not head.startswith("INAPPROPRIATE"), "reason": (r.get("content") or "")[:200],
+                "model": os.environ.get("MH_JUDGE_MODEL", "gpt-5.4")}
+    except Exception:
+        return None
+
+
 def run_checkpoint(cp, ctx):
     base = {"id": cp["id"], "dimension": cp["dimension"], "subdimension": cp.get("subdimension"),
             "weight": float(cp.get("weight", 1.0))}
@@ -97,7 +143,7 @@ def run_checkpoint(cp, ctx):
         if not (ctx.get("pb_repo") and ref and ctx.get("job_dir")):
             return {**base, "checkpoint_status": "skipped", "failure_mode": None, "skip_reason": "missing_native_verifier"}
         from native_pytest import run_native_pytest
-        return {**base, **run_native_pytest(ref, ctx["pb_repo"], ctx.get("base") or "", ctx["job_dir"])}
+        return {**base, "score_eligible": True, **run_native_pytest(ref, ctx["pb_repo"], ctx.get("base") or "", ctx["job_dir"])}
     if t == "deterministic":
         chk = cp.get("check") or {}
         if chk.get("method") in ("toolset_contains", "toolset_match"):  # tool-SELECTION (3-class: required/optional/alternative)
@@ -126,6 +172,7 @@ def run_checkpoint(cp, ctx):
             return {**base, "checkpoint_status": "passed" if ok else "failed",
                     "failure_mode": None if ok else "agent_failure",
                     "failure_tag": None if ok else "tool_selection_error",
+                    "score_eligible": True,
                     "note": note,
                     "detail": {"mode": "three_class", "env_type": req["env_type"],
                                "required": sorted(req["required"]), "optional": sorted(req["optional"]),
@@ -139,18 +186,33 @@ def run_checkpoint(cp, ctx):
             # differ legitimately, so exact match (old) failed even correct runs (e.g. MCTA-1). #passport
             ref = ctx.get("ref_tool_calls", []); ag = ctx.get("agent_tool_calls", [])
             SYS = {"image", "image_path", "img", "image_url"}
+            # bbox (precise) and region/region_query (semantic) are EQUIVALENT ways to localize a region;
+            # a blind tool-mediated agent gives a semantic region, not pixel coords -> do not penalize.
+            _ALIAS = {"bbox": "region_loc", "region": "region_loc", "region_query": "region_loc"}
+            _OPT = {"attribute", "attr"}  # descriptive refinement (what aspect) -- optional, not a REQUIRED arg
+            _al = lambda k: _ALIAS.get(k, k)
             ref_keys = {}
-            for n, a in ref: ref_keys.setdefault(n, set()).update(set((a or {}).keys()) - SYS)
+            for n, a in ref: ref_keys.setdefault(n, set()).update({_al(k) for k in (set((a or {}).keys()) - SYS - _OPT)})
             ag_keys = {}
             for n, a in ag:
                 ag_keys.setdefault(n, set()).update(
-                    {k for k, v in (a or {}).items() if k not in SYS and v not in (None, "", [], {}, ())})
+                    {_al(k) for k, v in (a or {}).items() if k not in SYS and v not in (None, "", [], {}, ())})
             missing = [n for n, ks in ref_keys.items() if n not in ag_keys or not (ks <= ag_keys[n])]
-            ok = bool(ref) and not missing
+            schema_ok = bool(ref) and not missing                       # axis 1: localization arg provided
+            _loc = _localization_status(ctx)                            # axis 2: tool actually localized?
+            loc_ok = (_loc["region_calls"] == 0) or (_loc["unresolved"] == 0)
+            _sem = _arg_semantic_judge(ctx, ag)                         # axis 3: regions relevant? (opt-in)
+            sem_ok = (_sem is None) or bool(_sem.get("appropriate", True))
+            ok = schema_ok and loc_ok and sem_ok
+            _tag = None if ok else ("tool_argument_error" if not schema_ok else
+                                    ("missing_evidence" if not loc_ok else "tool_argument_error"))
             return {**base, "checkpoint_status": "passed" if ok else "failed",
                     "failure_mode": None if ok else "agent_failure",
-                    "failure_tag": None if ok else "tool_argument_error",
-                    "detail": {"mode": "argkey_coverage", "missing": missing,
+                    "failure_tag": _tag, "score_eligible": True,
+                    "detail": {"mode": "arg_accuracy_3axis",
+                               "axes": {"schema_validity": int(schema_ok), "localization_success": int(loc_ok),
+                                        "semantic_appropriateness": (None if _sem is None else int(sem_ok))},
+                               "missing": missing, "localization": _loc, "semantic": _sem,
                                "ref_keys": {k: sorted(v) for k, v in ref_keys.items()},
                                "ag_keys": {k: sorted(v) for k, v in ag_keys.items()}}}
         if chk.get("method") == "jmespath" and ctx.get("full_state") is not None:
@@ -165,7 +227,7 @@ def run_checkpoint(cp, ctx):
             ok = (got == chk.get("expected"))
             return {**base, "checkpoint_status": "passed" if ok else "failed",
                     "failure_mode": None if ok else "agent_failure",
-                    "failure_tag": None if ok else "workflow_violation", "detail": {"got": got, "expected": chk.get("expected")}}
+                    "failure_tag": None if ok else "workflow_violation", "score_eligible": True, "detail": {"got": got, "expected": chk.get("expected")}}
         return {**base, "checkpoint_status": "skipped", "failure_mode": None, "skip_reason": "unsupported_in_skeleton"}
     if t == "llm_judge":
         chk = cp.get("check") or {}
@@ -285,18 +347,18 @@ def run_checkpoint(cp, ctx):
         except Exception as e:  # bug / bad args / missing mapping
             return {**base, "checkpoint_status": "error", "failure_mode": "verifier_error", "note": repr(e)}
         if r.get("passed"):
-            return {**base, "checkpoint_status": "passed", "failure_mode": None}
+            return {**base, "checkpoint_status": "passed", "failure_mode": None, "score_eligible": True}
         tag = r.get("failure_tag")
         # data-missing (allergy not injected) is an environment issue; else agent fault
         fmode = "environment_error" if tag == "missing_synthetic_context" else "agent_failure"
         return {**base, "checkpoint_status": "failed" if fmode == "agent_failure" else "error",
-                "failure_mode": fmode, "failure_tag": tag, "detail": r}
+                "failure_mode": fmode, "failure_tag": tag, "score_eligible": True, "detail": r}
     return {**base, "checkpoint_status": "skipped", "failure_mode": None, "skip_reason": "disabled_by_config"}
 
 def is_score_eligible(r):
     """Strict (formal) checkpoints only — proxy/replay verifiers set score_eligible=False and are
     excluded from success + dimension_scores (they go to the proxy_* tracks instead)."""
-    return r.get("score_eligible", True) is True and r["checkpoint_status"] in ("passed", "failed")
+    return r.get("score_eligible", False) is True and r["checkpoint_status"] in ("passed", "failed")
 
 def aggregate(results):
     scores, coverage, proxy_scores, proxy_coverage = {}, {}, {}, {}
@@ -326,6 +388,16 @@ def build_result(task, trajectory, results, provenance):
         if "score_eligible" in r: c["score_eligible"] = r["score_eligible"]
         cps.append(c)
     dim, cov, proxy_dim, proxy_cov = aggregate(results)
+    # Codex #3: every null dimension score carries an EXPLICIT status (never an unexplained void).
+    dim_status = {}
+    for _mod in MODULES:
+        _all = [r for r in results if r["dimension"] == _mod]
+        if dim.get(_mod) is not None: dim_status[_mod] = "valid_score"
+        elif proxy_dim.get(_mod) is not None: dim_status[_mod] = "proxy_only"
+        elif any(r["checkpoint_status"] == "error" for r in _all): dim_status[_mod] = "evaluation_error"
+        elif any(r["checkpoint_status"] == "skipped" for r in _all): dim_status[_mod] = "not_exercised"
+        elif not _all: dim_status[_mod] = "not_applicable"
+        else: dim_status[_mod] = "unknown"
     evaluated = [r for r in results if is_score_eligible(r)]
     proxy_evaluated = [r for r in results if r.get("score_eligible") is False and r["checkpoint_status"] in ("passed", "failed")]
     errs = [r for r in results if r["checkpoint_status"] == "error"]
@@ -356,6 +428,7 @@ def build_result(task, trajectory, results, provenance):
             "proxy_evaluated_checkpoints": len(proxy_evaluated),
             "checkpoints": cps, "dimension_scores": dim, "dimension_coverage": cov,
             "proxy_dimension_scores": proxy_dim, "proxy_dimension_coverage": proxy_cov,
+            "dimension_status": dim_status,
             "tool_calls": sum(1 for e in trajectory if e.get("event_type") == "tool_call"),
             "failure_tags": sorted(tags), "provenance": provenance,
             "_checkpoints_full": results}

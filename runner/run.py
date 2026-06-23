@@ -370,6 +370,14 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
         _env_fidelity = "full" if real_ts else "replay"
     else:
         _env_fidelity = "unknown"
+    # MedCTA single-system config (which of the 3 modes this run used) -> self-describing provenance.
+    _medcta_cfg = None
+    if env_type == "tool_sandbox":
+        _iv = getattr(agent, "medcta_image_visible", False); _te = getattr(agent, "medcta_tools_enabled", True)
+        _mode = ("tool_mediated" if (not _iv and _te) else "pure_vqa" if (_iv and not _te)
+                 else "sighted_with_tools" if (_iv and _te) else "blind_no_tools")
+        _medcta_cfg = {"image_visible": _iv, "tools_enabled": _te, "mode": _mode,
+                       "is_default_faithful": (not _iv and _te)}
     fidelity = {"source_benchmark": _bench_name,
                 "prompt_fidelity": _prompt_fidelity,
                 "protocol_fidelity": _protocol_fidelity,
@@ -381,7 +389,7 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
                   "judge_independence": _outc.get("independence", "n/a"),
                   "judge_decoding": judge_decoding, "judges": judges,
                   "uses_hidden_reference": uses_hidden_ref, "scorer_validation_only": validation_only,
-                  "fidelity": fidelity}
+                  "fidelity": fidelity, "medcta_config": _medcta_cfg}
     result = scoring.build_result(task, trajectory, results, provenance)
     result["_schema"] = validate_result(result)
     result["_trajectory"] = trajectory

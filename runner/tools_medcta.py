@@ -53,9 +53,9 @@ def google_search(query):
 def image_description(image_path):
     from vlm_backend import get_backend
     return get_backend().image_description(image_path)
-def region_attribute_description(image_path, bbox=None, attribute=None):
+def region_attribute_description(image_path, bbox=None, attribute=None, region_query=None):
     from vlm_backend import get_backend
-    return get_backend().region_attribute_description(image_path, bbox=bbox, attribute=attribute)
+    return get_backend().region_attribute_description(image_path, bbox=bbox, attribute=attribute, region_query=region_query)
 def ocr(image_path):
     from vlm_backend import get_backend
     return get_backend().ocr(image_path)
@@ -75,5 +75,6 @@ def run_tool(name, args, image_path=None):
         return region_attribute_description(
             image_path,
             bbox=a.get("bbox") or a.get("region"),
+            region_query=a.get("region_query"),
             attribute=a.get("attribute") or a.get("attr"))
     return "[unknown tool] " + str(name)

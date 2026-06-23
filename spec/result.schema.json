@@ -88,6 +88,7 @@
               "skipped_user_config",
               "unsupported_in_skeleton",
               "missing_judge_backend",
+              "missing_grounding_judge",
               "missing_native_verifier",
               "missing_policy_verifier",
               "disabled_by_config"

@@ -55,7 +55,7 @@ ALWAYS read the OBSERVATION before acting. Available tools:
 {tools}
 """ + PROTOCOL,  # FAIRNESS/FIDELITY (HAB): upstream framing ("autonomous web agent"); REGISTERED DEVIATION:
     # our ref=N + JSON protocol differs from upstream click([id]) bracket + ACTION:/KEY_INFO; download/upload
-    # not yet supported (stage-2 file handling) -> tasks needing them are out of scope, see NATIVE_FIDELITY.md
+    # not yet supported (stage-2 file handling) -> tasks needing them are out of scope, registered in alignment passport
 }
 
 
@@ -83,9 +83,9 @@ NATIVE_SYS_BY_ENV = {"fhir": _PB_NATIVE, "tool_sandbox": _MEDCTA_NATIVE}  # gui 
 
 
 # --- MedCTA single-system DEFAULT (image VISIBLE to the brain, tools OPTIONAL). This is the correct
-# eval: gpt-5.5 is multimodal and sees the task image directly; the 5 tools are offered but NOT forced.
-# tool_sandbox image-hidden prompt (SYS_BY_ENV["tool_sandbox"]) and the tools-disabled prompt below are
-# now ABLATION configs of this one system, selected via MH_MEDCTA_IMAGE_VISIBLE / MH_MEDCTA_TOOLS_ENABLED.
+# DEFAULT (faithful MedCTA) = TOOL-MEDIATED: the brain does NOT receive the raw image; perception is
+# gated behind the tools (ImageDescription/Region/OCR), as the benchmark designs it. The image-visible
+# prompts below are ABLATION configs (MH_MEDCTA_IMAGE_VISIBLE=1 => sighted baseline; +TOOLS_ENABLED=0 => pure VQA).
 _MEDCTA_MM = """You are a medical reasoning agent. The relevant medical image is ATTACHED to this conversation (you can see it directly). Answer the question about the image.
 You also have access to these OPTIONAL tools:
 {tools}
@@ -101,7 +101,7 @@ No tools are available -- reason from the image alone.
 def medcta_config():
     """Resolve the MedCTA single-system config flags (only meaningful when env type == tool_sandbox).
     Defaults make the CORRECT eval the default: image visible to the brain + tools offered (optional)."""
-    return (os.environ.get("MH_MEDCTA_IMAGE_VISIBLE", "1") == "1",
+    return (os.environ.get("MH_MEDCTA_IMAGE_VISIBLE", "0") == "1",
             os.environ.get("MH_MEDCTA_TOOLS_ENABLED", "1") == "1")
 
 
@@ -170,8 +170,8 @@ class QwenToolAgent:
         tools = task.get("available_tools", []) or []
         patient = (task.get("context") or {}).get("patient_ref") or ""
         _track = os.environ.get("MH_PROMPT_TRACK", "harness")
-        # MedCTA single-system config: image-visible (default) -> multimodal prompt; tools optional
-        # (default) vs disabled ablation -> hide the tool list. Flags only apply to tool_sandbox.
+        # MedCTA single-system config: DEFAULT = tool-mediated (image NOT visible -> perceive via tools).
+        # Ablations: MH_MEDCTA_IMAGE_VISIBLE=1 (sighted) / MH_MEDCTA_TOOLS_ENABLED=0 (no tools). tool_sandbox only.
         self.medcta_image_visible, self.medcta_tools_enabled = (False, True)
         if et == "tool_sandbox":
             self.medcta_image_visible, self.medcta_tools_enabled = medcta_config()
