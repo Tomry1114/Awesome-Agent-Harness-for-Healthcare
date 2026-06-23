@@ -197,7 +197,9 @@ def run_checkpoint(cp, ctx):
             for n, a in ag:
                 ag_keys.setdefault(n, set()).update(
                     {_al(k) for k, v in (a or {}).items() if k not in SYS and v not in (None, "", [], {}, ())})
-            missing = [n for n, ks in ref_keys.items() if n not in ag_keys or not (ks <= ag_keys[n])]
+            # arg_accuracy judges ARGUMENTS of tools the agent ACTUALLY called (intersection with ref).
+            # NOT-calling a reference tool is tool_selection's concern (3-class), NOT an argument failure.
+            missing = [n for n in (set(ref_keys) & set(ag_keys)) if not (ref_keys[n] <= ag_keys[n])]
             schema_ok = bool(ref) and not missing                       # axis 1: localization arg provided
             _loc = _localization_status(ctx)                            # axis 2: tool actually localized?
             loc_ok = (_loc["region_calls"] == 0) or (_loc["unresolved"] == 0)
