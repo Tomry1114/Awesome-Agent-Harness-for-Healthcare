@@ -96,3 +96,52 @@
 - `integrity`:judge 独立性 / 工具后端 / qualification 汇总
 - `failure_taxonomy`:checkpoint failure_mode × 维度 + task failure_tags
 - 自动 remap 旧 run 到当前 tasks_unified 标签(不重跑)。
+
+## 7. Tooling 重定义:strict `tool_use_quality`(判官)≠ proxy `tool_execution_hygiene`
+
+工具维度拆成两个**互不等价**的量:
+
+| 量 | 定义 | 类型 | 说明 |
+|---|---|---|---|
+| `tool_use_quality` | LLM 判官评 5 子项语义正确性 | **strict**(进 Tooling 维度) | 真正的 Tooling 维度 |
+| `tool_execution_hygiene` | `1 − 0.5·错误率 − 0.5·冗余率` | proxy(单列,不进主分) | 只测调用顺不顺、有无重复 |
+
+**为何不需要唯一 GT 轨迹**:很多任务有合法替代路径(`fhir_search→fhir_read` 或 `patient_summary` 都对)。硬比对固定 reference trajectory 会错误惩罚替代路径。判官看完整证据(任务 + 工具说明 + 每次调用&参数&observation + final answer)评**路径语义正确性**,不逐步对齐。
+
+**5 子项(各 0/1/2)**:relevance / necessity / argument / sequence / evidence_use → `Tooling = Σ/(5·2)`;`unnecessary`(冗余)单列。
+- rubric:`2`=选型/参数/顺序合理无关键遗漏;`1`=轻微遗漏或多余;`0`=选错/漏必要工具/结果未被使用。
+- 守则:**执行成功 ≠ 选择正确**(查错患者:hygiene 高、quality 低)。
+
+**10 题结果**:
+
+| | PB | MedCTA | HAB |
+|---|---|---|---|
+| tool_use_quality(strict) | 0.49 | 0.95 | 0.71 |
+| tool_execution_hygiene(proxy) | 0.99 | 0.98 | 0.50 |
+| 子项 necessity / evidence_use | 0.3 / 0.3 | 1.9 / 1.7 | 0.8 / 1.2 |
+
+- **hygiene ≠ quality**:PB 调用顺畅(0.99)但工具质量只 0.49,卡在 necessity(漏查)+ evidence_use(结论没用证据)。
+- **MedCTA 0.95(判官) vs 0.20(确定性 ToolAcc)**:坐实"固定 reference-chain 匹配错误惩罚合法替代路径";判官给出更公允的语义评估。确定性 ToolAcc/ArgAcc 应作为 **native 指标**报告,不作为 Tooling 维度。
+
+## 8. 判官验证要求(方法学,人工部分待 Rui 定)
+
+`tool_use_quality` 作为 strict 指标必须满足:
+1. **证据完整**:判官看到原始 task / 工具说明 / 完整调用&参数 / 完整 observation / final answer(只看工具名列表不够)。已满足。
+2. **rubric 明确**:0/1/2 分级,见 §7。已满足。
+3. **区分执行成功 vs 选择正确**:已写入 rubric;hygiene 与 quality 分开报告。
+4. **判官基本验证(待人工)**:抽 30–50 条轨迹做 ① 人–判官一致率 ② 同轨迹重复评稳定性 ③ 换判官一致性 ④ 防"全成功=自动高分"偏差。**此为人工标注,Rui 主导。**
+
+**医疗 hybrid**:PB 高危用药前置(查 AllergyIntolerance / 当前 MedicationRequest / 患者 scope)由**确定性规则/safety spec** 判(已在 Governance 的 drug_safety 验证器);其余(相关性/充分性/顺序/证据解释)交判官。规则 + 判官比纯判官更稳。
+
+## 9. 其他维度能否升级 strict(verdict)
+
+标准同 §8(证据完整 + 明确 rubric + 可验证)。逐维:
+
+| 维度 | 现状 | 能否升 strict | verdict |
+|---|---|---|---|
+| Tooling | ✅ 已升(tool_use_quality) | — | 完成 |
+| Lifecycle | HAB strict;PB/MedCTA proxy | PB 可(工作流顺序判官,`sequence` 子项已部分覆盖);MedCTA 不宜(QA 无多步流程,proxy 饱和) | PB=候选(后续);MedCTA=保留 proxy |
+| Observability | PB/HAB strict;MedCTA proxy | MedCTA 弱(留痕由任务结构保证,判官加不了信息) | 保留 proxy |
+| Execution | PB strict;MedCTA/HAB proxy | 与 Verification 重叠,judge 价值低 | 保留 proxy |
+
+**原则**:只在判官能加真实信息的格子升 strict;对结构上平凡(proxy 饱和)的格子强行上判官 = 假精度,违背诚信门 → 诚实保留 proxy 并标注。
