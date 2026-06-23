@@ -1,3 +1,28 @@
+## 2026-06-24 — Codex 架构审计 P0 全修 + MedCTA 工具中介忠实化(跑出正常结果)
+
+修复 Codex 11 条审计中所有腐蚀分数可信度的 P0,并把 MedCTA 调用修到产出正常、有区分度的分数。提交:`63ee0ad` / `c2263d9` / `75a949e`。
+
+**🔴 P0-1 `score_eligible` fail-CLOSED(Codex #6)** `runner/scoring.py`
+- `is_score_eligible` 默认 `True`→`False`;strict 评估器(native_pytest/toolset/jmespath/policy/arg_match)显式 `score_eligible=True`。新 cp 忘设 flag 再不会静默进主分。
+
+**🔴 P0-2 null 维度状态(Codex #3,mctaD 六维空之根因)** `runner/scoring.py`
+- `build_result` 加 `dimension_status` ∈ {valid_score / proxy_only / evaluation_error / not_exercised / not_applicable}。空维度不再静默传播。
+
+**🔴 P0-3 RegionAttributeDescription 协议自相矛盾** `runner/{scoring,vlm_backend,tools_medcta}.py`
+- 盲 agent 被逼给像素 bbox + 静默整图 fallback + 扣分 → 改:bbox OR region_query 都合法;`_region_attr` 返显式 `localization{requested,mode,resolved}`(无静默 fallback);arg_accuracy 改 3 轴(schema_validity / localization_success / semantic_appropriateness)。
+
+**🟠 GAcc 路由回归(track-B retag)** `runner/{scoring,run}.py`
+- cp_outcome subdim `clinical_task_success`→`result_verification` retag 漏改 4 处硬编码,致 GAcc 不触发、走 proxy 水分。4 处全接受两名。
+
+**🟠 arg_accuracy 交集语义** — schema 只判**实际调用**的工具,不再因没调某 ref 工具而全扣。
+
+**🟡 统一网关客户端(Codex #2)** `runner/gateway.py`(新)— 单一 key/retry/timeout/billing/结构化 error_type;判官迁移为机械 P1。GAcc 模型 deepseek→`gpt-5.4`(micuapi 可用 + 上游 EVAL_MODEL)。
+
+**✅ 验证 — MedCTA 10/10 跑出正常结果**(`results_mctaFix/gpt5/`,tool-mediated 默认 image_visible=0)
+- GAcc n=10 mean=**0.455**,分布 `[0,0,0,0,0,0.55,1,1,1,1]`——真分、满区分度(非全 0 / 非 proxy 水分)。
+- 每题 `evaluation_status=partial`,`dimension_status` 3/7 valid(Context/Tooling/Verification),工具中介行为 1–7 工具/题。
+- 详见 `docs/CODEX_REVIEW_FIXES.md`(11 条逐条状态)。剩 #1 god-function / #2 判官迁移 / #7 init 拦截 / #8 taxonomy / #9 工具名单映射 = P1/P2(不 blind 蛮改正在工作的系统)。
+
 ## 2026-06-23 — PB 输出格式对齐(entries 伪信号)+ 超时 + 动作安全判官;为"指标解离"清伪信号
 
 延续 06-22 PB 深挖,继续清 harness 伪信号,为「指标解离」研究主线做干净基线。
