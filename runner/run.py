@@ -296,7 +296,20 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
         tool_backend_model = None  # DOM actions, no model
     elif env_type == "tool_sandbox":
         tool_backend = {"tool_sandbox": "real_vlm_tools" if real_ts else "replay_cache"}
-        tool_backend_model = vlm if real_ts else None  # ImageDescription/RegionAttribute/OCR run a VLM
+        # tool_backend_model = the ACTUAL VLM perception backend at runtime (NOT a hardcoded default).
+        # MedCTA now defaults to gpt-5.5 via the gateway (vlm_backend.get_backend() -> ApiVLM); a local
+        # run is Qwen3-VL. Resolve defensively from the live backend; fall back to MH_VLM_PATH basename.
+        tool_backend_model = None
+        if real_ts:
+            try:
+                import vlm_backend as _vb
+                _be = _vb.get_backend()
+                _bm = getattr(_be, "model", None) or getattr(_be, "model_path", None)
+                if _bm:
+                    _bm = os.path.basename(str(_bm))
+                tool_backend_model = ("%s:%s" % (getattr(_be, "name", "vlm"), _bm)) if _bm else getattr(_be, "name", vlm)
+            except Exception:
+                tool_backend_model = vlm  # last-resort: configured local path basename
     else:
         tool_backend = {env_type: "unknown"}; tool_backend_model = None
     aname = getattr(agent, "name", "") or agent_name
@@ -336,12 +349,38 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
     judge_model = _outc.get("model", "none")
     judge_decoding = ({"max_tokens": 1024} if _outc.get("tier") == "gacc_semantic" else  # matches gacc_judge actual (no temperature)
                       ({"temperature": 0, "do_sample": False, "max_new_tokens": 220} if _outc.get("tier") == "local_model_judge" else None))
+    # ---- per-run fidelity provenance: native-fidelity is a RECORDED field of THIS run, not a separate
+    #      evaluation system. Derived from source benchmark + env type + protocol/prompt env vars. ----
+    _bench_name = {"PhysicianBench": "PhysicianBench", "MedCTA": "MedCTA",
+                   "HealthAdminBench": "HealthAdminBench"}.get(bench, bench)
+    # prompt fidelity: PB replays the upstream verbatim SYSTEM_PROMPT; MedCTA/HAB are semantically aligned.
+    # MH_PROMPT_TRACK=native -> verbatim upstream prompt scaffolding for any bench.
+    _prompt_track = os.environ.get("MH_PROMPT_TRACK", "harness")
+    _prompt_fidelity = "verbatim" if (env_type == "fhir" or _prompt_track == "native") else "semantic_aligned"
+    # protocol fidelity: unified canonical protocol unless MH_PROTOCOL=function_calling (native FC).
+    _protocol_fidelity = "native_function_calling" if os.environ.get("MH_PROTOCOL") == "function_calling" else "canonicalized"
+    # environment fidelity: real substrate (live FHIR / real playwright portal / real VLM tool sandbox)
+    # downgrades to "mock"/"replay" when not using the real backend.
+    if env_type == "fhir":
+        _env_fidelity = "full"
+    elif env_type == "gui":
+        _env_fidelity = "full" if env_cls == "GuiEnvReal" else "mock"
+    elif env_type == "tool_sandbox":
+        _env_fidelity = "full" if real_ts else "replay"
+    else:
+        _env_fidelity = "unknown"
+    fidelity = {"source_benchmark": _bench_name,
+                "prompt_fidelity": _prompt_fidelity,
+                "protocol_fidelity": _protocol_fidelity,
+                "environment_fidelity": _env_fidelity,
+                "metric_definition": "native_plus_harness"}
     provenance = {"agent_model": agent_model, "tool_backend": tool_backend,
                   "tool_backend_model": tool_backend_model, "judge_model": judge_model,
                   "judge_tier": _outc.get("tier", "none"),
                   "judge_independence": _outc.get("independence", "n/a"),
                   "judge_decoding": judge_decoding, "judges": judges,
-                  "uses_hidden_reference": uses_hidden_ref, "scorer_validation_only": validation_only}
+                  "uses_hidden_reference": uses_hidden_ref, "scorer_validation_only": validation_only,
+                  "fidelity": fidelity}
     result = scoring.build_result(task, trajectory, results, provenance)
     result["_schema"] = validate_result(result)
     result["_trajectory"] = trajectory
