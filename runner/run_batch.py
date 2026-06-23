@@ -57,7 +57,19 @@ def main():
     tasks_by_id = {json.loads(l)["task_id"]: json.loads(l)
                    for l in open(os.path.join(ROOT, "benchmark_dataprocess", args.bench, "tasks_unified.jsonl"))}
 
+    try:
+        from capability_manifest import precheck as _cap_precheck
+    except Exception:
+        _cap_precheck = lambda t, b: {"ok": True}
     for tid in tids:
+        # Canonical Contract §5: skip tasks whose required capabilities the env lacks (e.g. HAB file
+        # upload/download) -> not_exercised_due_to_missing_capability, NOT an agent failure.
+        _pc = _cap_precheck(tasks_by_id.get(tid, {}), args.bench)
+        if not _pc.get("ok"):
+            buckets["capability_excluded"] += 1
+            rows.append({"task": tid, "evaluation_status": "not_exercised_due_to_missing_capability",
+                         "qualification": _pc.get("qualification"), "missing_capabilities": _pc.get("missing_capabilities")})
+            continue
         if args.reset_mode == "per_task": R.reset_fhir("per_task")
         try:
             _ms = args.max_steps or NATIVE_MAX_STEPS.get(args.bench, 12)
