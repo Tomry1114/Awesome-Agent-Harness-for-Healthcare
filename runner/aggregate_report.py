@@ -228,23 +228,45 @@ def _tool_use_quality(results):
 
 
 def _experimental_evaluators(agent_dir, bench):
-    """Step (b): deterministic state-machine Execution/Lifecycle (fault-injection validated). These FILL
-    the Execution/Lifecycle dimension cells (replacing the coarse/deprecated proxies); tier=experimental
-    until human-audited. Uses task policy (required_tool_groups) for required_operation_completion."""
+    """Step (b) -> WIRED to the substrate-based dimension evaluators (single source of truth). Execution
+    and Lifecycle are now scored by runner/dim_execution.execution + runner/dim_lifecycle.lifecycle over
+    the SemanticTrace built by substrate.map_trace(plugin) + substrate.dimension_policy + the
+    CapabilityManifest — NOT the old raw-event lifecycle_exec heuristics. Observability is likewise
+    scored by runner/dim_observability.observability over substrate.evidence_view (returned so build()
+    can fill the Observability dimension cell). These FILL the Execution/Lifecycle/Observability cells;
+    tier=experimental until human-audited. Benchmark specifics (which tool -> which milestone/role,
+    required_milestones) arrive ONLY through the plugin via the substrate.
+
+    Returns (panel, ex_t, lc_t, ob_t) where ex_t/lc_t/ob_t are per-task {task_id: score}."""
     import statistics as _st
     try:
-        import lifecycle_exec as _le
+        import substrate as _sub
+        import dim_execution as _dex
+        import dim_lifecycle as _dlc
+        import dim_observability as _dob
+    except Exception as _e:
+        return {"note": "substrate dimension evaluators unavailable: %r" % (_e,)}, {}, {}, {}
+    # Context / Verification / Tooling: built-but-not-wired into the STRICT checkpoint gate (those
+    # remain the score-eligible cp_grounding / cp_verification / cp_arg_accuracy+cp_tool_path strict
+    # checkpoints in scoring.py). Here they run ONLY as an experimental cross-check panel (deterministic,
+    # offline: no answer/gold, judge_fn=None) over the substrate, surfaced in experimental_evaluators
+    # and NEVER folded into harness_dimensions/success. Import is best-effort so a missing module cannot
+    # break the report.
+    try:
+        import dim_context as _dctx
     except Exception:
-        return {"note": "lifecycle_exec unavailable"}, {}, {}
-    pol = {}
-    tf = os.path.join(_ROOT, bench, "tasks_unified.jsonl")
-    if os.path.exists(tf):
-        for l in open(tf):
-            t = json.loads(l); ref = t.get("reference") or {}
-            pol[t.get("task_id")] = {"required_tool_groups": ref.get("required_tool_groups"),
-                                     "prerequisites": (t.get("policy") or {}).get("required_tool_before_action"),
-                                     "lifecycle_policy": t.get("lifecycle_policy")}
-    ex_t, lc_t = {}, {}
+        _dctx = None
+    try:
+        import dim_verification as _dver
+    except Exception:
+        _dver = None
+    try:
+        import dim_tooling as _dtool
+    except Exception:
+        _dtool = None
+    plugin = _sub.get_plugin(bench)
+    ex_t, lc_t, ob_t = {}, {}, {}
+    ctx_t, ver_t, tool_t = {}, {}, {}
     _lc_cov, _lc_unreportable = {}, []
     for tp in sorted(glob.glob(os.path.join(agent_dir, "*", "trajectory.jsonl"))):
         tid = os.path.basename(os.path.dirname(tp))
@@ -252,33 +274,83 @@ def _experimental_evaluators(agent_dir, bench):
             evs = [json.loads(l) for l in open(tp) if l.strip()]
         except Exception:
             continue
-        caps = None                                              # Review #1: per-task capability manifest
-        rp = os.path.join(os.path.dirname(tp), "result.json")
+        # per-task task dict + provenance (capability manifest) from the bundle
+        bdir = os.path.dirname(tp)
+        task = {"source_benchmark": bench, "task_id": tid}
+        prov = {}
+        tpath = os.path.join(bdir, "task.json")
+        if os.path.exists(tpath):
+            try: task = json.load(open(tpath))
+            except Exception: pass
+        rp = os.path.join(bdir, "result.json")
         if os.path.exists(rp):
-            try: caps = (json.load(open(rp)).get("provenance") or {}).get("capabilities")
-            except Exception: caps = None
-        e = _le.execution(evs, capabilities=caps, task_policy=pol.get(tid))
-        l = _le.lifecycle(evs, task_policy=pol.get(tid), capabilities=caps)   # Review: Lifecycle ALSO gets capabilities
+            try: prov = (json.load(open(rp)).get("provenance") or {})
+            except Exception: prov = {}
+        # substrate structures (the ONLY inputs the dimension evaluators consume)
+        sem = _sub.map_trace(evs, plugin)
+        dp = _sub.dimension_policy(task, plugin)
+        manifest = _sub.capability_manifest(prov)
+        ev = _sub.evidence_view(evs, plugin)
+        e = _dex.execution(sem, dp, manifest)
+        l = _dlc.lifecycle(sem, dp, manifest)
+        o = _dob.observability(ev, sem)
         if isinstance(e.get("score"), (int, float)): ex_t[tid] = e["score"]
         if isinstance(l.get("score"), (int, float)) and l.get("reportable_score"): lc_t[tid] = l["score"]
+        if isinstance(o.get("score"), (int, float)) and o.get("reportable"): ob_t[tid] = o["score"]
+        # ---- experimental cross-check panel (not wired into strict gate; offline, no answer/gold) ----
+        if _dctx is not None:
+            try:
+                instr = (task.get("context") or {}).get("text") or task.get("goal")
+                cx = _dctx.context(sem, ev, dp, task_instruction=instr, judge_model=None)
+                if isinstance(cx.get("score"), (int, float)) and cx.get("reportable"): ctx_t[tid] = cx["score"]
+            except Exception:
+                pass
+        if _dver is not None:
+            try:
+                vfa = [s for s in sem if s.get("event_role") == "verify"]
+                vclaims = _dver.extract_claims(sem)
+                vr = _dver.verification(ev, vfa, vclaims, conflicts=None, policy=dp, judge_fn=None)
+                if isinstance(vr.get("score"), (int, float)) and vr.get("reportable"): ver_t[tid] = vr["score"]
+            except Exception:
+                pass
+        if _dtool is not None:
+            try:
+                tr = _dtool.tooling(sem, dp, manifest, available_tools=task.get("available_tools"),
+                                    task=task, plugin=plugin)
+                if isinstance(tr.get("score"), (int, float)) and tr.get("reportable"): tool_t[tid] = tr["score"]
+            except Exception:
+                pass
         for k, st in (l.get("submetric_status") or {}).items():
             _lc_cov.setdefault(k, {"valid": 0, "total": 0})
             _lc_cov[k]["total"] += 1; _lc_cov[k]["valid"] += 1 if st == "valid" else 0
         if not l.get("reportable_score"): _lc_unreportable.append(tid)
-    def _agg(d):
+    def _agg(d, tier="experimental_state_machine"):
         v = list(d.values())
         return {"mean": round(sum(v) / len(v), 3) if v else None, "n": len(v),
                 "std": round(_st.pstdev(v), 3) if len(v) > 1 else (0.0 if v else None),
                 "zero_variance": (len(set(v)) == 1) if v else None,
                 "informativeness": ("saturated" if (v and len(set(v)) == 1) else ("discriminating" if v else "none")),
-                "tier": "experimental_state_machine"}
+                "tier": tier}
     _life = _agg(lc_t)
     _life["submetric_coverage"] = {k: "%d/%d" % (v["valid"], v["total"]) for k, v in sorted(_lc_cov.items())}
     _life["n_unreportable_insufficient_coverage"] = len(_lc_unreportable)
-    panel = {"tier": "experimental_fault_injection_validated", "deterministic": True,
+    panel = {"tier": "experimental_substrate_dimension_evaluators", "deterministic": True,
+             "source": "dim_execution/dim_lifecycle/dim_observability over substrate",
              "promotion_path": "experimental -> human_audited -> strict",
-             "Execution_sm": _agg(ex_t), "Lifecycle_sm": _life}
-    return panel, ex_t, lc_t
+             "Execution_sm": _agg(ex_t), "Lifecycle_sm": _life,
+             "Observability_sm": _agg(ob_t, tier="experimental_substrate_observability")}
+    # Context / Verification / Tooling substrate evaluators run as an OFFLINE cross-check ONLY (judge_fn
+    # /judge_model = None). They are NOT wired into the strict checkpoint gate (scoring.py keeps the
+    # strict cp_grounding / cp_verification / cp_arg_accuracy+cp_tool_path) and NOT folded into
+    # harness_dimensions/success. Surfaced for human audit / promotion-path evidence.
+    panel["cross_check_not_wired"] = {
+        "note": ("substrate Context/Verification/Tooling evaluators, deterministic+offline; not folded "
+                 "into strict success or harness_dimensions; the strict checkpoints in scoring.py remain "
+                 "the authoritative source for these three dimensions"),
+        "Context_xc": _agg(ctx_t, tier="experimental_substrate_context_mgmt"),
+        "Verification_xc": _agg(ver_t, tier="experimental_substrate_verification"),
+        "Tooling_xc": _agg(tool_t, tier="experimental_substrate_tooling")}
+    return panel, ex_t, lc_t, ob_t
 
 
 def build(agent_dir, bench):
@@ -287,12 +359,16 @@ def build(agent_dir, bench):
     strict_covered = {m for cat in hd["by_category"].values() for m, v in cat.items()
                       if v["status"] == "covered"}
     proxy = _proxy_dims(agent_dir, strict_covered)
-    _exp_panel, _ex_t, _lc_t = _experimental_evaluators(agent_dir, bench)
-    # Codex: FILL the Execution/Lifecycle dimension cells with the validated state-machine evaluator
-    # (replaces the coarse Execution formula / deprecated info-gathering Lifecycle proxy).
+    _exp_panel, _ex_t, _lc_t, _ob_t = _experimental_evaluators(agent_dir, bench)
+    # FILL the Execution / Lifecycle / Observability dimension cells with the substrate-based dimension
+    # evaluators (dim_execution / dim_lifecycle / dim_observability). Single source of truth: the old
+    # raw-event lifecycle_exec formulas and the proxy_verifiers Observability pipeline no longer feed the
+    # REPORT's Execution/Lifecycle/Observability cells.
     if isinstance(proxy.get("by_dimension"), dict):
         if _ex_t: proxy["by_dimension"]["Execution"] = _exp_panel["Execution_sm"]
         if _lc_t: proxy["by_dimension"]["Lifecycle"] = _exp_panel["Lifecycle_sm"]
+        if _ob_t and "Observability" not in strict_covered:
+            proxy["by_dimension"]["Observability"] = _exp_panel["Observability_sm"]
     _integ = _integrity(results)
     _toc = (proxy.get("by_dimension") or {}).pop("trace_observation_coverage", None)   # Codex #7
     if _toc is not None:

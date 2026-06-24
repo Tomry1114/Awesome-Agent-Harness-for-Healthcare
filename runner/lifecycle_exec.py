@@ -85,6 +85,13 @@ def _aggregate(subs):
 
 
 # ---------------------------------------------------------------- Execution
+# SUPERSEDED for the live report by runner/dim_execution.execution (substrate SemanticTrace +
+# DimensionPolicy.required_milestones). This raw-event implementation — in particular the
+# required_operation_completion sub-metric keyed off task_policy['required_tool_groups'] (the
+# `groups=[set(g)...]; best=max(... t in used_valid ...)` block below, tool-name set-membership) — is
+# NO LONGER wired into aggregate_report. It is retained ONLY as the behavioural reference pinned by
+# runner/test_conformance.py (test_execution_proxy_sensitivity / _attribution_gate /
+# _capability_healthy_attribution). Do not add new callers; use dim_execution instead.
 def execution(events, capabilities=None, task_policy=None):
     calls = [e for e in events if e.get("event_type") == "tool_call"]
     has_final = any(e.get("event_type") == "final_answer" for e in events)
@@ -173,6 +180,12 @@ def _is_loop(calls):
     return loops
 
 
+# SUPERSEDED for the live report by runner/dim_lifecycle.lifecycle (substrate SemanticTrace +
+# DimensionPolicy). The raw-event state-machine heuristics below (ordering_quality via prerequisites
+# regex, _is_loop loop detection, recovery_quality, readiness_before_terminal via required_tool_groups,
+# termination_quality, escalation_appropriateness) are NO LONGER wired into aggregate_report. Retained
+# ONLY as the behavioural reference pinned by test_conformance.test_lifecycle_sm_monotonicity. Do not
+# add new callers; use dim_lifecycle instead.
 def lifecycle(events, task_policy=None, capabilities=None):
     calls = [e for e in events if e.get("event_type") == "tool_call"]
     has_final = any(e.get("event_type") == "final_answer" for e in events)

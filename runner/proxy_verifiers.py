@@ -131,11 +131,13 @@ def proxy_dimensions(events):
     out["trace_observation_coverage"] = {"score": exposure,           # harness-side mirror for agent-vs-harness comparison (-> integrity)
                                          "basis": "%d/%d tool results delivered into canonical trace" % (exposed, n)}
 
-    # Execution and Lifecycle are NO LONGER computed here. The old proxy formulas
-    # (info-before-action / 0.5*final + 0.5*tool_success) were construct-invalid — flat ~1.0 across
-    # loops / repeated-failure / recovery (proven in sensitivity_experiment.py). They are REPLACED by
-    # the deterministic state-machine evaluators in lifecycle_exec.py (execution / lifecycle), which
-    # fill the Execution/Lifecycle dimension cells. ONE source of truth — no lingering broken formula.
+    # Execution and Lifecycle are NO LONGER computed here. They are now scored by the substrate-based
+    # dimension evaluators runner/dim_execution.execution + runner/dim_lifecycle.lifecycle (wired in
+    # aggregate_report._experimental_evaluators), which fill the Execution/Lifecycle dimension cells.
+    # The Observability block above is retained ONLY as (a) the trace_observation_coverage harness-side
+    # mirror and (b) the conformance contract (test_observability_consumes_canonical); the REPORT's
+    # Observability dimension cell is filled by runner/dim_observability.observability over the substrate
+    # EvidenceView (single source of truth for the report). No lingering broken formula in the live path.
     return out
 
 

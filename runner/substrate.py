@@ -107,8 +107,22 @@ def dimension_policy(task, plugin=None):
     plugin = plugin or get_plugin(task.get("source_benchmark")) or {}
     base = dict(plugin.get("dimension_policy") or {})
     ref = task.get("reference") or {}
-    if ref.get("required_tool_groups") and "required_tool_groups" not in base:
-        base["required_tool_groups"] = ref["required_tool_groups"]
+    if ref.get("required_tool_groups"):
+        base.setdefault("required_tool_groups", ref["required_tool_groups"])
+        # PER-TASK readiness/completion: map each required tool GROUP to the milestone set its tools emit,
+        # so |reached_milestones ∩ group_milestones| / |group_milestones| reproduces the old tool-path
+        # completion fraction -- expressed in milestones (the evaluator never sees a tool name). This keeps
+        # per-task discrimination (a 4-tool task the agent half-finished scores ~0.5), not a flat 1.0.
+        tsem = (plugin or {}).get("tool_semantics", {})
+        groups_ms = []
+        for grp in ref["required_tool_groups"]:
+            ms = set()
+            for tool in (grp or []):
+                ms.update((tsem.get(tool) or {}).get("success_milestones") or [])
+            if ms: groups_ms.append(sorted(ms))
+        if groups_ms:
+            base["required_milestone_groups"] = groups_ms
+            base["required_milestones"] = max(groups_ms, key=len)   # the most complete required path
     base.update(task.get("lifecycle_policy") and {"lifecycle_policy": task["lifecycle_policy"]} or {})
     base.setdefault("governance_policy_id", task.get("source_benchmark"))
     return base
@@ -131,8 +145,8 @@ def _medcta_evidence(trace):
 register_plugin({
     "benchmark": "MedCTA", "default_tool_role": "acquire",
     "tool_semantics": {
-        "ImageDescription": {"role": "acquire", "success_milestones": ["image_overview_obtained"]},
-        "RegionAttributeDescription": {"role": "acquire", "success_milestones": ["target_region_examined"]},
+        "ImageDescription": {"role": "acquire", "success_milestones": ["image_overview_obtained", "relevant_image_evidence_obtained"]},
+        "RegionAttributeDescription": {"role": "acquire", "success_milestones": ["target_region_examined", "relevant_image_evidence_obtained"]},
         "OCR": {"role": "acquire", "success_milestones": ["text_evidence_obtained"]},
         "GoogleSearch": {"role": "acquire", "success_milestones": ["external_reference_obtained"]},
         "Calculator": {"role": "act", "success_milestones": []}},
