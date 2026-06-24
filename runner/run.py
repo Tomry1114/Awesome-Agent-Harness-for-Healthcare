@@ -452,8 +452,11 @@ def main():
     ap.add_argument("--job-dir", default=None)
     ap.add_argument("--reset-mode", default="none", choices=["none", "restore_pristine", "per_task"])
     ap.add_argument("--unsafe-no-reset", action="store_true", help="skip per-task stub-resource cleanup")
+    ap.add_argument("--formal", action="store_true", help="formal benchmark run: schema-strict (refuse to emit a protocol-violating result)")
     ap.add_argument("--out", default=None)
     args = ap.parse_args()
+    if args.formal:
+        os.environ["MH_FORMAL"] = "1"   # formal run -> strict validation without needing the env var set
     reset_fhir(args.reset_mode)
     result = run_task(args.bench, args.task, args.agent, args.fhir_base, args.max_steps, args.job_dir,
                       cleanup=not args.unsafe_no_reset)

@@ -705,8 +705,8 @@ def test_context_typed_contract_units_and_evidence_types():
                                       {"id": "m", "type": "current_medication_list"}]}
 
     def ev(uid, ct):
-        return {"id": uid, "delivered_to_agent": True, "delivery_fidelity": 1.0,
-                "error_visible": False, "payload": "p", "context_type": ct}
+        return {"id": uid, "delivered_to_agent": True, "delivery_fidelity": 1.0, "error_visible": False,
+                "payload": "p", "context_type": ct, "semantic_status": "success"}
 
     full = [ev("u#0", "patient_identity"), ev("u#1", "allergy_status"),
             ev("u#2", "current_medication_list")]
@@ -731,8 +731,8 @@ def test_context_sufficiency_reuses_acquisition_type_match():
            "required_milestones": []}
 
     def ev(ct):
-        return {"id": "u#%d" % id(ct), "delivered_to_agent": True, "delivery_fidelity": 1.0,
-                "error_visible": False, "payload": "p", "context_type": ct}
+        return {"id": "u#%d" % id(ct), "delivered_to_agent": True, "delivery_fidelity": 1.0, "error_visible": False,
+                "payload": "p", "context_type": ct, "semantic_status": "success"}
 
     acq_full = C._acquisition([], [ev("patient_identity"), ev("allergy_status")], pol)
     assert C._sufficiency([], pol, acq_full)["score"] == 1.0

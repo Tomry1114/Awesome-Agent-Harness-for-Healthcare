@@ -244,9 +244,8 @@ def _usable_for_context(u, status_by_idx):
     if not has_token:
         return False                                   # tokenless/blank -> never usable
     status = _semantic_status(u, status_by_idx)
-    if status is None:
-        status = "success"                             # undiscoverable status + real content -> success
-    return status == "success"
+    return status == "success"                         # P1-d FAIL-CLOSED: None/partial/failure -> NOT usable
+                                                       # (a legacy unit must set usable_for_context/semantic_status explicitly)
 
 
 def _delivered(evidence, sem_trace=None):

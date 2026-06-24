@@ -63,15 +63,32 @@ _PLUGINS = {}
 # A plugin MUST declare these keys; anything else makes scoring vacuous, so registration fails closed.
 _REQUIRED_PLUGIN_KEYS = ("benchmark", "tool_semantics")
 
+def _plugin_fingerprint(p):
+    """Full contract fingerprint: two registrations are the SAME plugin only if their ENTIRE scored contract
+    matches -- not just benchmark name + tool ids. So a different resolver / milestone / evidence extractor /
+    dimension policy under the same name is a genuine CONFLICT, not a silent reload."""
+    import json
+    dp = p.get("dimension_policy") or {}
+    ts = {k: [v.get("role"), sorted(v.get("success_milestones") or [])]
+          for k, v in (p.get("tool_semantics") or {}).items()}
+    return json.dumps({"benchmark": p.get("benchmark"), "tool_semantics": ts,
+                       "resolvers": sorted((p.get("resolvers") or {}).keys()),
+                       "has_evidence_extractor": bool(p.get("evidence_extractor")),
+                       "required_context_units": dp.get("required_context_units"),
+                       "required_milestones": dp.get("required_milestones"),
+                       "governance_policy_id": dp.get("governance_policy_id"),
+                       "verification_policy": dp.get("verification_policy")},
+                      sort_keys=True, default=str)
+
+
 def _equivalent_plugin(a, b):
-    """Two plugin dicts are the SAME plugin re-registering (a module RELOAD), not a hostile duplicate, when
-    they declare the same benchmark name and the same tool surface (sorted tool_semantics tool ids). A
-    genuinely DIFFERENT plugin claiming the name has a different tool set -> not equivalent -> conflict."""
+    """SAME plugin re-registering (idempotent reload) iff identical object OR identical full contract
+    fingerprint. Same name + same tool ids but ANY different semantics -> NOT equivalent -> conflict."""
+    if a is b:
+        return True
     if not (isinstance(a, dict) and isinstance(b, dict)):
         return False
-    if a.get("benchmark") != b.get("benchmark"):
-        return False
-    return sorted((a.get("tool_semantics") or {}).keys()) == sorted((b.get("tool_semantics") or {}).keys())
+    return _plugin_fingerprint(a) == _plugin_fingerprint(b)
 
 def register_plugin(p):
     """V9 FAIL-CLOSED registration. A plugin that is malformed or collides MUST raise at import time
@@ -475,14 +492,21 @@ def dimension_policy(task, plugin=None):
             if isinstance(u, dict):
                 return {"id": u.get("id") or u.get("type"), "type": u.get("type") or u.get("id")}
             return {"id": str(u), "type": str(u)}
+        mode = task.get("context_requirements_mode", "merge")   # 'merge' (default) | 'replace'
         by_id = {}
         order = []
-        for u in (base.get("required_context_units") or []):
-            nu = _norm_unit(u)
-            if nu["id"] not in by_id:
-                order.append(nu["id"])
-            by_id[nu["id"]] = nu
-        for u in task_cr:                                        # task entries override/append by id
+        if mode != "replace":                                   # replace -> start empty (drop plugin defaults)
+            for u in (base.get("required_context_units") or []):
+                nu = _norm_unit(u)
+                if nu["id"] not in by_id:
+                    order.append(nu["id"])
+                by_id[nu["id"]] = nu
+        for u in task_cr:                                        # task entries override / append / DROP by id
+            if isinstance(u, dict) and u.get("required") is False:
+                _id = u.get("id") or u.get("type")
+                if _id in by_id:
+                    del by_id[_id]; order = [x for x in order if x != _id]
+                continue
             nu = _norm_unit(u)
             if nu["id"] not in by_id:
                 order.append(nu["id"])
