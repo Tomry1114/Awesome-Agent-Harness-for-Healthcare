@@ -101,18 +101,28 @@ def _native_metrics(bench, results):
 
 
 def _harness_dims(results):
-    acc = {m: [] for m in MODULES}
+    import statistics as _st
+    acc = {m: [] for m in MODULES}; prate = {m: [] for m in MODULES}
     for r in results:
-        ds = r.get("dimension_scores") or {}
+        ds = r.get("dimension_scores") or {}; pr = r.get("dimension_pass_rate") or {}
         for m in MODULES:
-            if ds.get(m) is not None:
-                acc[m].append(ds[m])
+            if ds.get(m) is not None: acc[m].append(ds[m])
+            if pr.get(m) is not None: prate[m].append(pr[m])
     dims = {}
     for m in MODULES:
-        v = acc[m]
+        v = acc[m]; covered = bool(v)
+        # Codex #8 + rollup: distribution stats + tiered eligibility (the two semantics of score_eligible
+        # split apart) + informativeness so a saturated dim is not mistaken for a discriminating one.
+        std = round(_st.pstdev(v), 3) if len(v) > 1 else (0.0 if v else None)
         dims[m] = {"mean": round(sum(v) / len(v), 3) if v else None,
-                   "coverage_tasks": len(v),
-                   "status": "covered" if v else "not_exercised_by_benchmark"}
+                   "pass_rate": round(sum(prate[m]) / len(prate[m]), 3) if prate[m] else None,
+                   "n_scored": len(v), "n_tasks": len(results), "std": std,
+                   "min": round(min(v), 3) if v else None, "max": round(max(v), 3) if v else None,
+                   "zero_variance": (len(set(v)) == 1) if v else None,
+                   "informativeness": ("saturated" if (v and len(set(v)) == 1) else ("discriminating" if v else "none")),
+                   "evidence_tier": "strict" if covered else "not_evaluated",
+                   "report_in_primary_profile": True, "formal_analysis_eligible": covered,
+                   "status": "covered" if covered else "not_exercised_by_benchmark"}
     cats = {cat: {m: dims[m] for m in members} for cat, members in CATEGORIES.items()}
     uncovered = [m for m in MODULES if dims[m]["status"] != "covered"]
     return {"by_category": cats, "uncovered_dimensions": uncovered}
@@ -216,12 +226,16 @@ def build(agent_dir, bench):
     if _toc is not None:
         _integ["trace_observation_coverage"] = _toc
     _proxy_filled = sorted((set((proxy.get("by_dimension") or {}).keys()) & set(MODULES)) - strict_covered)
+    _hd = hd["by_category"]
+    _task_cov = {m: "%d/%d" % (d["n_scored"], d["n_tasks"]) for cat in _hd.values() for m, d in cat.items() if d["n_scored"]}
     coverage_summary = {
-        "strict_scored": "%d/7" % len(strict_covered), "strict_dimensions": sorted(strict_covered),
+        "dimension_breadth": "%d/7 strict" % len(strict_covered), "strict_dimensions": sorted(strict_covered),
         "proxy_filled": "%d/7" % len(_proxy_filled), "proxy_dimensions": _proxy_filled,
-        "caveat": ("Only STRICT dims enter the main score (score_eligible=True). Proxy dims are "
-                   "trajectory-derived soft signals (score_eligible=False), NOT in the main score. "
-                   "Never report '7/7' unqualified — cite strict_scored.")}
+        "task_eval_coverage": _task_cov,
+        "caveat": ("dimension_breadth = how many dims HAVE an evaluator (NOT that they discriminate). "
+                   "Only strict dims (formal_analysis_eligible) enter formal stats; proxy dims are shown "
+                   "in the profile (report_in_primary_profile) but score_eligible=False. Check per-dim "
+                   "evidence_tier / zero_variance / informativeness before averaging. Never report '7/7' unqualified.")}
     return {
         "source": agent_dir,
         "bench": bench,

@@ -69,8 +69,13 @@ def test_observability_consumes_canonical():
     assert proxy_verifiers._has_observation(ev_empty) is False      # canonical layer empty -> no observation
     out = proxy_verifiers.proxy_dimensions([ev_canon, ev_empty,
                                             {"event_type": "final_answer"}])
-    # Codex #7: now reported as harness instrumentation coverage, not an agent Observability dimension
-    assert "trace_observation_coverage" in out and 0.0 <= out["trace_observation_coverage"]["score"] <= 1.0
+    # Observability is a real 3-layer dimension (availability/exposure/uptake + error_transparency);
+    # exposure is mirrored to trace_observation_coverage (harness-side, -> integrity panel).
+    assert "trace_observation_coverage" in out
+    ob = out["Observability"]
+    for layer in ("evidence_availability", "evidence_exposure", "evidence_uptake", "error_transparency"):
+        assert layer in ob, "Observability missing layer " + layer
+    assert ob["evidence_exposure"] == out["trace_observation_coverage"]["score"]   # exposure == delivery mirror
 
 
 # ---- tightened error detection: bare word 'error' must NOT trigger a false failure ----

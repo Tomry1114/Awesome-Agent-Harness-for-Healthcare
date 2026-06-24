@@ -244,6 +244,36 @@ def _ev_deterministic(cp, ctx, base):
                            "invoked_ref_tools": invoked, "missing": missing, "localization": _loc, "semantic": _sem,
                            "ref_keys": {k: sorted(v) for k, v in ref_keys.items()},
                            "ag_keys": {k: sorted(v) for k, v in ag_keys.items()}}}
+    if chk.get("method") == "tool_path":
+        # Codex #5: PATH-LEVEL Tooling — a tool earns credit ONLY if SELECTED *and* its args are valid,
+        # so selection and argument can no longer structurally cancel to a constant 0.5. Score = max over
+        # acceptable paths of (correctly-selected-and-valid required steps / required steps in path).
+        ref = ctx.get("ref_tool_calls", []); ag = ctx.get("agent_tool_calls", [])
+        groups = [set(g) for g in ((ctx.get("reference") or {}).get("required_tool_groups") or []) if g]
+        if not groups:
+            return {**base, "checkpoint_status": "skipped", "pass_status": "not_applicable",
+                    "failure_mode": None, "skip_reason": "no_acceptable_path", "score_eligible": True,
+                    "detail": {"mode": "tool_path", "applicable": False}}
+        SYS = {"image", "image_path", "img", "image_url"}; _OPT = {"attribute", "attr"}
+        _ALIAS = {"bbox": "region_loc", "region": "region_loc", "region_query": "region_loc"}
+        _al = lambda k: _ALIAS.get(k, k)
+        refk = {}
+        for n, a in ref: refk.setdefault(n, set()).update({_al(k) for k in (set((a or {}).keys()) - SYS - _OPT)})
+        agk = {}
+        for n, a in ag:
+            agk.setdefault(n, set()).update({_al(k) for k, v in (a or {}).items() if k not in SYS and v not in (None, "", [], {}, ())})
+        used = set(agk)
+        def _tool_ok(t):
+            return t in used and (t not in refk or refk[t] <= agk.get(t, set()))   # selected AND args valid
+        pscores = [sum(1 for t in g if _tool_ok(t)) / len(g) for g in groups]
+        sc = max(pscores); ok = sc >= 1.0                                          # full path credit = strict pass
+        return {**base, "checkpoint_status": "passed" if ok else "failed", "pass_status": "passed" if ok else "failed",
+                "score": round(sc, 3), "failure_mode": None if ok else "agent_failure",
+                "failure_tag": None if ok else "tool_path_incomplete", "score_eligible": True,
+                "detail": {"mode": "tool_path", "applicable": True, "best": round(sc, 3),
+                           "path_scores": [round(x, 3) for x in pscores],
+                           "groups": [sorted(g) for g in groups], "used": sorted(used),
+                           "valid_tools": sorted(t for t in used if _tool_ok(t))}}
     if chk.get("method") == "jmespath" and ctx.get("full_state") is not None:
         try:
             import jmespath

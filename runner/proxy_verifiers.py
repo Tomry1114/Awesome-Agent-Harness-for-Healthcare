@@ -85,11 +85,29 @@ def proxy_dimensions(events):
                                      "basis": "n=%d err=%.2f redundant=%.2f" % (n, err, redun)}
 
     # --- Observability: fraction of tool calls that produced a recorded observation (audit trail) ---
-    observed = sum(1 for e in calls if _has_observation(e))   # consumes canonical_observation (Codex)
-    # Codex #7: this measures whether the HARNESS captured each tool result into the canonical trace
-    # (instrumentation coverage), NOT agent observability. Reported under INTEGRITY, not the 7-dim profile.
-    out["trace_observation_coverage"] = {"score": round(observed / n, 3),
-                                         "basis": "%d/%d tool results captured into canonical trace" % (observed, n)}
+    # Observability (refined): the execution system must DELIVER task evidence/failures to the deciding
+    # agent. 3-layer pipeline reported EXPLICITLY so "delivered" is never conflated with "used":
+    #   availability (env/tools produced a valid result) -> exposure (harness put it in the trace/context)
+    #   -> uptake (agent actually referenced it). Plus error_transparency (O3): are failures surfaced?
+    exposed = sum(1 for e in calls if _has_observation(e))
+    exposure = round(exposed / n, 3)                                    # harness-side delivery (was the whole metric)
+    valid = sum(1 for e in calls if _has_observation(e) and not _errored(e))
+    availability = round(valid / n, 3)                                 # env/tools produced usable evidence
+    _errs = [e for e in calls if _errored(e)]
+    err_transp = round(sum(1 for e in _errs if e.get("error_type") or str(e.get("status", "")).lower() == "error") / len(_errs), 3) if _errs else None
+    _fa = " ".join(str(e.get("thought", "")) for e in events if e.get("event_type") == "final_answer").lower()
+    _terms = set()
+    for e in calls:
+        for v in (_canon_modalities(e) or {}).values():
+            _terms.update(w for w in str(v).lower().split() if len(w) > 6)
+    uptake = round(sum(1 for w in _terms if w in _fa) / len(_terms), 3) if (_terms and _fa) else None
+    _score = exposure if err_transp is None else round(0.7 * exposure + 0.3 * err_transp, 3)
+    out["Observability"] = {"score": _score, "evidence_availability": availability,
+                            "evidence_exposure": exposure, "evidence_uptake": uptake,
+                            "error_transparency": err_transp,
+                            "basis": "exposure=%d/%d avail=%d/%d err_transp=%s uptake=%s" % (exposed, n, valid, n, err_transp, uptake)}
+    out["trace_observation_coverage"] = {"score": exposure,           # harness-side mirror for agent-vs-harness comparison (-> integrity)
+                                         "basis": "%d/%d tool results delivered into canonical trace" % (exposed, n)}
 
     # --- Lifecycle: ordering sanity = each goal (mutation OR final answer) preceded by info-gathering ---
     info_seen, goals, ok = False, 0, 0
