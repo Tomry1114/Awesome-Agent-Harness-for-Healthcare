@@ -73,13 +73,21 @@ def _tool_requirements(reference, env):
     return {"required": required, "optional": optional, "alternatives": alternatives,
             "env_type": etype}
 
-def _judge_observations(ctx, limit=6):
+def _judge_observations(ctx, char_budget=8000, per_obs=800):
     obs = [(ev.get("tool"), ev.get("observation") or ev.get("result")) for ev in ctx.get("trajectory", [])
            if ev.get("event_type") == "tool_call" and (ev.get("observation") or ev.get("result"))]
-    shown = obs[:limit]
-    text = "\n".join("%s -> %s" % (t, str(o)[:300]) for t, o in shown)
-    meta = {"n_tool_observations_total": len(obs), "n_tool_observations_shown": len(shown),
-            "tool_obs_truncated": len(obs) > limit}
+    # Review #6: do NOT silently drop everything after the first 6 observations. Include ALL under a
+    # total budget; if over budget keep the MOST RECENT (key/last evidence) and record what was omitted.
+    parts, used, omitted = [], 0, 0
+    for t, o in reversed(obs):
+        seg = "%s -> %s" % (t, str(o)[:per_obs])
+        if used + len(seg) > char_budget and parts:
+            omitted += 1; continue
+        parts.append(seg); used += len(seg)
+    text = "\n".join(reversed(parts))
+    meta = {"n_tool_observations_total": len(obs), "n_tool_observations_shown": len(parts),
+            "n_tool_observations_omitted": omitted, "tool_obs_truncated": omitted > 0,
+            "selection": "all_under_budget_recent_kept"}
     return text, meta
 
 _JUDGE_TAG = {"context_grounding": "missing_evidence", "evidence_auditability": "missing_evidence",
@@ -441,12 +449,12 @@ def _ev_policy(cp, ctx, base):
     except Exception as e:  # bug / bad args / missing mapping
         return {**base, "checkpoint_status": "error", "failure_mode": "verifier_error", "note": repr(e)}
     if r.get("passed"):
-        return {**base, "checkpoint_status": "passed", "failure_mode": None, "score_eligible": True}
+        return {**base, "checkpoint_status": "passed", "failure_mode": None, "score_eligible": not cp.get("sub_metric")}
     tag = r.get("failure_tag")
     # data-missing (allergy not injected) is an environment issue; else agent fault
     fmode = "environment_error" if tag == "missing_synthetic_context" else "agent_failure"
     return {**base, "checkpoint_status": "failed" if fmode == "agent_failure" else "error",
-            "failure_mode": fmode, "failure_tag": tag, "score_eligible": True, "detail": r}
+            "failure_mode": fmode, "failure_tag": tag, "score_eligible": not cp.get("sub_metric"), "detail": r}
 
 
 EVALUATOR_VERSION = "2026.06.24"

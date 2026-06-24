@@ -121,7 +121,7 @@ def execution(events, capabilities=None, task_policy=None):
                                 "env_or_harness_failures_excluded": len(env_fail),
                                 "unknown_failures_evidence_insufficient": len(unknown_fail)}
     out["degraded_tool_health"] = len(env_fail) > 0
-    out["tier"] = "experimental"
+    out["tier"] = "experimental_operational_completion"   # state_transition_success still N/A (localization not propagated)
     return out
 
 

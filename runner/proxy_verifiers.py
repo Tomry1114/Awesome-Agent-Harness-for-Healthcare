@@ -103,12 +103,20 @@ def proxy_dimensions(events):
     uptake = round(sum(1 for w in _terms if w in _fa) / len(_terms), 3) if (_terms and _fa) else None
     # composite reflects the FULL pipeline: delivery (exposure) + failure transparency + agent uptake.
     # uptake is the discriminating layer (delivery alone saturates at 1.0). uptake None -> fall back to exposure.
-    _up = uptake if uptake is not None else exposure
-    _et = err_transp if err_transp is not None else 1.0
-    _score = round(0.5 * exposure + 0.2 * _et + 0.3 * _up, 3)
+    # Review #2: average ONLY applicable layers. error_transparency is N/A (not 1.0) when there was no
+    # error opportunity -> a clean run does not collect free transparency credit. exposure always
+    # applies; uptake applies if computable. (This is delivery+uptake = evidence-pipeline effectiveness,
+    # NOT pure agent observability -- labelled as such in the basis.)
+    _layers = [("exposure", exposure, 0.5)]
+    if err_transp is not None: _layers.append(("error_transparency", err_transp, 0.2))
+    if uptake is not None: _layers.append(("uptake", uptake, 0.3))
+    _tw = sum(w for _, _, w in _layers)
+    _score = round(sum(v * w for _, v, w in _layers) / _tw, 3) if _tw else None
     out["Observability"] = {"score": _score, "evidence_availability": availability,
                             "evidence_exposure": exposure, "evidence_uptake": uptake,
                             "error_transparency": err_transp,
+                            "measures": "evidence_pipeline_effectiveness(delivery+uptake), not pure agent observability",
+                            "applicable_layers": [n for n, _, _ in _layers],
                             "basis": "exposure=%d/%d avail=%d/%d err_transp=%s uptake=%s" % (exposed, n, valid, n, err_transp, uptake)}
     out["trace_observation_coverage"] = {"score": exposure,           # harness-side mirror for agent-vs-harness comparison (-> integrity)
                                          "basis": "%d/%d tool results delivered into canonical trace" % (exposed, n)}
