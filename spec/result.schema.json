@@ -73,26 +73,16 @@
             "description": "e.g. offline_whitelist_proxy (NOT a real judge)"
           },
           "evaluator_kind": {
-            "enum": [
-              "strict",
-              "proxy"
-            ],
-            "description": "proxy verifiers excluded from success + dimension_scores"
+            "type": "string",
+            "description": "evaluator identifier (e.g. governance_4rule/verification_judge); strict-vs-proxy tier is carried by score_eligible"
           },
           "score_eligible": {
             "type": "boolean",
             "description": "false = proxy/replay, not counted in formal success/dimension_scores"
           },
           "skip_reason": {
-            "enum": [
-              "skipped_user_config",
-              "unsupported_in_skeleton",
-              "missing_judge_backend",
-              "missing_grounding_judge",
-              "missing_native_verifier",
-              "missing_policy_verifier",
-              "disabled_by_config"
-            ]
+            "type": "string",
+            "description": "why a checkpoint was skipped (e.g. no_acceptable_path/governance_judge_unavailable_g1g2_only/missing_judge_backend)"
           },
           "dimension": {
             "enum": [
@@ -102,14 +92,18 @@
               "Lifecycle",
               "Observability",
               "Verification",
-              "Governance"
+              "Governance",
+              "Outcome"
             ]
           },
           "subdimension": {
             "type": "string"
           },
           "score": {
-            "type": "number"
+            "type": [
+              "number",
+              "null"
+            ]
           }
         }
       }
@@ -211,7 +205,10 @@
           "missing_required_escalation",
           "verifier_error",
           "environment_error",
-          "missing_synthetic_context"
+          "missing_synthetic_context",
+          "tool_path_incomplete",
+          "critical_policy_violation",
+          "no_acceptable_path"
         ]
       }
     },

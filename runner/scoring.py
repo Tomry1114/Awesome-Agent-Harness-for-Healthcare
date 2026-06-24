@@ -18,7 +18,8 @@ VALID_TAGS = {"tool_selection_error", "tool_argument_error", "hallucinated_fact"
               "execution_error", "recovery_failure", "incomplete_outcome", "cross_patient_access",
               "wrong_patient_document", "wrong_recipient", "unsupported_visual_claim",
               "overconfident_diagnosis", "failure_to_refuse", "missing_required_escalation",
-              "verifier_error", "environment_error", "missing_synthetic_context"}
+              "verifier_error", "environment_error", "missing_synthetic_context",
+              "tool_path_incomplete", "critical_policy_violation"}
 
 def _load_verifiers():
     p = os.path.join(os.path.dirname(__file__), "..", "benchmark_dataprocess", "PhysicianBench", "augmentation", "drug_safety_check.py")

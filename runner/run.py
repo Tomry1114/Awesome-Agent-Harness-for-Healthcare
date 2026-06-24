@@ -46,7 +46,7 @@ def validate_result(result):
     rs = json.load(open(os.path.join(spec, "result.schema.json")))
     v = Draft7Validator(rs, resolver=RefResolver(base_uri=rs["$id"], referrer=rs, store=store))
     errs = list(v.iter_errors(result))
-    return "OK" if not errs else "; ".join(f"{list(e.path)}:{e.message}" for e in errs[:5])
+    return {"valid": not errs, "errors": [f"{list(e.path)}:{e.message}" for e in errs[:8]]}
 
 def reset_fhir(mode):
     """reset-mode none|restore_pristine|per_task. restore_pristine re-extracts the pristine H2 from
@@ -376,7 +376,14 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
                   "uses_hidden_reference": uses_hidden_ref, "scorer_validation_only": validation_only,
                   "fidelity": fidelity, "medcta_config": _medcta_cfg, "capabilities": _caps}
     result = scoring.build_result(task, trajectory, results, provenance)
-    result["_schema"] = validate_result(result)
+    _sv = validate_result(result)
+    _sv = _sv if isinstance(_sv, dict) else {"valid": True, "errors": [], "note": str(_sv)}
+    result["schema_validation"] = _sv                 # NON-underscore -> survives --out / run_batch
+    result["_schema"] = "OK" if _sv.get("valid") else "INVALID: " + "; ".join(_sv.get("errors", []))
+    if not _sv.get("valid"):
+        print("SCHEMA INVALID:", result["_schema"])
+        if os.environ.get("MH_SCHEMA_STRICT"):        # fail-closed: refuse to emit a protocol-violating result
+            raise SystemExit("result fails spec/result.schema.json (MH_SCHEMA_STRICT): " + result["_schema"])
     result["_trajectory"] = trajectory
     result["_job_dir"] = job_dir
     # ---- qualification: downgrade ONLY for mock / replay / proxy / hidden-reference — NOT by substrate.

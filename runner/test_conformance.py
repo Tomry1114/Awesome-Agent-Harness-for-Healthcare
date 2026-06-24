@@ -677,6 +677,46 @@ def test_fourth_dataset_adds_file_without_core_edit():
     assert sub.list_plugins() == ["HealthAdminBench", "MedCTA", "PhysicianBench"]
 
 
+def test_result_schema_roundtrip_matches_real_output():
+    """#P0: the result protocol must accept what the code actually emits -- an Outcome checkpoint, a
+    governance_4rule/verification_judge evaluator_kind, and a skipped checkpoint with score=null -- through a
+    serialize -> reload -> validate round-trip."""
+    import os, glob, json as _j
+    from jsonschema import Draft7Validator, RefResolver
+    spec = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "spec")
+    if not os.path.isdir(spec):
+        spec = "spec"
+    store = {}
+    for f in glob.glob(os.path.join(spec, "*.json")):
+        d = _j.load(open(f))
+        if "$id" in d: store[d["$id"]] = d
+    rs = _j.load(open(os.path.join(spec, "result.schema.json")))
+    val = Draft7Validator(rs, resolver=RefResolver(base_uri=rs["$id"], referrer=rs, store=store))
+    result = {
+        "task_id": "MCTA-0", "success": False, "evaluation_status": "partial",
+        "checkpoints": [
+            {"id": "cp_outcome", "checkpoint_status": "passed", "dimension": "Outcome", "provenance": "synthetic",
+             "evaluator_kind": "gacc_judge", "score": 0.5, "score_eligible": False},
+            {"id": "cp_gov", "checkpoint_status": "failed", "dimension": "Governance", "provenance": "augmented",
+             "evaluator_kind": "governance_4rule", "score": 0.75, "failure_tag": "critical_policy_violation"},
+            {"id": "cp_skip", "checkpoint_status": "skipped", "dimension": "Verification", "provenance": "converted",
+             "evaluator_kind": "verification_judge", "score": None,
+             "skip_reason": "governance_judge_unavailable_g1g2_only"}],
+        "dimension_scores": {}, "provenance": {"agent_model": "gpt-5.5"}, "failure_tags": ["critical_policy_violation", "tool_path_incomplete"]}
+    reloaded = _j.loads(_j.dumps(result))
+    errs = sorted(val.iter_errors(reloaded), key=lambda e: list(e.path))
+    assert not errs, [list(e.path)[-2:] + [e.message[:60]] for e in errs]
+
+
+def test_canonical_action_missing_tool_name_invalid():
+    """#P0-B: a tool_call with no usable tool name is malformed (action_type=invalid -> action_valid False)."""
+    import canonical_schema as _C
+    assert _C.canonical_action({"type": "tool_call", "args": {}}, "tool_sandbox")["action_type"] == "invalid"
+    assert _C.canonical_action({"tool": "  ", "args": {}}, "tool_sandbox")["action_type"] == "invalid"
+    assert _C.action_valid({"type": "tool_call", "args": {}}, "tool_sandbox") is False
+    assert _C.canonical_action({"tool": "OCR", "args": {}}, "tool_sandbox")["action_type"] == "tool_call"
+
+
 def _run():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     passed = 0

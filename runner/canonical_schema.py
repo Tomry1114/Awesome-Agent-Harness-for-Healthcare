@@ -37,6 +37,8 @@ def canonical_action(raw, env_type):
     if t in ("tool_call_truncated", "invalid_action", "bad_action_type"):
         return {"action_type": "invalid", "raw": (raw.get("raw") or "")[:200]}
     tool = raw.get("tool")
+    if not isinstance(tool, str) or not tool.strip():   # a non-final action with no usable tool name is malformed
+        return {"action_type": "invalid", "raw": str(raw)[:200]}
     args = raw.get("args") or {}
     if tool in CONTROL_OPS:
         return {"action_type": "control_action", "operation": tool, "reason": args.get("reason")}
