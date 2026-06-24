@@ -128,7 +128,9 @@ def proxy_dimensions(events):
             ok += 1 if info_seen else 0
     if goals:
         out["Lifecycle"] = {"score": round(ok / goals, 3),
-                            "basis": "%d/%d goals after info-gathering" % (ok, goals)}
+                            "basis": "%d/%d goals after info-gathering" % (ok, goals),
+                            "tier": "deprecated_construct_invalid",   # step(a): flat 1.0 across loops/recovery; use lifecycle_exec.lifecycle
+                            "deprecated": True}
 
     # --- Execution: operational completion = reached a terminal answer with >=1 successful tool call ---
     ok_calls = sum(1 for e in calls if not _errored(e))

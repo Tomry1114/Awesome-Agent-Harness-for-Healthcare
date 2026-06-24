@@ -227,6 +227,33 @@ def _tool_use_quality(results):
             "judge": "llm_judge (gpt-5.5), 0-2 per sub x5 -> [0,1]"}
 
 
+def _experimental_evaluators(agent_dir):
+    """Step (b): deterministic state-machine Execution/Lifecycle. EXPERIMENTAL tier (fault-injection
+    validated, not yet human-audited -> NOT strict). Reported alongside, never mixed into the 7-dim
+    profile or success until promoted."""
+    try:
+        import lifecycle_exec as _le, statistics as _st
+    except Exception:
+        return {"note": "lifecycle_exec unavailable"}
+    ex, lc = [], []
+    for tp in sorted(glob.glob(os.path.join(agent_dir, "*", "trajectory.jsonl"))):
+        try:
+            evs = [json.loads(l) for l in open(tp) if l.strip()]
+        except Exception:
+            continue
+        e = _le.execution(evs); l = _le.lifecycle(evs)
+        if isinstance(e.get("score"), (int, float)): ex.append(e["score"])
+        if isinstance(l.get("score"), (int, float)): lc.append(l["score"])
+    def _agg(v):
+        return {"mean": round(sum(v) / len(v), 3) if v else None, "n": len(v),
+                "std": round(_st.pstdev(v), 3) if len(v) > 1 else (0.0 if v else None),
+                "zero_variance": (len(set(v)) == 1) if v else None,
+                "informativeness": ("saturated" if (v and len(set(v)) == 1) else ("discriminating" if v else "none"))}
+    return {"tier": "experimental_fault_injection_validated", "deterministic": True,
+            "promotion_path": "experimental -> human_audited -> strict",
+            "Execution_sm": _agg(ex), "Lifecycle_sm": _agg(lc)}
+
+
 def build(agent_dir, bench):
     results = _remap(_load(agent_dir), bench)
     hd = _harness_dims(results)
@@ -257,6 +284,7 @@ def build(agent_dir, bench):
         "tool_use_quality": _tool_use_quality(results),
         "harness_dimensions": hd,
         "proxy_dimensions": proxy,
+        "experimental_evaluators": _experimental_evaluators(agent_dir),
         "integrity": _integ,
         "failure_taxonomy": _failure_taxonomy(results),
     }
