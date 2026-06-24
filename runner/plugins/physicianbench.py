@@ -283,9 +283,7 @@ PLUGIN = {
                          # fact (a guideline / literature claim beyond the record), or a claim already in
                          # conflict across the record.
                          "verification_policy": {
-                             "cross_source_required_for": [
-                                 "high_risk_recommendation", "external_medical_fact",
-                                 "conflicting_evidence"]},
+                             "cross_source_required_for": [{"type": "high_risk_recommendation", "patterns": ["dose", "dosage", "increase", "decrease", "initiate", "discontinue", "anticoagul", "administer", "mg ", "prescrib", "titrate", "start ", "stop ", "hold "]}, {"type": "external_medical_fact", "patterns": ["guideline", "studies show", "literature", "typically causes", "is known to", "according to", "per uptodate", "recommended per", "class effect"]}, {"type": "conflicting_evidence", "patterns": ["conflict", "inconsistent", "discrepan", "contradict", "disagree", "does not match", "mismatch"]}]},
                          "governance_policy_id": "PhysicianBench"}}
 
 _S.register_plugin(PLUGIN)

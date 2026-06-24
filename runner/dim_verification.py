@@ -216,20 +216,32 @@ def _cross_source_policy(policy):
     if not isinstance(vp, dict):
         return False, []
     req = vp.get("cross_source_required_for")
-    cues = [str(c).strip().lower() for c in req if str(c).strip()] if isinstance(req, list) else []
-    return True, cues
+    return True, (req if isinstance(req, list) else [])
 
 
-def _claim_requires_cross_source(claim, cues, global_flag):
-    """Per-claim cross-source requirement under a declared policy: required iff a global flag forces it OR
-    the claim text matches one of the policy's claim-type cues. A claim that matches nothing is NOT
-    flagged -> excluded from cross_source (not_applicable), never penalized."""
+def _claim_requires_cross_source(claim, required_for, global_flag):
+    """Per-claim cross-source requirement under a declared policy. Each policy entry is either a STRUCTURED
+    {type, patterns:[natural-language keyword/phrase, ...]} (preferred) or a bare string (legacy substring).
+    A claim REQUIRES corroboration iff: a global flag forces it; OR the claim's structured claim_type matches
+    an entry.type; OR a natural-language pattern appears in the claim text. NOTE: matching the snake_case
+    TYPE LABEL itself against natural text is NOT done (a label like 'high_risk_recommendation' never appears
+    in a real answer) -- entries must supply patterns, else the type only matches a structured claim_type."""
     if global_flag:
         return True
-    if not cues:
+    if not required_for:
         return False
+    ctype = claim.get("claim_type") if isinstance(claim, dict) else None
     low = _txt(claim).lower()
-    return any(cue in low for cue in cues)
+    for entry in required_for:
+        if isinstance(entry, dict):
+            if ctype and entry.get("type") == ctype:
+                return True
+            for pat in (entry.get("patterns") or []):
+                if str(pat).strip().lower() and str(pat).strip().lower() in low:
+                    return True
+        elif str(entry).strip().lower() and str(entry).strip().lower() in low:   # legacy bare-string cue
+            return True
+    return False
 
 
 # --------------------------------------------------------------------------- optional LLM aux judge
@@ -330,7 +342,7 @@ def verification(evidence_items, verification_actions=None, final_claims=None, c
              basis}}, applicable_submetrics}."""
     policy = policy or {}
     judge_fn = _resolve_judge_fn(judge_fn, judge_model)   # V12: False disables (offline); None may read env
-    final_claims = [c for c in (final_claims or []) if _txt(c).strip()]
+    final_claims = _statements([c for c in (final_claims or []) if _txt(c).strip()])  # P0-3: per-statement for ALL sub-metrics
     verification_actions = verification_actions or []
     delivered = _delivered(evidence_items)          # FULL delivered view -- never a first-N slice
     n_units = len(evidence_items or [])
@@ -365,7 +377,7 @@ def verification(evidence_items, verification_actions=None, final_claims=None, c
                 sup_units.append(u)
         claim_indep[i] = len(src_ids)
         claim_supp_units[i] = sup_units
-        claim_cs_required[i] = (not has_csp) or _claim_requires_cross_source(c, cs_cues, cs_global)
+        claim_cs_required[i] = has_csp and _claim_requires_cross_source(c, cs_cues, cs_global)
         if llm_supp is not None and j in llm_supp:
             claim_supp1[i] = bool(llm_supp[j])
         else:
@@ -444,7 +456,7 @@ def verification(evidence_items, verification_actions=None, final_claims=None, c
     # statement is penalized, so this is NOT a monotone function of any support vector.
     min_units = int(policy.get("thin_evidence_min_units", 2))
     min_fid = float(policy.get("thin_evidence_min_fidelity", 0.75))
-    statements = _statements(final_claims)
+    statements = final_claims  # already per-statement (P0-3)
     per_stmt = []          # list of (statement, regime, hedged, correct) for applicable statements
     for st in statements:
         st_toks = set(_claim_tokens(st))

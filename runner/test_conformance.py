@@ -415,8 +415,10 @@ def test_verification_submetrics_distinct_and_applicable_only():
         return {"id": uid, "payload": payload, "delivered_to_agent": delivered,
                 "delivery_fidelity": fid, "error_visible": err}
 
+    _POL = {"verification_policy": {"cross_source_required_for": [{"type": "test",
+            "patterns": ["finding", "lesion", "payload", "present", "delta", "x y z", "a b c"]}]}}
     def sc(evi, claims, vacts=None, conflicts=None, pol=None):
-        o = V.verification(evi, vacts or [], claims, conflicts=conflicts, policy=pol or {})
+        o = V.verification(evi, vacts or [], claims, conflicts=conflicts, policy=pol or _POL)
         return o, {k: o["submetrics"][k]["score"] for k in V._SUBMETRICS}
 
     # exact expected sub-metric set
@@ -1372,9 +1374,10 @@ def test_plugins_default_verification_policy_present_and_scoped():
         assert isinstance(cues, list) and 0 < len(cues) <= 6, ("policy must gate a small claim-type set", bench, vp)
         # MUST NOT globally force corroboration on every claim (that is the anti-contract behavior)
         assert not vp.get("cross_source_required"), ("global cross_source_required must be off", bench)
-        # the gated types are corroboration-worthy CLAIM TYPES, not a single-source authoritative fact
+        # each entry is a STRUCTURED {type, patterns:[natural-language cues]} -- patterns are REQUIRED so the
+        # gate matches real answer text, NOT the snake_case type label (which never appears in a real claim).
         for c in cues:
-            assert isinstance(c, str) and c, (bench, c)
+            assert isinstance(c, dict) and c.get("type") and isinstance(c.get("patterns"), list) and c["patterns"], (bench, c)
 
 
 def test_evidence_units_carry_usable_for_context_contract_A():
