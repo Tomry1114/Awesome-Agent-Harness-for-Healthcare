@@ -96,10 +96,20 @@ def execution(events, capabilities=None, task_policy=None):
         sub["action_validity"] = _sm(round((n_act - bad) / n_act, 3))
     else:
         sub["action_validity"] = _sm(None, "not_applicable", 0)
-    # tool_invocation_success: SEMANTIC (non-empty/non-error output), agent-attributable only.
-    agent_calls = [c for c in calls if error_attribution(c) in (None, "agent")]
-    env_fail = [c for c in calls if error_attribution(c) in ("environment", "external_service", "harness")]
-    unknown_fail = [c for c in calls if error_attribution(c) == "unknown"]
+    # Review #1: capabilities.healthy is the AUTHORITATIVE attribution source. A failure on a tool the
+    # env reports as NOT healthy (service down) is environmental regardless of error text -> excluded
+    # from the agent score. Falls back to the error_attribution text heuristic when no manifest signal.
+    def _attr(c):
+        if capabilities:
+            cap = capabilities.get(c.get("tool"))
+            if isinstance(cap, dict) and cap.get("healthy") is False:
+                return "environment"
+            if isinstance(cap, dict) and cap.get("authorized") is False:
+                return "harness"
+        return error_attribution(c)
+    agent_calls = [c for c in calls if _attr(c) in (None, "agent")]
+    env_fail = [c for c in calls if _attr(c) in ("environment", "external_service", "harness")]
+    unknown_fail = [c for c in calls if _attr(c) == "unknown"]
     if agent_calls:
         ok = sum(1 for c in agent_calls if produced_valid_result(c))
         sub["tool_invocation_success"] = _sm(round(ok / len(agent_calls), 3), opportunities=len(agent_calls))
@@ -124,6 +134,7 @@ def execution(events, capabilities=None, task_policy=None):
                                 "env_or_harness_failures_excluded": len(env_fail),
                                 "unknown_failures_evidence_insufficient": len(unknown_fail)}
     out["degraded_tool_health"] = len(env_fail) > 0
+    out["attribution_source"] = "capability_manifest+error_text" if capabilities else "error_text_heuristic_only"
     out["tier"] = "experimental_operational_completion"   # state_transition_success still N/A (localization not propagated)
     return out
 

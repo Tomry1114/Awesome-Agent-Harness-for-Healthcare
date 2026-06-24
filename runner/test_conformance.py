@@ -184,6 +184,23 @@ def test_execution_attribution_gate():
     assert ef["submetrics"]["tool_invocation_success"]["score"] == 1.0 and ef["degraded_tool_health"] is True
 
 
+def test_execution_capability_healthy_attribution():
+    """Review #1: capabilities.healthy is the AUTHORITATIVE attribution source — a failure on a tool the
+    env reports unhealthy is environmental (excluded from the agent score), even if the error text is generic."""
+    import lifecycle_exec as le
+    def c(t, ok=True):
+        e = {"event_type": "tool_call", "tool": t, "status": "ok" if ok else "error",
+             "canonical_observation": {"modalities": {"text": "x"}}}
+        if not ok: e["error_type"] = "tool_error"; e["result"] = "[error]"
+        return e
+    F = {"event_type": "final_answer", "thought": "d"}
+    caps = {"A": {"implemented": True, "available": True, "authorized": True, "healthy": False}}
+    r = le.execution([c("A", ok=False), c("B"), F], capabilities=caps)
+    assert r["degraded_tool_health"] is True
+    assert r["error_attribution"]["env_or_harness_failures_excluded"] >= 1
+    assert r["attribution_source"].startswith("capability_manifest")
+
+
 def _run():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     passed = 0

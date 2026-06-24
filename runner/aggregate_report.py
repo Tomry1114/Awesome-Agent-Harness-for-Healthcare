@@ -249,7 +249,12 @@ def _experimental_evaluators(agent_dir, bench):
             evs = [json.loads(l) for l in open(tp) if l.strip()]
         except Exception:
             continue
-        e = _le.execution(evs, task_policy=pol.get(tid)); l = _le.lifecycle(evs, task_policy=pol.get(tid))
+        caps = None                                              # Review #1: per-task capability manifest
+        rp = os.path.join(os.path.dirname(tp), "result.json")
+        if os.path.exists(rp):
+            try: caps = (json.load(open(rp)).get("provenance") or {}).get("capabilities")
+            except Exception: caps = None
+        e = _le.execution(evs, capabilities=caps, task_policy=pol.get(tid)); l = _le.lifecycle(evs, task_policy=pol.get(tid))
         if isinstance(e.get("score"), (int, float)): ex_t[tid] = e["score"]
         if isinstance(l.get("score"), (int, float)): lc_t[tid] = l["score"]
     def _agg(d):
