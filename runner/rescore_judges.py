@@ -145,7 +145,7 @@ def rescore(agent_dir, bench):
                 c["_rescore"] = {"from": "skipped", "judge_model": _MODEL, "raw": raw}
                 c["checkpoint_status"] = "passed" if passed else "failed"
                 c["failure_mode"] = None if passed else "agent_failure"
-                c["score_eligible"] = True   # post-hoc judge IS a formal scoring tier (STATUS 2); make it eligible in BOTH layers
+                c["score_eligible"] = not (defs.get(c.get("id")) or {}).get("sub_metric")   # post-hoc eligible UNLESS demoted to sub_metric (#5)
                 c["evaluator_kind"] = "post_hoc_gateway_judge"
                 c["pass_status"] = c["checkpoint_status"]            # dual-field (Codex #2)
                 c["score"] = 1.0 if passed else 0.0
