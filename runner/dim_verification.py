@@ -85,11 +85,75 @@ def _txt(x):
     return "" if x is None else str(x)
 
 
+# V11: medical claims hinge on NUMERIC ATOMS -- a measurement ('12 mm'), a percentage ('EF 35%'), a lab
+# value ('Hb 8', 'pH 7.2'), a short test abbreviation ('EF', 'Hb', 'pH', 'CRP'). The old word tokenizer
+# (leading letter + >=3 chars) silently DROPPED every one of these: pure numbers, '%', units written
+# separately, and 2-char abbreviations. Dropping them is catastrophic for corroboration -- 'lesion 12 mm'
+# and 'lesion 8 mm' tokenize identically once the numbers vanish, so a contradictory measurement reads as
+# support. We therefore tokenize THREE alphabets and keep them all as evidence tokens:
+#   - numeric atoms: a number optionally glued/spaced to a unit or '%' ('12mm', '12 mm', '35%', '7.2'),
+#     normalized to a single 'num:<value><unit>' token so '12 mm' and '12mm' match but '8 mm' does not.
+#   - short medical abbreviations: 2-char alnum tokens that contain a letter (EF, Hb, pH, T3) -- the old
+#     >=3 rule excluded these; here a 2-char token is kept only if it is NOT a pure number and NOT a stopword.
+#   - ordinary content words: a leading letter + >=2 trailing chars (unchanged), minus stopwords.
+_UNIT_RE = (r"(?:%|mm|cm|mg|mcg|ug|kg|ml|dl|l|g|mmhg|bpm|bps|mmol|mol|meq|iu|"
+            r"units?|mm3|ml/min|/min|/hr|/dl|/l|cc|sec|hrs?|days?|wks?|mos?|yrs?|"
+            r"celsius|fahrenheit|deg|cmh2o)")
+_NUM_ATOM_RE = re.compile(r"(?<![a-z0-9])(\d+(?:\.\d+)?)\s*(" + _UNIT_RE + r")?(?![a-z0-9])", re.I)
+_WORD_RE = re.compile(r"[a-z][a-z0-9\-]{2,}")          # ordinary content word (>=3 chars, leading letter)
+# a WHOLE-TOKEN 2-char abbreviation (EF, Hb, pH, T3): delimited by non-alphanumerics on both sides so it is
+# a standalone abbreviation, never a 2-char SUBSTRING of a longer word ('le' in 'lesion').
+_ABBR_RE = re.compile(r"(?<![a-z0-9])[a-z0-9]{2}(?![a-z0-9])")
+# BARE unit words carry NO independent content (they are already encoded inside the 'num:<v><unit>' atom),
+# so a stray 'mm'/'dl'/'mcg' must NOT become a matchable token -- otherwise '8 mm' and '12 mm' would
+# spuriously corroborate via the shared bare 'mm'. Dropped from BOTH the word and abbreviation alphabets.
+_UNIT_WORDS = {"mm", "cm", "mg", "mcg", "ug", "kg", "ml", "dl", "mmhg", "bpm", "bps", "mmol", "mol",
+               "meq", "iu", "mm3", "cc", "sec", "deg", "cmh2o", "hr", "hrs", "wk", "wks", "mo", "mos",
+               "yr", "yrs", "day", "days", "min", "celsius", "fahrenheit"}
+
+
 def _claim_tokens(claim):
-    """Content tokens of a claim string (lowercased, stopwords + short tokens dropped). Used for the
-    deterministic corroboration fallback when no LLM judge is wired."""
-    toks = re.findall(r"[a-z][a-z0-9\-]{2,}", _txt(claim).lower())
-    return [t for t in toks if t not in _STOP]
+    """Content tokens of a claim string for the deterministic corroboration fallback. V11: NUMERIC medical
+    atoms (numbers, units, '%', short lab abbreviations) are KEPT as evidence tokens rather than dropped, so
+    a contradictory measurement (12 mm vs 8 mm) does not collapse into a match. Returns a list of tokens
+    drawn from three alphabets (numeric atoms, 2-char abbreviations, content words)."""
+    low = _txt(claim).lower()
+    toks = []
+    # 1) numeric atoms: number (+ optional unit/%) -> normalized 'num:<value><unit>' token.
+    for m in _NUM_ATOM_RE.finditer(low):
+        val, unit = m.group(1), (m.group(2) or "")
+        # a bare number with no unit is still a distinguishing atom (Hb 8, pH 7.2 -> 'num:8', 'num:7.2').
+        toks.append("num:%s%s" % (val, unit))
+    # 2) ordinary content words (>=3 chars), stopwords + bare unit words removed.
+    toks += [t for t in _WORD_RE.findall(low) if t not in _STOP and t not in _UNIT_WORDS]
+    # 3) standalone 2-char abbreviations (EF, Hb, pH, T3): a whole delimited token containing a letter and
+    #    not a stopword/unit word. (Pure 2-digit numbers were already captured as numeric atoms in step 1.)
+    for m in _ABBR_RE.finditer(low):
+        a = m.group(0)
+        if a.isdigit() or a in _STOP or a in _UNIT_WORDS:
+            continue
+        if any(ch.isalpha() for ch in a):
+            toks.append(a)
+    return toks
+
+
+# V7: a single final-answer string usually bundles SEVERAL assertions ('The mass is benign. It measures
+# 8 mm.'). Calibration must be judged PER statement, so a hedge on one statement does not launder an
+# over-confident UNSUPPORTED statement elsewhere. Split on sentence terminators AND newline/semicolon/
+# bullet boundaries; drop empty fragments.
+_SENT_SPLIT_RE = re.compile(r"(?:[.!?]+\s+|[;\n\r]+|\s+[-*•]\s+)")
+
+
+def _statements(claim_strings):
+    """Split a list of final-claim strings into per-statement units (sentence/clause granularity) for V7
+    per-claim calibration. Returns a list of non-empty statement strings."""
+    out = []
+    for c in claim_strings or []:
+        for part in _SENT_SPLIT_RE.split(_txt(c)):
+            s = part.strip(" \t\r\n-*•")
+            if s:
+                out.append(s)
+    return out
 
 
 def _delivered(evidence_items):
@@ -197,9 +261,48 @@ def _llm_corroboration(claims, delivered_units, judge_fn):
         return None
 
 
+# --------------------------------------------------------------------------- V12: judge gating
+def _resolve_judge_fn(judge_fn, judge_model):
+    """V12 -- distinguish an EXPLICITLY DISABLED judge from an UNSPECIFIED one, mirroring dim_context's
+    judge_model contract but for this module's (system,user)->str judge_fn shape:
+
+      judge_fn given (not None)   : use it verbatim (direct injection -- tests / callers wire their own).
+      judge_model is False        : EXPLICITLY DISABLED. Offline. NO gateway call, NO MH_JUDGE_MODEL read.
+                                    Returns None -> deterministic-only scoring. (The offline cross-check in
+                                    aggregate_report passes False to stay offline.)
+      judge_model is None         : UNSPECIFIED. MAY read MH_JUDGE_MODEL from the environment; if a model is
+                                    configured there, build a gateway-backed judge_fn, else stay offline.
+      judge_model is a str        : build a gateway-backed judge_fn for that model.
+
+    Building the gateway judge is lazy + fail-soft: any import/availability problem falls back to None
+    (deterministic scoring), never raising into the scorer."""
+    if judge_fn is not None:
+        return judge_fn
+    if judge_model is False:                       # EXPLICIT disable -- stay strictly offline (no env read)
+        return None
+    model = judge_model
+    if model is None:                              # UNSPECIFIED -- env MAY supply a model
+        model = os.environ.get("MH_JUDGE_MODEL")
+    if not model:
+        return None
+    try:
+        import gateway
+    except Exception:
+        return None
+
+    def _gw(system, user):
+        r = gateway.chat([{"role": "system", "content": system},
+                          {"role": "user", "content": user}],
+                         model=model, max_tokens=300, judge=True)
+        if not isinstance(r, dict) or not r.get("ok"):
+            return None
+        return r.get("content")
+    return _gw
+
+
 # --------------------------------------------------------------------------- entry point
 def verification(evidence_items, verification_actions=None, final_claims=None, conflicts=None,
-                 policy=None, judge_fn=None):
+                 policy=None, judge_fn=None, judge_model=None):
     """Generic Verification scorer.
 
     Args (all substrate-derived; no benchmark specifics):
@@ -216,11 +319,17 @@ def verification(evidence_items, verification_actions=None, final_claims=None, c
       policy              : DimensionPolicy dict; reads optional 'thin_evidence_min_units' /
                             'thin_evidence_min_fidelity' thresholds (defaults applied).
       judge_fn            : optional gateway callable (system,user)->str for the auxiliary support
-                            signal. Receives EVIDENCE VIEW + claims only.
+                            signal. Receives EVIDENCE VIEW + claims only. Direct injection -- when given it
+                            is used verbatim and judge_model is ignored.
+      judge_model         : V12 judge gating when judge_fn is NOT supplied. False = EXPLICITLY DISABLED
+                            (offline; no gateway call, no MH_JUDGE_MODEL read). None = unspecified (MAY read
+                            MH_JUDGE_MODEL). A str = build a gateway judge for that model. The offline
+                            cross-check must pass judge_model=False to stay offline.
 
     Returns {dimension, tier, score, reportable, coverage, submetrics:{name:{score,status,opportunities,
              basis}}, applicable_submetrics}."""
     policy = policy or {}
+    judge_fn = _resolve_judge_fn(judge_fn, judge_model)   # V12: False disables (offline); None may read env
     final_claims = [c for c in (final_claims or []) if _txt(c).strip()]
     verification_actions = verification_actions or []
     delivered = _delivered(evidence_items)          # FULL delivered view -- never a first-N slice
@@ -320,51 +429,59 @@ def verification(evidence_items, verification_actions=None, final_claims=None, c
         subs["conflict_handling"] = {"score": None, "status": "not_applicable", "opportunities": 0,
                                      "basis": "no detected evidence conflict or error-visible delivery"}
 
-    # ----- uncertainty_calibration : TWO-SIDED hedge-vs-evidence-strength match -----
-    # BUGFIX (contract): 'strong evidence' must be evidence that SUPPORTS THE CLAIM, not just any delivered
-    # evidence on the trace. Strength is therefore computed over the UNION of units that actually support
-    # the scorable claims (claim_supp_units), NOT over the whole delivered view. Consequence: '3
-    # high-fidelity but IRRELEVANT units + a confident UNSUPPORTED conclusion' has ZERO supporting units ->
-    # THIN (not strong) -> a confident (un-hedged) conclusion is mis-calibrated -> score 0 (NOT 1). It also
-    # keeps evidence_support honest: such a run gets evidence_support 0 AND uncertainty_calibration 0.
-    # Correct calibration = hedged when thin OR committed (un-hedged) when strong. This can PENALIZE
-    # over-hedging on strong supporting evidence, so it is NOT a monotone function of any support vector.
+    # ----- uncertainty_calibration : PER-CLAIM (V7) TWO-SIDED hedge-vs-evidence-strength match -----
+    # V7 RESTRUCTURE: calibration is computed PER STATEMENT, not over one joined answer blob. The final
+    # answer is split into statements (sentence/clause granularity); each statement gets its OWN supporting
+    # sources, its OWN hedging detection, and its OWN calibration verdict; the sub-metric AVERAGES the
+    # applicable per-statement verdicts. Consequence: a hedge on statement A can NO LONGER excuse a confident
+    # UNSUPPORTED statement B -- B is its own opportunity and fails on its own.
+    #
+    # Per statement: strength is measured over the UNITS THAT SUPPORT THAT STATEMENT (not the whole delivered
+    # view), de-duplicated by source identity (so N renders of one source do not inflate 'strong'). A
+    # statement with 0 supporting sources is THIN; a confident (un-hedged) THIN statement is mis-calibrated
+    # -> 0. A statement that is neither clearly thin nor clearly strong is not_applicable (excluded from the
+    # average, no vacuous 1.0). Correct = hedged-when-thin OR committed-when-strong; over-hedging on a strong
+    # statement is penalized, so this is NOT a monotone function of any support vector.
     min_units = int(policy.get("thin_evidence_min_units", 2))
     min_fid = float(policy.get("thin_evidence_min_fidelity", 0.75))
-    # de-duplicate supporting units by identity (one source counts once toward strength, mirroring
-    # cross-source independence) so N renders of the SAME source do not inflate 'strong'.
-    sup_by_src = {}
-    for i in claim_supp_units:
-        for u in claim_supp_units[i]:
-            sup_by_src.setdefault(_source_identity(u), u)
-    sup_units = list(sup_by_src.values())
-    n_sup_units = len(sup_units)
-    sup_err = sum(1 for u in sup_units if u.get("error_visible"))
-    sup_fid = (sum(float(u.get("delivery_fidelity") or 0.0) for u in sup_units) / n_sup_units) if n_sup_units else 0.0
-    err_dominant = (n_sup_units > 0 and sup_err > 0 and sup_err >= 0.5 * n_sup_units)
-    # thin = the CLAIM-SUPPORTING evidence is sparse/low-fidelity (n_sup_units==0 -> always thin).
-    thin = (n_sup_units < min_units) or (n_sup_units > 0 and sup_fid < min_fid) or err_dominant
-    # strong = the CLAIM is backed by ample, high-fidelity, error-free SUPPORTING sources.
-    strong = (n_sup_units >= max(min_units + 1, 3)) and (sup_fid >= 0.9) and (sup_err == 0)
-    hedged = any(k in claim_text for k in _HEDGE)
-    if claim_supp1 and thin:
+    statements = _statements(final_claims)
+    per_stmt = []          # list of (statement, regime, hedged, correct) for applicable statements
+    for st in statements:
+        st_toks = set(_claim_tokens(st))
+        if not st_toks:
+            continue
+        # supporting sources for THIS statement, de-duplicated by independent-source identity.
+        st_sup = {}
+        for u in delivered:
+            if _unit_supports_claim(st_toks, u):
+                st_sup.setdefault(_source_identity(u), u)
+        su = list(st_sup.values())
+        n_su = len(su)
+        s_err = sum(1 for u in su if u.get("error_visible"))
+        s_fid = (sum(float(u.get("delivery_fidelity") or 0.0) for u in su) / n_su) if n_su else 0.0
+        err_dom = (n_su > 0 and s_err > 0 and s_err >= 0.5 * n_su)
+        thin = (n_su < min_units) or (n_su > 0 and s_fid < min_fid) or err_dom
+        strong = (n_su >= max(min_units + 1, 3)) and (s_fid >= 0.9) and (s_err == 0)
+        hedged = any(k in st.lower() for k in _HEDGE)
+        if thin:
+            per_stmt.append((st, "thin", hedged, hedged))            # correct iff hedged
+        elif strong:
+            per_stmt.append((st, "strong", hedged, not hedged))      # correct iff committed
+        # else: neither clearly thin nor strong -> excluded for this statement
+    if per_stmt:
+        n_correct = sum(1 for _, _, _, ok in per_stmt if ok)
+        n_thin = sum(1 for _, r, _, _ in per_stmt if r == "thin")
+        n_strong = len(per_stmt) - n_thin
         subs["uncertainty_calibration"] = {
-            "score": 1.0 if hedged else 0.0, "status": "applicable", "opportunities": 1,
-            "basis": "THIN supporting evidence (supporting_sources=%d, avg_fidelity=%.2f, errors_visible=%d): "
-                     "hedging %s (want present)"
-                     % (n_sup_units, sup_fid, sup_err, "present" if hedged else "absent")}
-    elif claim_supp1 and strong:
-        subs["uncertainty_calibration"] = {
-            "score": 1.0 if not hedged else 0.0, "status": "applicable", "opportunities": 1,
-            "basis": "STRONG supporting evidence (supporting_sources=%d, avg_fidelity=%.2f, errors_visible=%d): "
-                     "hedging %s (want absent)"
-                     % (n_sup_units, sup_fid, sup_err, "present" if hedged else "absent")}
+            "score": round(n_correct / len(per_stmt), 4), "status": "applicable",
+            "opportunities": len(per_stmt),
+            "basis": "%d/%d statements correctly calibrated (per-claim; %d thin->want-hedge, "
+                     "%d strong->want-commit)" % (n_correct, len(per_stmt), n_thin, n_strong)}
     else:
         subs["uncertainty_calibration"] = {
             "score": None, "status": "not_applicable", "opportunities": 0,
             "basis": ("no scorable claim" if not claim_supp1 else
-                      "supporting evidence neither clearly thin nor clearly strong (supporting_sources=%d, "
-                      "avg_fidelity=%.2f, errors_visible=%d)" % (n_sup_units, sup_fid, sup_err))}
+                      "no statement is clearly thin or clearly strong (calibration indeterminate)")}
 
     # ----- verification_action_completion : did the agent finish the verify steps it ran? -----
     # Opportunity = each verify-role action. Completion = it CONFIRMED (status success) rather than firing
@@ -382,6 +499,13 @@ def verification(evidence_items, verification_actions=None, final_claims=None, c
             "basis": "agent ran no verify-role action (no self-check opportunity exercised)"}
 
     # ----- applicable-only aggregation -----
+    # informational stat: distinct independent sources that support ANY scorable claim (de-duped union).
+    _sup_src = set()
+    for i in claim_supp_units:
+        for u in claim_supp_units[i]:
+            _sup_src.add(_source_identity(u))
+    n_sup_src = len(_sup_src)
+
     applicable = [k for k in _SUBMETRICS if subs[k]["status"] == "applicable"]
     score = round(sum(subs[k]["score"] for k in applicable) / len(applicable), 4) if applicable else None
     return {
@@ -392,7 +516,7 @@ def verification(evidence_items, verification_actions=None, final_claims=None, c
         "submetrics": subs,
         "stats": {"evidence_units": n_units, "delivered": n_deliv, "avg_fidelity": round(avg_fid, 4),
                   "errors_visible": errors_visible, "claims": len(final_claims),
-                  "supporting_sources": n_sup_units, "cross_source_policy": has_csp,
+                  "supporting_sources": n_sup_src, "cross_source_policy": has_csp,
                   "verify_actions": len(verification_actions), "judge_used": llm_supp is not None},
     }
 
@@ -417,9 +541,13 @@ def extract_claims(sem_trace):
     return claims
 
 
-def score_bundle(trace, plugin, task=None, judge_fn=None):
+def score_bundle(trace, plugin, task=None, judge_fn=None, judge_model=False):
     """Convenience: drive `verification` from a raw canonical trace via the substrate only. Used by the
-    self-verification harness. Imports substrate lazily so the module stays import-clean standalone."""
+    self-verification harness. Imports substrate lazily so the module stays import-clean standalone.
+
+    V12: judge_model defaults to False (EXPLICITLY OFFLINE) so the self-verification harness and the
+    aggregate_report offline cross-check make NO gateway call. Pass judge_model=None to opt into the
+    MH_JUDGE_MODEL env, or a model string / judge_fn to wire a real judge."""
     import substrate as S
     sem = S.map_trace(trace, plugin)
     evidence_items = S.evidence_view(trace, plugin)
@@ -427,7 +555,7 @@ def score_bundle(trace, plugin, task=None, judge_fn=None):
     final_claims = extract_claims(sem)
     policy = S.dimension_policy(task or {"source_benchmark": (plugin or {}).get("benchmark")}, plugin)
     return verification(evidence_items, verification_actions, final_claims, conflicts=None,
-                        policy=policy, judge_fn=judge_fn)
+                        policy=policy, judge_fn=judge_fn, judge_model=judge_model)
 
 
 # --------------------------------------------------------------------------- self-verification
@@ -586,6 +714,56 @@ if __name__ == "__main__":
           % (es, uc["score"], uc["status"]))
     ok &= (es == 0.0)
     ok &= (uc["status"] == "applicable" and uc["score"] == 0.0)   # thin (0 supporting) + committed -> 0, NOT 1
+
+    # (V7) PER-CLAIM calibration: a hedge on statement A must NOT excuse a confident UNSUPPORTED statement
+    #      B. Answer = 'Hb is 8 g/dl, this is uncertain. The tumor is definitely glioblastoma.' Evidence
+    #      supports only the Hb statement (thin+hedged=correct); the tumor statement is thin+committed=wrong.
+    #      -> per-claim avg = 1/2 = 0.5 (a single-blob hedge would have scored the whole thing 1.0).
+    v7 = _full([_evp("fhir_patient_record", "Patient/3", "hemoglobin hb 8 g/dl recorded", extractor="fhir_read")],
+               ["Hb is 8 g/dl but this is uncertain. The tumor is definitely glioblastoma grade four."])
+    uc7 = v7["submetrics"]["uncertainty_calibration"]
+    print("  V7 per-claim calib (1 hedged-thin-OK + 1 confident-unsupported) -> score=%s opp=%s status=%s (want 0.5,2)"
+          % (uc7["score"], uc7["opportunities"], uc7["status"]))
+    ok &= (uc7["status"] == "applicable" and uc7["score"] == 0.5 and uc7["opportunities"] == 2)
+
+    # (V11) NUMERIC ATOMS: '12 mm' must NOT corroborate '8 mm'. A claim 'lesion measures 12 mm' is supported
+    #       by an '12 mm' payload but NOT by an '8 mm' payload -- the number is a real evidence token now.
+    t_match = _claim_tokens("lesion measures 12 mm")
+    print("  V11 tokens('lesion measures 12 mm') -> %s" % t_match)
+    ok &= any(tok.startswith("num:12") for tok in t_match)          # numeric atom captured (not dropped)
+    ok &= ("ef" in _claim_tokens("EF 35%"))                          # 2-char abbreviation captured
+    ok &= any(tok.startswith("num:35") for tok in _claim_tokens("EF 35%"))   # percentage captured
+    ok &= ("ph" in _claim_tokens("pH 7.2") and any(t.startswith("num:7.2") for t in _claim_tokens("pH 7.2")))
+    # contradictory measurement does NOT support: payload '8 mm' must not back a '12 mm' claim.
+    v11 = verification([{"id": "OCR#0", "payload": "the lesion is 8 mm in the right lobe",
+                         "delivered_to_agent": True, "delivery_fidelity": 1.0, "error_visible": False}],
+                       [], ["the lesion is 12 mm in size"], judge_model=False)
+    es11 = v11["submetrics"]["evidence_support"]["score"]
+    print("  V11 '8 mm' payload vs '12 mm' claim -> evidence_support=%s (want 0.0, numbers disambiguate)" % es11)
+    ok &= (es11 == 0.0)
+    # ...and the SAME number DOES support (sanity: not over-restrictive).
+    v11b = verification([{"id": "OCR#0", "payload": "the lesion is 12 mm in the right lobe",
+                          "delivered_to_agent": True, "delivery_fidelity": 1.0, "error_visible": False}],
+                        [], ["the lesion is 12 mm in size"], judge_model=False)
+    print("  V11 '12 mm' payload vs '12 mm' claim -> evidence_support=%s (want 1.0)"
+          % v11b["submetrics"]["evidence_support"]["score"])
+    ok &= (v11b["submetrics"]["evidence_support"]["score"] == 1.0)
+
+    # (V12) JUDGE GATING: judge_model=False -> OFFLINE (no gateway), judge_used False. An injected judge_fn
+    #       is used verbatim. A bogus env model with no gateway falls back to deterministic (no raise).
+    off = verification([{"id": "OCR#0", "payload": "finding alpha beta", "delivered_to_agent": True,
+                         "delivery_fidelity": 1.0, "error_visible": False}],
+                       [], ["finding alpha beta"], judge_model=False)
+    print("  V12 judge_model=False -> judge_used=%s (want False, offline)" % off["stats"]["judge_used"])
+    ok &= (off["stats"]["judge_used"] is False)
+    # injected judge_fn that flips every claim to UNsupported is honored (judge_used True, support 0).
+    _stub = lambda s, u: '{"verdicts":{"0":0}}'
+    inj = verification([{"id": "OCR#0", "payload": "finding alpha beta", "delivered_to_agent": True,
+                         "delivery_fidelity": 1.0, "error_visible": False}],
+                       [], ["finding alpha beta"], judge_fn=_stub)
+    print("  V12 injected judge_fn (forces unsupported) -> judge_used=%s evidence_support=%s (want True,0.0)"
+          % (inj["stats"]["judge_used"], inj["submetrics"]["evidence_support"]["score"]))
+    ok &= (inj["stats"]["judge_used"] is True and inj["submetrics"]["evidence_support"]["score"] == 0.0)
 
     print("\nCONTRACT SELF-CHECKS:", "OK" if ok else "FAIL")
     if not ok:

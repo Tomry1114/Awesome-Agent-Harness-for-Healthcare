@@ -36,19 +36,29 @@ Sub-metrics (applicable-only):
                  semantic TYPE: a required unit of type T is satisfied ONLY by an EvidenceUnit whose
                  context_type==T (one evidence unit never fills two required units; unrelated
                  acquisitions cannot auto-fill distinct units). Legacy bare-string units degrade to a
-                 distinct-evidence-kind cap.
+                 distinct-evidence-kind cap. CONTRACT-A: only units delivered_to_agent AND
+                 usable_for_context (semantic_status=='success' AND a non-empty progress_token) count — a
+                 delivered-but-PARTIAL empty result (empty FHIR Bundle / blank OCR) does NOT satisfy a unit.
   sufficiency  — REUSES the acquisition TYPE-match result (matched required units / required units), so
                  acquisition and sufficiency cannot disagree; gated on required milestones too. Computed
-                 from the PRE-TERMINAL trace prefix only.
-  relevance    — delivered evidence pertains to the task (gateway judge over OBSERVATIONS only; strict
-                 parse: RELEVANT->1, IRRELEVANT->0, anything else -> status=error, never fail-open).
-  binding      — evidence bound to a single consistent SUBJECT identity (the source_instance_id /
-                 subject:<Type>/<id> token — the EXPECTED subject, NOT a resource's own id), never a
-                 broad numeric regex that could mistake a year / exam number / dose for a subject id.
+                 from the PRE-BOUNDARY trace prefix only.
+  binding      — CONTRACT-C: TWO sub-signals. subject_consistency = evidence converges on ONE dominant
+                 SUBJECT identity (source_instance_id / subject:<Type>/<id> token — the EXPECTED subject,
+                 NOT a resource's own id, never a broad numeric regex over a year/exam/dose). This sub-metric
+                 carries the consistency score.
+  expected_subject_match — CONTRACT-C: the SEPARATE signal that the converged subject == dimension_policy.
+                 expected_subject (a {type,id} derived from the task). 'Consistently reading the WRONG
+                 patient' -> binding consistency high yet expected_subject_match 0 (and that 0 enters the
+                 Context mean). not_applicable when the policy declares no expected_subject.
+  relevance    — delivered+usable evidence pertains to the task (gateway judge over OBSERVATIONS only;
+                 strict parse: RELEVANT->1, IRRELEVANT->0, anything else -> status=error, never fail-open).
 
-Information-leak fix: delivered evidence AND reached milestones are computed from the trace PREFIX up to
-the first terminal (final/escalate/commit) only — evidence/milestones appearing AFTER the final answer
-must NOT raise Context.
+Information-leak fix / CONTRACT-D: there is ONE canonical CONTEXT-BOUNDARY predicate — a context boundary
+event = terminal in (final, escalate) OR event_role=='commit'. EVERY pre-terminal/pre-commit cutoff here
+(acquire prefix, evidence prefix, milestone prefix) uses that SAME predicate, so a post-submit/post-commit
+CONFIRMATION can NOT back-fill Context. Context also does NOT require a boundary-only milestone (e.g. a
+submit's form_submitted) — that floor belongs to Execution/Lifecycle; such milestones are stripped from the
+Context milestone requirement (derived from event_role/terminal, never a literal milestone name).
 
 tier = experimental.
 """
@@ -78,7 +88,7 @@ except Exception:                                       # pragma: no cover
         return {"score": score, "submetrics": subs, "applicable_submetrics": sorted(valid),
                 "n_applicable": len(valid), "zero_variance": (len(set(vals)) == 1) if vals else None}
 
-CONTEXT_VERSION = "context-1.2-experimental"
+CONTEXT_VERSION = "context-1.3-experimental"
 
 # ---------------------------------------------------------------------------- semantic typing
 # A required_context_unit is declared as a TYPED entry {"id": ..., "type": "patient_identity"|
@@ -175,8 +185,79 @@ def evidence_context_type(unit):
     return None
 
 
-def _delivered(evidence):
-    return [u for u in (evidence or []) if u.get("delivered_to_agent")]
+# ---------------------------------------------------------------- CONTRACT-A: usable_for_context
+# An EvidenceUnit is ACQUIRED context only when it was delivered_to_agent AND usable_for_context. Per the
+# shared contract, usable_for_context = (semantic_status == 'success' AND a non-empty progress_token); the
+# producing SemanticEvent's status (success|partial|failure) is the unit's semantic_status. A
+# delivered-but-PARTIAL result (an empty FHIR Bundle, a blank OCR/page) is delivered+partial -> NOT acquired
+# context (it still feeds Observability/relevance, but cannot satisfy a required unit). A plugin MAY tag the
+# unit with semantic_status / usable_for_context directly; when it has not, we DERIVE semantic_status by
+# joining the unit back to its SemanticEvent (via the "<tool>#<idx>" id convention / trace_index) and fall
+# back to the unit's own status / a partial-when-no-progress_token default. We never fail-open: an
+# ambiguous/unjoinable unit needs a non-empty progress_token to be usable.
+def _status_by_trace_idx(sem_trace):
+    """Map a raw-trace index -> the producing SemanticEvent's status, so an EvidenceUnit (id "<tool>#<idx>"
+    or trace_index) can recover its semantic_status when the plugin did not tag it on the unit."""
+    out = {}
+    for i, s in enumerate(sem_trace or []):
+        raw = s.get("raw") if isinstance(s.get("raw"), dict) else None
+        idx = raw.get("_idx") if raw else None
+        if idx is None:
+            idx = i
+        out[idx] = s.get("status")
+    return out
+
+
+def _semantic_status(u, status_by_idx):
+    """The producing SemanticEvent's status for an EvidenceUnit. Preference: an explicit unit-level
+    semantic_status (the contract field a plugin MAY set) > the joined SemanticEvent status (by trace index)
+    > the unit's own 'status'. None when undiscoverable (treated as non-success below)."""
+    if isinstance(u, dict):
+        ss = u.get("semantic_status")
+        if ss:
+            return str(ss).lower()
+    idx = _unit_trace_idx(u)
+    if idx is not None and idx in status_by_idx and status_by_idx[idx]:
+        return str(status_by_idx[idx]).lower()
+    st = u.get("status") if isinstance(u, dict) else None
+    return str(st).lower() if st else None
+
+
+def _usable_for_context(u, status_by_idx):
+    """CONTRACT-A: usable_for_context = (semantic_status == 'success' AND a non-empty progress_token).
+    Honors an explicit unit-level usable_for_context flag when a plugin set it; otherwise derives it.
+
+    A non-empty TYPED context_type counts as the required non-empty progress signal too: the plugins emit a
+    typed context_type ONLY when real context was obtained and set it to None on errors / blank pages /
+    empty bundles (the very 'delivered-but-partial' case this excludes), so (progress_token OR context_type)
+    is exactly 'a non-empty semantic token of the result'. An empty/blank delivered result (semantic_status
+    partial, OR neither token) is NOT usable context.
+
+    semantic_status defaults to 'success' ONLY when it is genuinely undiscoverable (no joinable
+    SemanticEvent, no unit-level status) AND the unit still carries a non-empty token — a hand-built/legacy
+    delivered unit with content is usable; it never fails-open a TOKENLESS or explicitly-partial unit."""
+    if isinstance(u, dict) and "usable_for_context" in u:
+        return bool(u.get("usable_for_context"))
+    pt = (u.get("progress_token") if isinstance(u, dict) else None)
+    ct = (u.get("context_type") if isinstance(u, dict) else None)
+    has_token = bool(str(pt or "").strip()) or bool(str(ct or "").strip())
+    if not has_token:
+        return False                                   # tokenless/blank -> never usable
+    status = _semantic_status(u, status_by_idx)
+    if status is None:
+        status = "success"                             # undiscoverable status + real content -> success
+    return status == "success"
+
+
+def _delivered(evidence, sem_trace=None):
+    """CONTRACT-A: a unit counts as ACQUIRED context only when delivered_to_agent AND usable_for_context.
+    When sem_trace is None (legacy callers), fall back to delivered_to_agent only (back-compat; callers
+    that enforce CONTRACT-A pass sem_trace so usable_for_context is applied)."""
+    units = [u for u in (evidence or []) if u.get("delivered_to_agent")]
+    if sem_trace is None:
+        return units
+    status_by_idx = _status_by_trace_idx(sem_trace)
+    return [u for u in units if _usable_for_context(u, status_by_idx)]
 
 
 # Generic type-aliasing so a structural evidence kind can satisfy a domain-named required type WITHOUT
@@ -258,25 +339,100 @@ def _offer_matches(offer, unit_type):
     return _kind_matches_type(val, unit_type)
 
 
+# ---------------------------------------------------------------- CONTRACT-D: context boundary
+# CONTRACT-D: there is ONE canonical "context boundary" predicate, and EVERY pre-terminal/pre-commit cutoff
+# in this module (acquire prefix, evidence prefix, milestone prefix) uses it -- so a post-submit/post-commit
+# confirmation can NEVER back-fill Context. A context boundary event = a TERMINAL in (final, escalate) OR an
+# event whose role is 'commit' (the submit/commit that closes the task). Context is everything the agent had
+# BEFORE that boundary.
+def _is_context_boundary(s):
+    """The single context-boundary predicate (CONTRACT-D): terminal in (final, escalate) OR
+    event_role == 'commit'."""
+    return s.get("terminal") in ("final", "escalate") or s.get("event_role") == "commit"
+
+
+def _boundary_milestones_from_plugin(policy):
+    """The AUTHORITATIVE set of boundary (commit/terminal) milestones from the benchmark plugin's
+    tool_semantics: a milestone whose ONLY producing tools are commit-role (the submit/commit) is a boundary
+    milestone, INDEPENDENT of whether the agent actually submitted (so form_submitted is dropped even when
+    the agent never reached the submit). Resolved via policy.governance_policy_id (the benchmark name the
+    policy already carries) -> the plugin -> its tool_semantics role/success_milestones; this reads only the
+    structural ROLE, never a tool literal in the scoring logic. Empty when no plugin resolves (legacy /
+    test policies) -- the caller then falls back to the trace-derived classification."""
+    bench = (policy or {}).get("governance_policy_id")
+    if not bench:
+        return set()
+    try:
+        plugin = _sub.get_plugin(bench)
+    except Exception:
+        plugin = None
+    tsem = (plugin or {}).get("tool_semantics") or {}
+    if not tsem:
+        return set()
+    commit_ms, noncommit_ms = set(), set()
+    for _tool, meta in tsem.items():
+        if not isinstance(meta, dict):
+            continue
+        ms = set(meta.get("success_milestones") or [])
+        if not ms:
+            continue
+        if meta.get("role") == "commit":
+            commit_ms.update(ms)
+        else:
+            noncommit_ms.update(ms)
+    return commit_ms - noncommit_ms     # produced ONLY by a commit tool
+
+
+def _boundary_milestones(sem_trace):
+    """Trace-derived fallback: milestones produced ONLY by a context-boundary event (commit/terminal) in the
+    OBSERVED trace. Used when no plugin resolves from the policy. Benchmark-agnostic: derived from
+    event_role/terminal, never a literal milestone name. A milestone also earned by a NON-boundary
+    (acquire/act/verify) event is kept as a legitimate Context milestone."""
+    boundary_ms, pre_ms = set(), set()
+    for s in sem_trace or []:
+        added = s.get("milestones_added") or []
+        if not added:
+            continue
+        if _is_context_boundary(s):
+            boundary_ms.update(added)
+        else:
+            pre_ms.update(added)
+    return boundary_ms - pre_ms
+
+
+def _context_required_milestones(policy, sem_trace):
+    """The required milestones Context is allowed to gate on: the policy's required_milestones MINUS any
+    boundary (commit/submit) milestone (CONTRACT-D drops the commit/submit milestone requirement --
+    form_submitted and the like belong to Execution/Lifecycle, NOT Context). The plugin's tool_semantics is
+    the authoritative source (works even when the agent never submitted); the trace-derived set is unioned
+    in as a fallback for legacy/test policies with no resolvable plugin. Returns a set."""
+    req_ms = set(policy.get("required_milestones") or [])
+    boundary = _boundary_milestones_from_plugin(policy) | _boundary_milestones(sem_trace)
+    return req_ms - boundary
+
+
 # ---------------------------------------------------------------- pre-terminal scoping
 def _acquire_prefix(sem_trace):
-    """The SemanticEvent prefix BEFORE the first terminal (final/escalate/commit) — used so post-terminal
-    acquisitions/milestones cannot raise Context (information-leak fix)."""
+    """The SemanticEvent prefix BEFORE the first context boundary (CONTRACT-D predicate) — used so
+    post-boundary acquisitions/milestones cannot raise Context (information-leak fix)."""
     pre = []
     for s in sem_trace:
-        if s.get("terminal") in ("final", "escalate") or s.get("event_role") == "commit":
+        if _is_context_boundary(s):
             break
         pre.append(s)
     return pre
 
 
 def _terminal_trace_idx(sem_trace):
-    """Raw-trace index of the first terminal (final/escalate) event, or None. Used to cut the parallel
-    EvidenceView so units rendered after the final answer do not raise Context."""
-    for s in sem_trace:
-        if s.get("terminal") in ("final", "escalate"):
-            raw = s.get("raw") or {}
-            return raw.get("_idx")
+    """Raw-trace index of the first context-boundary event (CONTRACT-D: final/escalate OR commit), or None.
+    Used to cut the parallel EvidenceView so units rendered AT/AFTER the boundary (incl. a post-submit
+    confirmation) do not raise Context — the SAME predicate _acquire_prefix uses, so evidence and the
+    semantic prefix cut at the identical point."""
+    for i, s in enumerate(sem_trace):
+        if _is_context_boundary(s):
+            raw = s.get("raw") if isinstance(s.get("raw"), dict) else {}
+            idx = raw.get("_idx")
+            return idx if idx is not None else i
     return None
 
 
@@ -324,7 +480,9 @@ def _acquisition(sem_trace, evidence, policy):
        of DISTINCT evidence SEMANTIC KINDS actually backed by delivered evidence.
     No required units -> not_applicable (no opportunity, never a vacuous 1.0)."""
     req_units = list(policy.get("required_context_units") or [])
-    req_ms = set(policy.get("required_milestones") or [])
+    # CONTRACT-D: drop any boundary-only (commit/submit, e.g. form_submitted) milestone -- Context does NOT
+    # require the submit milestone (that is Execution/Lifecycle's).
+    req_ms = _context_required_milestones(policy, sem_trace)
     n_req = len(req_units)
     if not req_units:
         return _sm(None, "not_applicable", 0, reportable=False,
@@ -332,7 +490,9 @@ def _acquisition(sem_trace, evidence, policy):
                    reason="policy declares no required_context_units")
 
     pre = _acquire_prefix(sem_trace)                                  # pre-terminal prefix only
-    deliv = _delivered(_pre_terminal_evidence(sem_trace, evidence))
+    # CONTRACT-A: only delivered AND usable_for_context (success + progress_token) units count toward
+    # acquisition; a delivered-but-PARTIAL empty result does NOT satisfy a required unit.
+    deliv = _delivered(_pre_terminal_evidence(sem_trace, evidence), sem_trace)
 
     typed = [u for u in req_units if _unit_type(u)]
     reached = _sub.milestones_reached(pre)
@@ -413,7 +573,9 @@ def _sufficiency(sem_trace, policy, acquisition):
     context unit was TYPE-matched AND every required milestone reached, all from the PRE-TERMINAL prefix.
     Distinct from acquisition only in being a 0/1 floor vs a graded ratio."""
     req_units = list(policy.get("required_context_units") or [])
-    req_ms = set(policy.get("required_milestones") or [])
+    # CONTRACT-D: gate ONLY on non-boundary required milestones (the submit/commit milestone is dropped --
+    # Context must NOT require form_submitted; that floor lives in Execution/Lifecycle).
+    req_ms = _context_required_milestones(policy, sem_trace)
     if not req_units and not req_ms:
         return _sm(None, "not_applicable", 0, reportable=False, reason="no required units/milestones to gate on")
 
@@ -463,16 +625,59 @@ def _subject_from_unit(u):
     return t            # last: a resource:<Type>/<id> token from the progress_token (legacy)
 
 
-def _binding(sem_trace, evidence):
-    """Subject-consistency check binding each evidence unit to its EXPECTED SUBJECT identity, using ONLY
-    the contract provenance pair (source_channel, source_instance_id) OR a typed SUBJECT/resource token —
-    NOT a broad numeric/ID regex over free-text payloads (which could bind on a year / dose / exam number)
-    and NOT a resource's OWN id (ten Observation reads of one patient share ONE subject, so they do not
-    scatter binding). Binding asks whether the subjects converge on ONE dominant subject within each
-    subject KIND. Applicable only when typed subject identities exist; otherwise not_applicable (never a
-    vacuous score, never a guess from a bare number)."""
-    from collections import Counter, defaultdict
-    deliv = _delivered(_pre_terminal_evidence(sem_trace, evidence))   # pre-terminal only
+def _expected_subject(policy):
+    """The expected subject the task is ABOUT (CONTRACT-C: dimension_policy.expected_subject =
+    {type, id}, derived from the task, e.g. context.patient_ref). Returns (type, id) lower/stripped, or None
+    when the policy declares no expected subject (-> expected_subject_match is not_applicable). Accepts a few
+    shapes: {'type','id'} | {'resourceType','id'} | a bare 'Type/id' string."""
+    es = (policy or {}).get("expected_subject")
+    if not es:
+        return None
+    if isinstance(es, str):
+        t = _typed_subject_id(es) or _typed_subject_id("subject:%s" % es)
+        if t:
+            return (str(t[0]).split(":", 1)[-1].lower(), str(t[1]).strip())
+        if "/" in es:
+            ty, _, i = es.partition("/")
+            return (ty.strip().lower(), i.strip())
+        return None
+    if isinstance(es, dict):
+        ty = es.get("type") or es.get("resourceType") or es.get("kind")
+        i = es.get("id") or es.get("reference") or es.get("ref")
+        if i and isinstance(i, str) and "/" in i and not ty:
+            ty, _, i = i.partition("/")
+        if i:
+            return (str(ty or "").strip().lower(), str(i).strip())
+    return None
+
+
+def _norm_subject_id(kind, rid):
+    """Normalize a bound (kind, id) to the comparable (type_word, id) the expected_subject is expressed in:
+    strip the 'subject:'/'resource:'/'channel:' family prefix off the kind, and strip a 'Type/' prefix off
+    the id so 'Patient/MRN1' and ('subject:Patient','MRN1') compare equal."""
+    k = str(kind or "")
+    for pre in ("subject:", "resource:", "channel:"):
+        if k.startswith(pre):
+            k = k[len(pre):]
+            break
+    k = k.lower()
+    i = str(rid or "").strip()
+    if "/" in i:
+        ty, _, tail = i.partition("/")
+        # keep the id tail; the type moves into k if k was generic
+        if not k or k in ("channel", ""):
+            k = ty.strip().lower()
+        i = tail.strip()
+    return (k, i)
+
+
+def _collect_subjects(sem_trace, evidence):
+    """The typed subject identities (kind, id) backing the gathered evidence — delivered + usable_for_context
+    units first (CONTRACT-A), then earned acquire/commit trace tokens. Shared by both binding sub-signals."""
+    # binding is subject-CONVERGENCE over delivered evidence; CONTRACT-A's usable filter governs ACQUISITION
+    # (which unit satisfies a required context unit), not which delivered reads a subject converges over, so
+    # binding uses delivered-only (pre-boundary) -- a real read carries a subject regardless of token shape.
+    deliv = _delivered(_pre_terminal_evidence(sem_trace, evidence))
     pre = _acquire_prefix(sem_trace)
     typed = []
     for u in deliv:
@@ -485,6 +690,24 @@ def _binding(sem_trace, evidence):
                 t = _typed_subject_id(s.get("progress_token"))
                 if t:
                     typed.append(t)
+    return typed
+
+
+def _binding(sem_trace, evidence, policy=None):
+    """CONTRACT-C: binding reports TWO sub-signals (both attached to this sub-metric; `context()` also
+    surfaces them as two scored submetrics):
+      * subject_consistency      — does the evidence converge on ONE dominant subject within each subject
+                                   KIND (the legacy binding signal; this sub-metric's `score`);
+      * expected_subject_match   — is that dominant subject == dimension_policy.expected_subject? (0/1, or
+                                   not_applicable when the policy declares no expected subject). A
+                                   CONSISTENTLY-WRONG patient -> subject_consistency high but
+                                   expected_subject_match 0.
+    Binding uses ONLY the contract provenance pair (source_channel, source_instance_id) OR a typed
+    SUBJECT/resource token — NOT a broad numeric/ID regex over free-text (year / dose / exam number) and NOT
+    a resource's OWN id (ten Observation reads of one patient share ONE subject). Applicable only when typed
+    subject identities exist; otherwise not_applicable (never a vacuous score, never a bare-number guess)."""
+    from collections import Counter, defaultdict
+    typed = _collect_subjects(sem_trace, evidence)
     if not typed:
         return _sm(None, "not_applicable", 0, reportable=False,
                    reason="no typed subject identity (source_instance_id / subject:<Type>/<id>) in evidence")
@@ -494,16 +717,36 @@ def _binding(sem_trace, evidence):
         by_kind[kind][rid] += 1
     kind_scores = {}
     details = {}
+    dominant = {}
     for kind, ctr in by_kind.items():
         total = sum(ctr.values())
         dom_id, dom_n = ctr.most_common(1)[0]
         kind_scores[kind] = round(dom_n / max(1, total), 3)
+        dominant[kind] = dom_id
         details[kind] = {"dominant_id": dom_id, "dominant_n": dom_n, "total": total,
                          "distinct_ids": len(ctr)}
     score = round(sum(kind_scores.values()) / max(1, len(kind_scores)), 3)
+
+    # CONTRACT-C: expected_subject_match (vs policy.expected_subject). not_applicable when no expected
+    # subject is declared. A match requires SOME bound dominant subject to equal the expected (type, id).
+    exp = _expected_subject(policy)
+    exp_match = {"status": "not_applicable", "score": None}
+    if exp:
+        exp_norm = (str(exp[0]).lower(), str(exp[1]).strip())
+        matched_kind = None
+        for kind, dom_id in dominant.items():
+            if _norm_subject_id(kind, dom_id) == exp_norm or \
+               (exp_norm[0] in ("", None) and _norm_subject_id(kind, dom_id)[1] == exp_norm[1]):
+                matched_kind = kind
+                break
+        exp_match = {"status": "valid", "score": 1.0 if matched_kind else 0.0,
+                     "expected_subject": {"type": exp[0], "id": exp[1]},
+                     "matched_kind": matched_kind,
+                     "bound_dominant": {k: v for k, v in dominant.items()}}
     return _sm(score, "valid", len(typed), reportable=True,
                method="typed_subject_identity", per_kind_focus=kind_scores,
-               typed_subjects=len(typed), subject_kinds=sorted(by_kind), details=details)
+               typed_subjects=len(typed), subject_kinds=sorted(by_kind), details=details,
+               subject_consistency=score, expected_subject_match=exp_match)
 
 
 # ---------------------------------------------------------------- cross-source corroboration
@@ -512,7 +755,7 @@ def _corroboration(sem_trace, evidence):
     (source_channel, source_instance_id) pairs — NOT distinct payload hashes, so two OCR reads of the SAME
     image are ONE source, not two. Reported as an info signal (not folded into the mean). not_applicable
     when no provenance-tagged evidence (legacy traces)."""
-    deliv = _delivered(_pre_terminal_evidence(sem_trace, evidence))
+    deliv = _delivered(_pre_terminal_evidence(sem_trace, evidence))   # delivered (provenance-counted) only
     pairs = set()
     for u in deliv:
         ch = u.get("source_channel")
@@ -557,7 +800,7 @@ def _relevance(sem_trace, evidence, task_instruction, judge_model, char_budget=7
     the task INSTRUCTION only. The terminal/final SemanticEvent is excluded so the answer never leaks;
     gold is never passed. STRICT parse (no fail-open). No judge backend / instruction / evidence ->
     not_applicable; a judge call that errors or returns a non-strict verdict -> status='error'."""
-    deliv = _delivered(_pre_terminal_evidence(sem_trace, evidence))
+    deliv = _delivered(_pre_terminal_evidence(sem_trace, evidence))   # delivered observations only
     instr = str(task_instruction or "").strip()
     if not deliv or not instr:
         return _sm(None, "not_applicable", 0, reportable=False, reason="no delivered evidence or no task instruction")
@@ -609,10 +852,24 @@ def context(sem_trace, evidence, dimension_policy, task_instruction=None, judge_
         if isinstance(raw, dict) and "_idx" not in raw:
             raw["_idx"] = i
     acq = _acquisition(sem_trace, evidence, policy)
+    bind = _binding(sem_trace, evidence, policy)
+    # CONTRACT-C: surface binding's TWO sub-signals as distinct scored submetrics. `binding` keeps the
+    # subject-CONSISTENCY score (convergence on one subject); `expected_subject_match` is the SEPARATE
+    # signal that the converged subject == policy.expected_subject -- so 'consistently reading the WRONG
+    # patient' shows binding (consistency) high yet expected_subject_match 0 (and lowers the Context mean).
+    esm = bind.get("expected_subject_match") if isinstance(bind, dict) else None
+    if isinstance(esm, dict) and esm.get("status") == "valid":
+        esm_sub = _sm(esm.get("score"), "valid", 1, reportable=True,
+                      method="expected_subject_match", **{k: v for k, v in esm.items()
+                                                          if k not in ("status", "score")})
+    else:
+        esm_sub = _sm(None, "not_applicable", 0, reportable=False,
+                      reason="dimension_policy declares no expected_subject")
     subs = {
         "acquisition": acq,
         "sufficiency": _sufficiency(sem_trace, policy, acq),
-        "binding": _binding(sem_trace, evidence),
+        "binding": bind,
+        "expected_subject_match": esm_sub,
         "relevance": _relevance(sem_trace, evidence, task_instruction, judge_model),
     }
     corr = _corroboration(sem_trace, evidence)            # info signal; reported, NOT folded into the mean
@@ -824,6 +1081,103 @@ def _selfcheck():
     assert bnd7["details"]["resource:Patient"]["total"] == 1, ("post-terminal allergy not bound", bnd7)
     assert "resource:AllergyIntolerance" not in (bnd7.get("per_kind_focus") or {}), bnd7
     print("   PASS: evidence after the final answer does not raise acquisition/sufficiency/binding")
+
+    # ---- synthetic invariant 8: CONTRACT-A usable_for_context (empty/partial result not acquired) ----
+    print("\n==== SYNTHETIC 8: CONTRACT-A empty/partial result is delivered but NOT acquired ====")
+    pol8 = {"required_context_units": [{"id": "p", "type": "patient_identity"},
+                                       {"id": "a", "type": "allergy_status"}]}
+    sem8 = [_sub.semantic_event("acquire", status="success", progress_token="state:read=Patient/1"),
+            _sub.semantic_event("acquire", status="partial", progress_token=None)]   # empty bundle -> partial
+    sem8[0]["raw"] = {"_idx": 0}; sem8[1]["raw"] = {"_idx": 1}
+    ev8 = [{"id": "fhir#0", "delivered_to_agent": True, "delivery_fidelity": 1.0, "error_visible": False,
+            "payload": "p", "context_type": "patient_identity", "progress_token": "state:read=Patient/1"},
+           {"id": "fhir#1", "delivered_to_agent": True, "delivery_fidelity": 1.0, "error_visible": False,
+            "payload": "", "context_type": "allergy_status", "progress_token": None}]   # delivered+partial
+    acq8 = _acquisition(sem8, ev8, pol8)
+    print("   acquisition (1 good + 1 empty/partial):", acq8.get("score"), acq8.get("matched_pairs"))
+    assert acq8["matched_units"] == 1 and acq8["score"] == round(1 / 2, 3), \
+        ("a delivered-but-partial empty result must NOT satisfy a required unit", acq8)
+    # an explicit unit-level semantic_status='partial' is also excluded even with a token present
+    ev8b = ev8[:1] + [dict(ev8[1], progress_token="state:read=AllergyIntolerance/2",
+                           semantic_status="partial")]
+    acq8b = _acquisition(sem8, ev8b, pol8)
+    assert acq8b["matched_units"] == 1, ("semantic_status=partial unit not usable", acq8b)
+    # explicit usable_for_context=False overrides even a success-looking unit
+    ev8c = ev8[:1] + [dict(ev8[1], progress_token="state:read=AllergyIntolerance/2",
+                           usable_for_context=False)]
+    assert _acquisition(sem8, ev8c, pol8)["matched_units"] == 1, "usable_for_context=False excludes unit"
+    print("   PASS: empty/partial (no token / status partial / usable_for_context False) not acquired")
+
+    # ---- synthetic invariant 9: CONTRACT-D post-submit confirmation does not back-fill Context ----
+    print("\n==== SYNTHETIC 9: CONTRACT-D post-commit/submit confirmation does not back-fill Context ====")
+    pol9 = {"required_context_units": [{"id": "c", "type": "case_identity"},
+                                       {"id": "s", "type": "submission_requirements"}],
+            "required_milestones": ["form_submitted"]}            # a COMMIT/submit milestone
+    sem9 = [
+        _sub.semantic_event("acquire", status="success", capability_id="navigate",
+                            progress_token="state:page=case1", milestones_added=["target_page_reached"]),
+        _sub.semantic_event("commit", status="success", capability_id="submit",
+                            progress_token="state:submitted=abcd1234", milestones_added=["form_submitted"]),
+        # post-submit CONFIRMATION page (a submission_confirmation, a DIFFERENT type) appears AFTER commit
+        _sub.semantic_event("verify", status="success", capability_id="snapshot",
+                            progress_token="state:page=confirm")]
+    for i, s in enumerate(sem9):
+        s["raw"] = {"_idx": i}
+    ev9 = [
+        {"id": "navigate#0", "delivered_to_agent": True, "delivery_fidelity": 1.0, "error_visible": False,
+         "payload": "case 1 page", "context_type": "case_identity",
+         "source_channel": "gui_portal", "source_instance_id": "case1", "extractor": "gui",
+         "progress_token": "state:page=case1"},
+        # the submission_requirements unit only appears on the POST-submit confirmation page -> must NOT
+        # satisfy the pre-submit submission_requirements unit (post-commit, idx 2 >= boundary idx 1)
+        {"id": "snapshot#2", "delivered_to_agent": True, "delivery_fidelity": 1.0, "error_visible": False,
+         "payload": "submission confirmed", "context_type": "submission_requirements",
+         "source_channel": "gui_portal", "source_instance_id": "confirm", "extractor": "gui",
+         "progress_token": "state:page=confirm"}]
+    acq9 = _acquisition(sem9, ev9, pol9)
+    print("   acquisition (post-submit confirmation evidence):", acq9.get("score"), acq9.get("matched_pairs"),
+          "| required_milestones gated:", acq9.get("required_milestones"))
+    assert acq9["matched_units"] == 1, ("post-commit confirmation must NOT satisfy a Context unit", acq9)
+    # CONTRACT-D: Context must NOT require the form_submitted (commit) milestone -> it is dropped
+    assert "form_submitted" not in (acq9.get("required_milestones") or []), \
+        ("Context must NOT require the form_submitted commit milestone", acq9)
+    suff9 = _sufficiency(sem9, pol9, acq9)
+    assert "form_submitted" not in (suff9.get("required_milestones") or []), suff9
+    # a pre-submit case_identity alone, with NO form_submitted requirement, is still partial (missing the
+    # submission_requirements unit), so the post-submit confirmation genuinely cannot back-fill it
+    assert suff9["score"] == 0.0, ("missing pre-submit unit -> sufficiency 0 (not back-filled)", suff9)
+    print("   PASS: post-submit confirmation does not satisfy submission_requirements; form_submitted dropped")
+
+    # ---- synthetic invariant 10: CONTRACT-C consistently-WRONG subject -> expected_subject_match 0 ----
+    print("\n==== SYNTHETIC 10: CONTRACT-C expected_subject_match (consistently wrong patient) ====")
+    pol10 = {"required_context_units": [{"id": "p", "type": "patient_identity"}],
+             "expected_subject": {"type": "Patient", "id": "RIGHT"}}
+    # 6 reads, ALL of the WRONG patient -> highly CONSISTENT but the WRONG subject
+    ev_wrong = [{"id": "fhir#%d" % i, "delivered_to_agent": True, "delivery_fidelity": 1.0,
+                 "error_visible": False, "payload": "p", "context_type": "patient_identity",
+                 "source_channel": "fhir_patient_record", "source_instance_id": "Patient/WRONG",
+                 "subject_token": "subject:Patient/WRONG", "progress_token": "state:read=Patient/WRONG"}
+                for i in range(6)]
+    b_wrong = _binding([], ev_wrong, pol10)
+    print("   binding consistency:", b_wrong.get("subject_consistency"),
+          "| expected_subject_match:", b_wrong["expected_subject_match"].get("score"))
+    assert b_wrong["subject_consistency"] == 1.0, ("wrong-but-consistent -> consistency 1.0", b_wrong)
+    assert b_wrong["expected_subject_match"]["score"] == 0.0, \
+        ("consistently reading the WRONG patient must fail expected_subject_match", b_wrong)
+    # the RIGHT patient -> match 1.0
+    ev_right = [dict(u, source_instance_id="Patient/RIGHT", subject_token="subject:Patient/RIGHT",
+                     progress_token="state:read=Patient/RIGHT") for u in ev_wrong]
+    b_right = _binding([], ev_right, pol10)
+    assert b_right["expected_subject_match"]["score"] == 1.0, ("right subject -> match 1.0", b_right)
+    # no expected_subject in policy -> expected_subject_match not_applicable (never vacuous)
+    b_noexp = _binding([], ev_right, {"required_context_units": [{"id": "p", "type": "patient_identity"}]})
+    assert b_noexp["expected_subject_match"]["status"] == "not_applicable", b_noexp
+    # the full context() surfaces expected_subject_match as a SEPARATE scored submetric that lowers the mean
+    out10 = context([], ev_wrong, pol10)
+    esm10 = out10["submetrics"]["expected_subject_match"]
+    assert esm10["status"] == "valid" and esm10["score"] == 0.0, esm10
+    assert "expected_subject_match" in out10["applicable_submetrics"], out10
+    print("   PASS: consistent-but-wrong subject -> consistency 1.0, expected_subject_match 0.0 (in the mean)")
 
     print("\nALL SYNTHETIC INVARIANTS PASSED")
 

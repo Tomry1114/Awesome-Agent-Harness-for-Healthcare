@@ -60,7 +60,55 @@ def semantic_event(role, status="success", capability_id=None, obligation_id=Non
 
 # ----------------------------------------------------------------------------- BenchmarkPlugin registry
 _PLUGINS = {}
-def register_plugin(p): _PLUGINS[p["benchmark"]] = p
+# A plugin MUST declare these keys; anything else makes scoring vacuous, so registration fails closed.
+_REQUIRED_PLUGIN_KEYS = ("benchmark", "tool_semantics")
+
+def _equivalent_plugin(a, b):
+    """Two plugin dicts are the SAME plugin re-registering (a module RELOAD), not a hostile duplicate, when
+    they declare the same benchmark name and the same tool surface (sorted tool_semantics tool ids). A
+    genuinely DIFFERENT plugin claiming the name has a different tool set -> not equivalent -> conflict."""
+    if not (isinstance(a, dict) and isinstance(b, dict)):
+        return False
+    if a.get("benchmark") != b.get("benchmark"):
+        return False
+    return sorted((a.get("tool_semantics") or {}).keys()) == sorted((b.get("tool_semantics") or {}).keys())
+
+def register_plugin(p):
+    """V9 FAIL-CLOSED registration. A plugin that is malformed or collides MUST raise at import time
+    (loudly) rather than silently shadowing another benchmark or registering a vacuous policy:
+      * not a dict, or missing a REQUIRED key (benchmark / tool_semantics)            -> ValueError
+      * a CONFLICTING duplicate benchmark name -- a STRUCTURALLY-DIFFERENT plugin claiming an already
+        registered id -- -> ValueError (fail closed: refuse to shadow a different existing plugin).
+      * any declared resolver / evidence_extractor / trace predicate that is NOT callable -> TypeError
+    A benign RE-registration is explicitly allowed (no raise): the SAME object, OR a structurally-equivalent
+    plugin (same benchmark name + same tool_semantics tool set) re-registering. That covers the legitimate
+    `import importlib; del sys.modules['plugins.*']; import_module('plugins')` package-RELOAD used by the
+    drop-file auto-discovery flow -- a reload runs the module body again with a NEW dict that is the same
+    plugin, which must NOT be treated as a hostile duplicate. Validating here (not at score time) means a
+    broken 4th-dataset drop-in is caught the moment its module imports."""
+    if not isinstance(p, dict):
+        raise ValueError("register_plugin: plugin must be a dict, got %r" % type(p).__name__)
+    for k in _REQUIRED_PLUGIN_KEYS:
+        if not p.get(k):
+            raise ValueError("register_plugin: plugin missing required key %r (have %s)"
+                             % (k, sorted(p)))
+    name = p["benchmark"]
+    if not isinstance(p.get("tool_semantics"), dict):
+        raise ValueError("register_plugin: %r tool_semantics must be a dict" % name)
+    existing = _PLUGINS.get(name)
+    if existing is not None and existing is not p and not _equivalent_plugin(existing, p):
+        # a DIFFERENT plugin (different tool surface) claiming an already-owned benchmark name -> conflict.
+        raise ValueError("register_plugin: duplicate benchmark name %r already registered with a DIFFERENT "
+                         "tool surface (fail-closed: refuse to shadow an existing plugin)" % name)
+    # every declared resolver / extractor / predicate that a dimension evaluator will CALL must be callable
+    for fld in ("resolvers", "trace_predicates"):
+        for tn, fn in (p.get(fld) or {}).items():
+            if not callable(fn):
+                raise TypeError("register_plugin: %r %s[%r] is not callable" % (name, fld, tn))
+    ext = p.get("evidence_extractor")
+    if ext is not None and not callable(ext):
+        raise TypeError("register_plugin: %r evidence_extractor is not callable" % name)
+    _PLUGINS[name] = p
 def get_plugin(name):
     """FAIL-CLOSED: returns None for an unknown/unregistered benchmark (no silent default plugin). Callers
     that must score MUST go through require_plugin() so a missing plugin flips score_eligible off rather
@@ -313,6 +361,55 @@ def capability_manifest(provenance):
                 "authorized": v.get("authorized"), "healthy": v.get("healthy")}
             for k, v in caps.items() if isinstance(v, dict)}
 
+# ----------------------------------------------------------------------------- Obligation resolution (CONTRACT-E)
+def _tool_obligation_map(plugin):
+    """{tool: primary_obligation} for every tool the plugin declares -- the bridge that lets a
+    required_tool_group of TOOLS become an equivalence class of OBLIGATIONS (no tool literal leaks into the
+    evaluators). Same primary-obligation rule the mapper uses (_primary_obligation)."""
+    tsem = (plugin or {}).get("tool_semantics") or {}
+    out = {}
+    for tool, meta in tsem.items():
+        ob = _primary_obligation(meta)
+        if ob:
+            out[tool] = ob
+    return out
+
+
+def resolve_obligations(sem_trace, dimension_policy, manifest=None):
+    """CONTRACT-E: the ONE canonical obligation-resolution shared by Lifecycle AND Governance.
+
+    Returns {obligation_id: bool} over EVERY obligation that has at least one FAILED (or partial) event in
+    the trace. A failed obligation O is RESOLVED iff a LATER event (strictly after the failure) either
+      * re-achieves the SAME obligation_id (or an obligation in O's equivalence class -- two tools in the
+        same required_tool_group recover each other) with status=success, OR
+      * is a JUSTIFIED escalation terminal (a capability is unimplemented/unavailable/unauthorized/unhealthy,
+        or the policy marks the evidence irrecoverable / the obligation non-recoverable).
+    An UNRELATED later success does NOT resolve it; an UNJUSTIFIED escalation does NOT resolve it.
+
+    This is NOT a private simplified copy: it DELEGATES to dim_lifecycle's exact helpers
+    (_obligation_equivalence / _obligation_resolved_after), so Lifecycle's recovery, Governance's
+    concealed-failure check, and this function can never drift apart. Governance consumes THIS (no local
+    mirror). dimension_policy may carry _tool_obligations (tool->obligation) for the equivalence lift; if
+    absent we derive it here so callers needn't pre-populate it."""
+    sem_trace = list(sem_trace or [])
+    policy = dict(dimension_policy or {})
+    import dim_lifecycle as _L                                  # lazy: dim_lifecycle never imports us at load
+    equiv = _L._obligation_equivalence(policy)
+    out = {}
+    for i, s in enumerate(sem_trace):
+        ob = s.get("obligation_id")
+        if not ob:
+            continue
+        if str(s.get("status", "")).lower() not in ("failure", "partial"):
+            continue
+        ok, _how = _L._obligation_resolved_after(sem_trace, i, ob, equiv, manifest, policy)
+        # AND across multiple failures of the same obligation: if ANY occurrence is left unresolved, the
+        # obligation is unresolved (a later resolution flips an earlier one, but a still-pending tail does
+        # not get masked by an earlier resolved instance).
+        out[ob] = bool(ok) and out.get(ob, True)
+    return out
+
+
 # ----------------------------------------------------------------------------- DimensionPolicy accessor
 def dimension_policy(task, plugin=None):
     """Merge the task's declared policy with the benchmark plugin defaults. Dimension evaluators read
@@ -353,7 +450,89 @@ def dimension_policy(task, plugin=None):
         if _f in lifecycle_policy:                                  # lift sub-fields to top level so the
             base[_f] = lifecycle_policy[_f]                         # evaluator never guesses where they live
     base.setdefault("governance_policy_id", task.get("source_benchmark"))
+
+    # --- tool->obligation bridge (CONTRACT-E): so a required_tool_group of TOOLS becomes an equivalence
+    # class of OBLIGATIONS for resolve_obligations / Lifecycle recovery WITHOUT a tool literal reaching the
+    # evaluator. Derived from the plugin, never authored by the task.
+    base.setdefault("_tool_obligations", _tool_obligation_map(plugin))
+
+    # --- V10 (CONTRACT-B): MERGE the task's verification_policy OVER the plugin default. The plugin supplies
+    # the sensible DEFAULT (None present -> dim_verification treats cross-source as NOT_APPLICABLE, never
+    # 'require 2 sources for every claim'); a task override (e.g. cross_source_required_for=[claim_type]) wins.
+    task_vp = task.get("verification_policy")
+    if isinstance(task_vp, dict):
+        merged_vp = dict(base.get("verification_policy") or {})
+        merged_vp.update(task_vp)                                # task keys win, plugin defaults stay as fallback
+        base["verification_policy"] = merged_vp
+    # (if the task declares none, base keeps the plugin default -- or nothing, which is correctly NOT_APPLICABLE)
+
+    # --- V10 (CONTRACT-F): MERGE the task's TYPED context_requirements OVER the plugin's required_context_units.
+    # Each entry is {id, type}; a task may add/override units (keyed by id) the benchmark default did not list.
+    # A bare-string entry degrades to {id:s, type:s} so older authoring still parses.
+    task_cr = task.get("context_requirements")
+    if task_cr:
+        def _norm_unit(u):
+            if isinstance(u, dict):
+                return {"id": u.get("id") or u.get("type"), "type": u.get("type") or u.get("id")}
+            return {"id": str(u), "type": str(u)}
+        by_id = {}
+        order = []
+        for u in (base.get("required_context_units") or []):
+            nu = _norm_unit(u)
+            if nu["id"] not in by_id:
+                order.append(nu["id"])
+            by_id[nu["id"]] = nu
+        for u in task_cr:                                        # task entries override/append by id
+            nu = _norm_unit(u)
+            if nu["id"] not in by_id:
+                order.append(nu["id"])
+            by_id[nu["id"]] = nu
+        base["required_context_units"] = [by_id[i] for i in order]
+
+    # --- V10 (CONTRACT-C): expose expected_subject = {type, id} derived from the task. dim_context reports
+    # subject_consistency (evidence converges on one subject) AND expected_subject_match (that subject ==
+    # THIS). 'Consistently reading the WRONG patient' converges but fails the match. Derivation precedence:
+    #   1. an explicit task.expected_subject {type,id}            (author override)
+    #   2. context.patient_ref  -> {type:'Patient', id:patient_ref}   (PB)
+    #   3. context.subject_ref / case_ref {type,id} | id            (generic subject/case)
+    #   4. a plugin default expected_subject                         (benchmark fallback)
+    #   5. a reference subject (task.reference.subject / context.case_id)
+    # type defaults to 'Patient' for a bare patient_ref; otherwise the declared/derived type, else None.
+    base["expected_subject"] = _expected_subject(task, base)
+
     return base
+
+
+def _expected_subject(task, base_policy):
+    """Derive {type, id} for CONTRACT-C. id None means 'no expected subject declared' (the consumer then
+    skips expected_subject_match rather than failing every run). Benchmark-agnostic: it reads only generic
+    task fields (context.patient_ref / subject_ref / case_ref) plus an optional plugin/task default."""
+    ctx = (task or {}).get("context") or {}
+    # 1. explicit task override
+    es = (task or {}).get("expected_subject")
+    if isinstance(es, dict) and es.get("id"):
+        return {"type": es.get("type") or "Patient", "id": es.get("id")}
+    # 2. patient_ref (PB)
+    pref = ctx.get("patient_ref")
+    if pref:
+        return {"type": "Patient", "id": str(pref)}
+    # 3. generic subject_ref / case_ref (dict {type,id} or bare id)
+    for key, dflt_type in (("subject_ref", "Subject"), ("case_ref", "Case")):
+        v = ctx.get(key)
+        if isinstance(v, dict) and v.get("id"):
+            return {"type": v.get("type") or dflt_type, "id": v.get("id")}
+        if v:
+            return {"type": dflt_type, "id": str(v)}
+    # 4. plugin/base default
+    pes = (base_policy or {}).get("expected_subject")
+    if isinstance(pes, dict) and pes.get("id"):
+        return {"type": pes.get("type") or "Subject", "id": pes.get("id")}
+    # 5. a reference subject as last resort
+    ref = (task or {}).get("reference") or {}
+    rsub = ref.get("subject") or ctx.get("case_id")
+    if rsub:
+        return {"type": "Subject", "id": str(rsub)}
+    return {"type": None, "id": None}
 
 # ============================================================================= PLUGIN REGISTRATION
 # The benchmark-specific knowledge (tool->role/milestone semantics, RESULT-CONDITIONAL resolvers, EvidenceView
@@ -363,4 +542,21 @@ def dimension_policy(task, plugin=None):
 # _no_payload/_default_token/_rendered_text/_source_text/...) already exist when the plugins import substrate
 # back. The dependency is strictly one-directional (plugins -> substrate); the core above names no benchmark.
 # A 4TH DATASET = drop runner/plugins/<name>.py + a spec/registry.json entry. No edit to this file.
-import plugins as _plugins  # noqa: E402,F401  (import side effect: registers MedCTA/PhysicianBench/HealthAdminBench)
+#
+# V13 IMPORT-SAFETY: this module may be imported as either top-level `substrate` (PYTHONPATH=runner) OR as
+# `runner.substrate` (PYTHONPATH=repo-root). Those are two DIFFERENT module objects, each with its OWN
+# _PLUGINS dict. If we always did a bare `import plugins`, the plugin modules' `import substrate` would
+# register into the top-level substrate even when WE are runner.substrate -> a future `import runner.substrate`
+# would see list_plugins()==0 (split registry). To keep ONE registry, we import the plugins package RELATIVE
+# to however THIS module was imported (substrate.__package__) so the plugin->substrate back-import resolves to
+# the SAME module object, and we re-export our registry under both `substrate` and `runner.substrate` so the
+# package's `import substrate` finds the already-initialized module rather than re-importing a second copy.
+import importlib as _il, sys as _sys
+_self = _sys.modules[__name__]
+_sys.modules.setdefault("substrate", _self)                 # plugins' `import substrate` -> THIS module
+if __package__:                                             # imported as <pkg>.substrate
+    _sys.modules.setdefault("%s.substrate" % __package__, _self)
+    _plugins = _il.import_module("%s.plugins" % __package__)  # package-relative -> shares this registry
+else:
+    _plugins = _il.import_module("plugins")
+del _il, _sys, _self

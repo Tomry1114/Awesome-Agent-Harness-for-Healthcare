@@ -484,6 +484,76 @@ def test_verification_submetrics_distinct_and_applicable_only():
                 "%s is an algebraic transform of %s across crafted rows" % (ka, kb)
 
 
+def test_verification_v7_per_claim_calibration():
+    """V7: uncertainty_calibration is computed PER STATEMENT, not over one joined answer blob. A hedge on a
+    well-supported statement must NOT launder a confident UNSUPPORTED statement in the same answer."""
+    import dim_verification as V
+
+    def ev(uid, payload):
+        return {"id": uid, "payload": payload, "delivered_to_agent": True,
+                "delivery_fidelity": 1.0, "error_visible": False}
+
+    # one statement hedged on thin evidence (correct), one statement confident-but-unsupported (wrong).
+    o = V.verification([ev("fhir#0", "hemoglobin hb 8 g/dl recorded")], [],
+                       ["Hb is 8 g/dl but this is uncertain. The tumor is definitely glioblastoma grade four."],
+                       judge_model=False)
+    uc = o["submetrics"]["uncertainty_calibration"]
+    assert uc["status"] == "applicable" and uc["opportunities"] == 2 and uc["score"] == 0.5, uc
+
+    # a single blob hedge would have scored 1.0; per-claim splits it. Sanity: BOTH statements hedged+thin -> 1.0
+    o2 = V.verification([ev("fhir#0", "alpha note")], [],
+                        ["Finding alpha is uncertain. Finding beta is also inconclusive."], judge_model=False)
+    assert o2["submetrics"]["uncertainty_calibration"]["score"] == 1.0, o2["submetrics"]["uncertainty_calibration"]
+
+
+def test_verification_v11_numeric_atoms():
+    """V11: the claim/evidence tokenizer captures numeric medical atoms (numbers, units, %, short lab
+    abbreviations) instead of dropping them, so a contradictory measurement does not spuriously corroborate."""
+    import dim_verification as V
+    toks_12 = V._claim_tokens("lesion measures 12 mm")
+    assert any(t.startswith("num:12") for t in toks_12), toks_12          # numeric atom kept
+    assert "ef" in V._claim_tokens("EF 35%"), V._claim_tokens("EF 35%")    # 2-char abbreviation kept
+    assert any(t.startswith("num:35") for t in V._claim_tokens("EF 35%"))  # percentage kept
+    ph = V._claim_tokens("pH 7.2")
+    assert "ph" in ph and any(t.startswith("num:7.2") for t in ph), ph
+
+    def ev(payload):
+        return {"id": "OCR#0", "payload": payload, "delivered_to_agent": True,
+                "delivery_fidelity": 1.0, "error_visible": False}
+
+    # '8 mm' evidence must NOT support a '12 mm' claim; '12 mm' evidence must.
+    no = V.verification([ev("the lesion is 8 mm in the right lobe")], [], ["the lesion is 12 mm in size"], judge_model=False)
+    yes = V.verification([ev("the lesion is 12 mm in the right lobe")], [], ["the lesion is 12 mm in size"], judge_model=False)
+    assert no["submetrics"]["evidence_support"]["score"] == 0.0, no["submetrics"]["evidence_support"]
+    assert yes["submetrics"]["evidence_support"]["score"] == 1.0, yes["submetrics"]["evidence_support"]
+
+
+def test_verification_v12_judge_gating():
+    """V12: judge_model is False -> EXPLICITLY DISABLED (offline; no gateway, no MH_JUDGE_MODEL read),
+    distinct from None (may read env). An injected judge_fn is used verbatim."""
+    import dim_verification as V
+    saved = os.environ.get("MH_JUDGE_MODEL")
+    try:
+        os.environ["MH_JUDGE_MODEL"] = "gpt-5.4"      # even WITH an env model set, False stays offline.
+        ev = [{"id": "OCR#0", "payload": "finding alpha beta", "delivered_to_agent": True,
+               "delivery_fidelity": 1.0, "error_visible": False}]
+        off = V.verification(ev, [], ["finding alpha beta"], judge_model=False)
+        assert off["stats"]["judge_used"] is False, off["stats"]   # False == offline despite env
+
+        # _resolve_judge_fn: False -> None (no fn); explicit judge_fn -> returned verbatim.
+        assert V._resolve_judge_fn(None, False) is None
+        stub = lambda s, u: '{"verdicts":{"0":1}}'
+        assert V._resolve_judge_fn(stub, False) is stub            # injection wins over disable flag
+
+        # injected judge that forces UNsupported is honored (judge_used True, support 0).
+        inj = V.verification(ev, [], ["finding alpha beta"], judge_fn=(lambda s, u: '{"verdicts":{"0":0}}'))
+        assert inj["stats"]["judge_used"] is True, inj["stats"]
+        assert inj["submetrics"]["evidence_support"]["score"] == 0.0, inj["submetrics"]["evidence_support"]
+    finally:
+        if saved is None: os.environ.pop("MH_JUDGE_MODEL", None)
+        else: os.environ["MH_JUDGE_MODEL"] = saved
+
+
 # ---- 4c: Governance G1 hidden-reference detection is PROVENANCE-based, not answer-similarity. ----
 def _g1_tc(tool, vis, rendered=True, consumed=True):
     return {"event_type": "tool_call", "tool": tool, "args": {}, "status": "ok",
@@ -908,7 +978,7 @@ def test_item3_typed_units_and_source_provenance():
     VOCAB = {
         "MedCTA": {"target_image_evidence", "region_specific_image_evidence"},
         "PhysicianBench": {"patient_identity", "current_medication_list", "allergy_status"},
-        "HealthAdminBench": {"case_identity", "form_state", "submission_requirements"}}
+        "HealthAdminBench": {"case_identity", "pre_submit_form_state", "submission_requirements"}}
     # (a) typed units {id,type} drawn from the contract vocabulary
     for bench, types in VOCAB.items():
         units = sub.get_plugin(bench)["dimension_policy"]["required_context_units"]
@@ -1012,6 +1082,388 @@ def test_item3_plugins_autodiscovered_dropfile():
         importlib.invalidate_caches()
         importlib.import_module("plugins")
     assert sub.list_plugins() == ["HealthAdminBench", "MedCTA", "PhysicianBench"], sub.list_plugins()
+
+
+def _sev(role, status="success", ob=None, ms=None, pt=None, terminal=None, attr=None):
+    import substrate as _S
+    e = _S.semantic_event(role, status=status, obligation_id=ob, progress_token=pt,
+                          milestones_added=ms or [], terminal=terminal, failure_attribution=attr, raw={})
+    if status == "success" and (ms or pt):
+        e["state_changed"] = True
+    return e
+
+
+def test_resolve_obligations_is_canonical_matches_lifecycle():
+    """CONTRACT-E (V8): substrate.resolve_obligations is the ONE canonical obligation-resolution and AGREES
+    with dim_lifecycle on every case -- alt-tool recovery (equivalence class), unrelated success (NOT a
+    recovery), justified vs unjustified escalation. Governance consumes THIS, not a private mirror."""
+    import substrate as S, dim_lifecycle as L
+    # alt-tool in same required_tool_group recovers (equivalence) -> matches lifecycle recovery 1.0
+    pol = {"required_tool_groups": [["t1", "t1b"]], "_tool_obligations": {"t1": "O1", "t1b": "O1b"}}
+    alt = [_sev("acquire", "failure", ob="O1", attr="agent"),
+           _sev("acquire", "success", ob="O1b", ms=["m1b"], pt="p1b"), _sev("final", terminal="final")]
+    assert S.resolve_obligations(alt, pol).get("O1") is True
+    assert L.lifecycle(alt, pol)["submetrics"]["recovery"]["score"] == 1.0
+    # an UNRELATED later success does NOT resolve -> matches lifecycle recovery 0.0
+    unrel = [_sev("acquire", "failure", ob="O1", attr="agent"),
+             _sev("acquire", "success", ob="O2", ms=["m2"], pt="p2"), _sev("final", terminal="final")]
+    assert S.resolve_obligations(unrel, {}).get("O1") is False
+    assert L.lifecycle(unrel, {})["submetrics"]["recovery"]["score"] == 0.0
+    # justified escalation (non_recoverable_obligations) resolves; an UNjustified one does not
+    esc = [_sev("acquire", "failure", ob="O1", attr="agent"), _sev("escalate", terminal="escalate")]
+    assert S.resolve_obligations(esc, {"non_recoverable_obligations": ["O1"]}).get("O1") is True
+    assert S.resolve_obligations(esc, {}).get("O1") is False
+    # no obligation-bound failure -> empty dict; a trailing unresolved failure of an already-resolved
+    # obligation keeps it False (AND across occurrences)
+    assert S.resolve_obligations([_sev("final", terminal="final")], {}) == {}
+    twofail = [_sev("acquire", "failure", ob="O1"), _sev("acquire", "success", ob="O1", ms=["m"], pt="p"),
+               _sev("acquire", "failure", ob="O1"), _sev("final", terminal="final")]
+    assert S.resolve_obligations(twofail, {}).get("O1") is False
+
+
+def test_register_plugin_fail_closed():
+    """CONTRACT (V9): register_plugin fails CLOSED -- a malformed plugin, a duplicate benchmark name, or a
+    non-callable resolver RAISES at import time instead of silently shadowing or registering a vacuous
+    policy. The same OBJECT re-registering (idempotent package re-import) is allowed."""
+    import substrate as S
+
+    def raises(fn, exc):
+        try:
+            fn(); return False
+        except exc:
+            return True
+        except Exception:
+            return False
+
+    assert raises(lambda: S.register_plugin({"tool_semantics": {}}), ValueError)         # missing benchmark
+    assert raises(lambda: S.register_plugin({"benchmark": "ZZ"}), ValueError)            # missing tool_semantics
+    assert raises(lambda: S.register_plugin(["not", "a", "dict"]), ValueError)
+    assert raises(lambda: S.register_plugin({"benchmark": "PhysicianBench",
+                                             "tool_semantics": {"t": {}}}), ValueError)  # duplicate name
+    assert raises(lambda: S.register_plugin({"benchmark": "ZZcall", "tool_semantics": {"t": {}},
+                                             "resolvers": {"t": 7}}), TypeError)         # non-callable resolver
+    P = {"benchmark": "ZZok", "tool_semantics": {"t": {"role": "act"}}}
+    S.register_plugin(P); S.register_plugin(P)                                           # idempotent same object
+    assert "ZZok" in S.list_plugins()
+    S._PLUGINS.pop("ZZok", None)                                                         # keep registry clean
+
+
+def test_dimension_policy_merges_task_overrides_and_expected_subject():
+    """CONTRACT-B/C/F (V10): dimension_policy MERGES task overrides over plugin defaults --
+      * task.verification_policy -> base.verification_policy (plugin default is the fallback),
+      * task.context_requirements (typed) override/append base.required_context_units by id,
+      * expected_subject = {type,id} from context.patient_ref (CONTRACT-C), explicit override wins,
+      * NO task verification_policy -> none present (dim_verification then treats it NOT_APPLICABLE, NOT
+        'require 2 sources for every claim')."""
+    import substrate as S
+    plug_default_vp = dict((S.get_plugin("PhysicianBench").get("dimension_policy") or {})
+                           .get("verification_policy") or {})
+    task = {"source_benchmark": "PhysicianBench", "context": {"patient_ref": "MRN123"},
+            "verification_policy": {"cross_source_required_for": ["diagnosis"], "task_only_key": True},
+            "context_requirements": [{"id": "extra_unit", "type": "extra_unit"},
+                                     {"id": "patient_identity", "type": "OVERRIDDEN"}]}
+    dp = S.dimension_policy(task)
+    # task key WINS over the plugin default for the SAME key ...
+    assert dp["verification_policy"]["cross_source_required_for"] == ["diagnosis"]
+    assert dp["verification_policy"]["task_only_key"] is True                   # a task-only key is added
+    # ... while any plugin-default key the task did NOT override still persists (merge, not replace)
+    for k, v in plug_default_vp.items():
+        if k != "cross_source_required_for":
+            assert dp["verification_policy"].get(k) == v, (k, dp["verification_policy"].get(k))
+    units = {u["id"]: u["type"] for u in dp["required_context_units"]}
+    assert units.get("current_medication_list") == "current_medication_list"    # plugin default retained
+    assert units.get("extra_unit") == "extra_unit"                              # task entry appended
+    assert units.get("patient_identity") == "OVERRIDDEN"                        # task override by id wins
+    assert dp["expected_subject"] == {"type": "Patient", "id": "MRN123"}        # CONTRACT-C
+    assert isinstance(dp.get("_tool_obligations"), dict) and dp["_tool_obligations"]  # CONTRACT-E lift
+    # no-override task: plugin defaults stand, INCLUDING the plugin default verification_policy (CONTRACT-B)
+    dp2 = S.dimension_policy({"source_benchmark": "PhysicianBench", "context": {"patient_ref": "P9"}})
+    assert len(dp2["required_context_units"]) == 3
+    assert (dp2.get("verification_policy") or {}) == plug_default_vp            # default preserved, not wiped
+    assert dp2["expected_subject"] == {"type": "Patient", "id": "P9"}
+    # explicit expected_subject override wins over patient_ref
+    dpE = S.dimension_policy({"source_benchmark": "PhysicianBench", "context": {"patient_ref": "P1"},
+                             "expected_subject": {"type": "Patient", "id": "EXPLICIT"}})
+    assert dpE["expected_subject"]["id"] == "EXPLICIT"
+    # a benchmark with NO subject ref still yields a well-formed (id=None -> consumer skips match), no crash
+    dpM = S.dimension_policy({"source_benchmark": "MedCTA", "context": {"text": "q"}, "reference": {}})
+    assert isinstance(dpM["expected_subject"], dict) and "id" in dpM["expected_subject"]
+    # missing plugin still fails closed (no override path masks it)
+    assert S.dimension_policy({"source_benchmark": "NoSuchBenchmark"}).get("score_eligible") is False
+
+
+def test_substrate_import_safe_single_registry():
+    """CONTRACT (V13): import-safe registration -- `import substrate` yields exactly the three registered
+    plugins through ONE registry (the plugin->substrate back-import resolves to the SAME module object, no
+    split registry). list_plugins() == 3 must hold."""
+    import importlib, substrate as sub
+    importlib.import_module("plugins")                       # idempotent; must not double-register
+    assert sub.list_plugins() == ["HealthAdminBench", "MedCTA", "PhysicianBench"], sub.list_plugins()
+    assert len(sub.list_plugins()) == 3
+
+
+
+def test_validate_result_fail_closed_when_jsonschema_missing():
+    """V6: a MISSING jsonschema dependency must make validate_result FAIL CLOSED -- return a structured
+    {valid: False, errors:[jsonschema dependency missing]}, NOT a bare string that the caller coerces to
+    valid=True. Simulate the import-missing branch by blocking the jsonschema import."""
+    import builtins, importlib
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    run = importlib.import_module("run")
+    _real_import = builtins.__import__
+    def _blocked(name, *a, **k):
+        if name == "jsonschema" or name.startswith("jsonschema."):
+            raise ImportError("simulated missing jsonschema")
+        return _real_import(name, *a, **k)
+    builtins.__import__ = _blocked
+    try:
+        sv = run.validate_result({"task_id": "X"})
+    finally:
+        builtins.__import__ = _real_import
+    assert isinstance(sv, dict), ("must be a dict, not a coercible string", sv)
+    assert sv.get("valid") is False, ("missing jsonschema must be valid=False", sv)
+    assert sv.get("errors") == ["jsonschema dependency missing"], sv
+    # the exact caller-side coercion in run_task must NOT flip this to valid=True
+    _sv = sv if isinstance(sv, dict) else {"valid": True, "errors": []}
+    assert _sv.get("valid") is False, "caller coercion must preserve fail-closed"
+
+
+def test_schema_strict_gate_and_formal_default():
+    """V6: schema_strict_enabled() is the single strict gate. Strict OFF with no env; ON for the explicit
+    MH_SCHEMA_STRICT AND for the formal-run defaults MH_FORMAL / MH_BENCH_STRICT; explicit off-values
+    (0/false/no/off/empty) keep it off."""
+    import importlib
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    run = importlib.import_module("run")
+    saved = {k: os.environ.get(k) for k in ("MH_SCHEMA_STRICT", "MH_FORMAL", "MH_BENCH_STRICT")}
+    try:
+        for k in saved: os.environ.pop(k, None)
+        assert run.schema_strict_enabled() is False, "no env -> not strict"
+        for var in ("MH_SCHEMA_STRICT", "MH_FORMAL", "MH_BENCH_STRICT"):
+            os.environ[var] = "1"
+            assert run.schema_strict_enabled() is True, (var, "should enable strict")
+            for off in ("0", "false", "no", "off", ""):
+                os.environ[var] = off
+                assert run.schema_strict_enabled() is False, (var, off, "off-value must keep strict off")
+            os.environ.pop(var, None)
+    finally:
+        for k, v in saved.items():
+            if v is None: os.environ.pop(k, None)
+            else: os.environ[k] = v
+
+
+
+def test_context_usable_for_context_partial_not_acquired():
+    """CONTRACT-A (dim_context): acquisition counts ONLY EvidenceUnits delivered_to_agent AND
+    usable_for_context (semantic_status=='success' AND a non-empty token). A delivered-but-PARTIAL empty
+    result (empty FHIR Bundle / blank OCR) is delivered but NOT usable -> does NOT satisfy a required unit;
+    an explicit semantic_status='partial' or usable_for_context=False also excludes the unit; a tokenless
+    blank unit is never usable (no fail-open)."""
+    import dim_context as C
+    import substrate as S
+    pol = {"required_context_units": [{"id": "p", "type": "patient_identity"},
+                                      {"id": "a", "type": "allergy_status"}]}
+    sem = [S.semantic_event("acquire", status="success", progress_token="state:read=Patient/1"),
+           S.semantic_event("acquire", status="partial", progress_token=None)]
+    for i, s in enumerate(sem):
+        s["raw"] = {"_idx": i}
+    good = {"id": "fhir#0", "delivered_to_agent": True, "delivery_fidelity": 1.0, "error_visible": False,
+            "payload": "p", "context_type": "patient_identity", "progress_token": "state:read=Patient/1"}
+    empty = {"id": "fhir#1", "delivered_to_agent": True, "delivery_fidelity": 1.0, "error_visible": False,
+             "payload": "", "context_type": None, "progress_token": None}          # delivered + partial/empty
+    acq = C._acquisition(sem, [good, empty], pol)
+    assert acq["matched_units"] == 1 and acq["score"] == round(1 / 2, 3), \
+        ("empty/partial delivered result must NOT satisfy a required unit", acq)
+    # explicit semantic_status='partial' (even with a token) is excluded
+    part = {"id": "fhir#1", "delivered_to_agent": True, "delivery_fidelity": 1.0, "error_visible": False,
+            "payload": "x", "context_type": "allergy_status", "progress_token": "state:read=AllergyIntolerance/2",
+            "semantic_status": "partial"}
+    assert C._acquisition(sem, [good, part], pol)["matched_units"] == 1, "semantic_status=partial excluded"
+    # explicit usable_for_context=False wins
+    nuf = dict(part); nuf.pop("semantic_status"); nuf["usable_for_context"] = False
+    assert C._acquisition(sem, [good, nuf], pol)["matched_units"] == 1, "usable_for_context=False excluded"
+
+
+def test_context_post_submit_confirmation_does_not_backfill():
+    """CONTRACT-D (dim_context): ALL pre-terminal cutoffs use ONE context-boundary predicate (terminal
+    final/escalate OR event_role=='commit'); a POST-submit/commit CONFIRMATION must NOT back-fill Context,
+    and Context must NOT require the boundary (form_submitted) milestone -- a submission_requirements unit
+    that only appears on the post-submit confirmation page does NOT satisfy the PRE-submit unit."""
+    import dim_context as C
+    import substrate as S
+    pol = {"required_context_units": [{"id": "c", "type": "case_identity"},
+                                      {"id": "s", "type": "submission_requirements"}],
+           "required_milestones": ["form_submitted"]}
+    sem = [S.semantic_event("acquire", status="success", capability_id="navigate",
+                            progress_token="state:page=case1", milestones_added=["target_page_reached"]),
+           S.semantic_event("commit", status="success", capability_id="submit",
+                            progress_token="state:submitted=z", milestones_added=["form_submitted"]),
+           S.semantic_event("verify", status="success", capability_id="snapshot",
+                            progress_token="state:page=confirm")]
+    for i, s in enumerate(sem):
+        s["raw"] = {"_idx": i}
+    ev = [{"id": "navigate#0", "delivered_to_agent": True, "delivery_fidelity": 1.0, "error_visible": False,
+           "payload": "case 1", "context_type": "case_identity", "source_channel": "gui_portal",
+           "source_instance_id": "case1", "progress_token": "state:page=case1"},
+          {"id": "snapshot#2", "delivered_to_agent": True, "delivery_fidelity": 1.0, "error_visible": False,
+           "payload": "confirmed", "context_type": "submission_requirements", "source_channel": "gui_portal",
+           "source_instance_id": "confirm", "progress_token": "state:page=confirm"}]   # POST-commit (idx 2)
+    acq = C._acquisition(sem, ev, pol)
+    assert acq["matched_units"] == 1, ("post-commit confirmation must not satisfy a Context unit", acq)
+    assert "form_submitted" not in (acq.get("required_milestones") or []), \
+        ("Context must NOT require the form_submitted commit milestone", acq)
+    suff = C._sufficiency(sem, pol, acq)
+    assert "form_submitted" not in (suff.get("required_milestones") or []) and suff["score"] == 0.0, suff
+
+
+def test_context_expected_subject_match_wrong_but_consistent():
+    """CONTRACT-C (dim_context): binding reports TWO sub-signals -- subject_consistency AND
+    expected_subject_match (vs dimension_policy.expected_subject). Consistently reading the WRONG patient
+    -> consistency 1.0 but expected_subject_match 0.0 (surfaced as a SEPARATE scored submetric that lowers
+    the Context mean); the RIGHT subject -> 1.0; no expected_subject -> not_applicable."""
+    import dim_context as C
+    pol = {"required_context_units": [{"id": "p", "type": "patient_identity"}],
+           "expected_subject": {"type": "Patient", "id": "RIGHT"}}
+
+    def reads(pid):
+        return [{"id": "fhir#%d" % i, "delivered_to_agent": True, "delivery_fidelity": 1.0,
+                 "error_visible": False, "payload": "p", "context_type": "patient_identity",
+                 "source_channel": "fhir_patient_record", "source_instance_id": "Patient/%s" % pid,
+                 "subject_token": "subject:Patient/%s" % pid,
+                 "progress_token": "state:read=Patient/%s" % pid} for i in range(5)]
+
+    bw = C._binding([], reads("WRONG"), pol)
+    assert bw["subject_consistency"] == 1.0, ("wrong-but-consistent -> consistency 1.0", bw)
+    assert bw["expected_subject_match"]["score"] == 0.0, ("consistently wrong patient fails match", bw)
+    br = C._binding([], reads("RIGHT"), pol)
+    assert br["expected_subject_match"]["score"] == 1.0, ("right subject -> match 1.0", br)
+    # no expected_subject -> not_applicable (never vacuous)
+    bn = C._binding([], reads("RIGHT"), {"required_context_units": [{"id": "p", "type": "patient_identity"}]})
+    assert bn["expected_subject_match"]["status"] == "not_applicable", bn
+    # full context() exposes expected_subject_match as a SEPARATE scored submetric inside the mean
+    out = C.context([], reads("WRONG"), pol)
+    esm = out["submetrics"]["expected_subject_match"]
+    assert esm["status"] == "valid" and esm["score"] == 0.0, esm
+    assert "expected_subject_match" in out["applicable_submetrics"], out
+
+
+# ============================================================================ PLUGIN CONTRACT TESTS (V1/V2/V3/V5)
+# Added by the plugins-owner agent. These assert the runner/plugins/ contract behaviors:
+#   V1 / CONTRACT-B : each plugin ships a sensible DEFAULT verification_policy (a direct single-source fact
+#                     is NOT forced to 2 sources; only genuinely corroboration-worthy claim_types are gated).
+#   V2 / CONTRACT-F : HAB types a POST-submit OUTCOME page as submission_confirmation (a DISTINCT type that
+#                     is NOT a required Context unit) and PRE-submit rules as submission_requirements; a
+#                     denial-reason page that merely contains the word 'submitted' is NOT a confirmation.
+#   V3 / CONTRACT-A : every EvidenceUnit carries semantic_status + usable_for_context from the producing
+#                     SemanticEvent (success+token -> usable; empty Bundle / blank OCR / no-result search
+#                     -> partial, NOT usable_for_context).
+#   V5             : MedCTA GoogleSearch source_instance_id derives from the RESULT identity (URL/domain),
+#                     falling back to a LABELLED query hash only when the result has no identity.
+def test_plugins_default_verification_policy_present_and_scoped():
+    """V1/CONTRACT-B: every plugin's dimension_policy carries a DEFAULT verification_policy whose
+    cross_source_required_for is a SMALL list of genuinely corroboration-worthy claim_types -- NOT every
+    claim, and NOT a global cross_source_required flag (a single authoritative source is not forced to 2)."""
+    import substrate as sub
+    for bench in ("MedCTA", "PhysicianBench", "HealthAdminBench"):
+        dp = sub.get_plugin(bench)["dimension_policy"]
+        vp = dp.get("verification_policy")
+        assert isinstance(vp, dict), ("no default verification_policy", bench)
+        cues = vp.get("cross_source_required_for")
+        assert isinstance(cues, list) and 0 < len(cues) <= 6, ("policy must gate a small claim-type set", bench, vp)
+        # MUST NOT globally force corroboration on every claim (that is the anti-contract behavior)
+        assert not vp.get("cross_source_required"), ("global cross_source_required must be off", bench)
+        # the gated types are corroboration-worthy CLAIM TYPES, not a single-source authoritative fact
+        for c in cues:
+            assert isinstance(c, str) and c, (bench, c)
+
+
+def test_evidence_units_carry_usable_for_context_contract_A():
+    """V3/CONTRACT-A: each EvidenceUnit gains semantic_status (the producing SemanticEvent's status) and
+    usable_for_context = (status=='success' AND non-empty progress_token). An empty FHIR Bundle and a blank
+    OCR are delivered+partial -> usable_for_context False; a real read is usable True."""
+    import substrate as sub
+    pb = sub.get_plugin("PhysicianBench")
+    # success: a non-empty bundle -> usable True
+    ok = [{"event_type": "tool_call", "tool": "fhir_search",
+           "args": {"resourceType": "Patient"}, "agent_visible_text": "found",
+           "result": {"resourceType": "Bundle", "total": 1,
+                      "entry": [{"resource": {"resourceType": "Patient", "id": "P1"}}]}}]
+    u = pb["evidence_extractor"](ok)[0]
+    assert "semantic_status" in u and "usable_for_context" in u, u
+    assert u["semantic_status"] == "success" and u["usable_for_context"] is True, u
+    assert u["progress_token"], u
+    # partial: an EMPTY bundle (total 0) -> delivered but NOT usable_for_context (CONTRACT-A)
+    empty = [{"event_type": "tool_call", "tool": "fhir_search",
+              "args": {"resourceType": "Patient"}, "agent_visible_text": "empty",
+              "result": {"resourceType": "Bundle", "total": 0, "entry": []}}]
+    ue = pb["evidence_extractor"](empty)[0]
+    assert ue["semantic_status"] == "partial" and ue["usable_for_context"] is False, ue
+    assert ue["progress_token"] is None, ue
+    # MedCTA blank OCR -> partial, not usable
+    mp = sub.get_plugin("MedCTA")
+    blank = [{"event_type": "tool_call", "tool": "OCR", "args": {},
+              "agent_visible_text": "", "result": {"output": {"text": "   "}}}]
+    ub = mp["evidence_extractor"](blank)[0]
+    assert ub["semantic_status"] == "partial" and ub["usable_for_context"] is False, ub
+    # all three plugins always emit the two CONTRACT-A fields on every unit
+    for bench, tr in (("MedCTA", [{"event_type": "tool_call", "tool": "ImageDescription", "args": {},
+                                   "agent_visible_text": "lung", "result": {"output": {"text": "lung"}}}]),
+                      ("HealthAdminBench", [{"event_type": "tool_call", "tool": "click", "args": {},
+                                            "agent_visible_text": "p", "result": {"ok": True, "url": "http://x/a",
+                                                                                   "observation": "page A"}}])):
+        for unit in sub.get_plugin(bench)["evidence_extractor"](tr):
+            assert "semantic_status" in unit and "usable_for_context" in unit, (bench, unit)
+
+
+def test_hab_confirmation_vs_requirements_typing_contract_F():
+    """V2/CONTRACT-F: HAB types a POST-submit OUTCOME page as submission_confirmation (a DISTINCT type that
+    is NOT in required_context_units, so it cannot back-fill the PRE-submit submission_requirements unit); a
+    PRE-submit rules page as submission_requirements; and a denial-reason page that merely contains the bare
+    word 'submitted' as case_identity, NOT a confirmation."""
+    import substrate as sub
+    H = sub.get_plugin("HealthAdminBench")
+
+    def tc(tool, page, url):
+        return {"event_type": "tool_call", "tool": tool, "args": {}, "status": "ok",
+                "agent_visible_text": page, "result": {"ok": True, "url": url, "observation": page}}
+
+    conf = H["evidence_extractor"]([tc("submit",
+            "Your appeal has been submitted. Confirmation number 12345.", "http://x/emr/appeal")])[0]
+    assert conf["context_type"] == "submission_confirmation", conf
+    req = H["evidence_extractor"]([tc("click",
+           "Appeal Form. The following fields are required. You must attach supporting documentation.",
+           "http://x/emr/appeal-form")])[0]
+    assert req["context_type"] == "submission_requirements", req
+    # denial-reason page with a bare 'submitted' is NOT a confirmation (it is the case page)
+    den = H["evidence_extractor"]([tc("click",
+           "Errors: N418 Claim submitted to incorrect payer.", "http://x/emr/denied/DEN-9")])[0]
+    assert den["context_type"] == "case_identity", den
+    # submission_confirmation is NOT a required Context unit (cannot satisfy submission_requirements)
+    req_types = {u["type"] for u in H["dimension_policy"]["required_context_units"]}
+    assert "submission_confirmation" not in req_types, req_types
+    assert "submission_requirements" in req_types, req_types
+
+
+def test_medcta_googlesearch_instance_from_result_identity_V5():
+    """V5: MedCTA GoogleSearch source_instance_id derives from the RESULT identity (a URL host / bare
+    domain) when the snippet carries one, falling back to a LABELLED web:query:<hash> only when the result
+    has NO identity (a '[no offline result]' snippet)."""
+    import substrate as sub
+    M = sub.get_plugin("MedCTA")
+
+    def gs(query, out):
+        return {"event_type": "tool_call", "tool": "GoogleSearch", "args": {"query": query},
+                "status": "ok", "agent_visible_text": out, "result": {"output": out}}
+
+    url_u = M["evidence_extractor"]([gs("q1", "See https://www.ncbi.nlm.nih.gov/pmc/PMC1/ here")])[0]
+    assert url_u["source_instance_id"].startswith("web:url:ncbi.nlm.nih.gov"), url_u
+    dom_u = M["evidence_extractor"]([gs("q2", "radiopaedia.org has the case")])[0]
+    assert dom_u["source_instance_id"] == "web:domain:radiopaedia.org", dom_u
+    # no result identity -> LABELLED query fallback (distinct from a result-derived instance)
+    nores = M["evidence_extractor"]([gs("rare q", "[no offline result for query] rare q")])[0]
+    assert nores["source_instance_id"].startswith("web:query:"), nores
+    # the fallback is keyed by query, NOT mistaken for a web page source
+    assert not nores["source_instance_id"].startswith("web:url:"), nores
 
 
 def _run():

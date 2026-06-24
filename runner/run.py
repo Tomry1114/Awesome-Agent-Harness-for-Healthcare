@@ -34,11 +34,30 @@ def load_task(bench, task_id):
             return t
     raise SystemExit(f"task {task_id} not found in {p}")
 
+def _truthy_env(name):
+    """An env var is 'set/on' if present and not an explicit off value (empty/0/false/no/off)."""
+    v = os.environ.get(name)
+    return v is not None and v.strip().lower() not in ("", "0", "false", "no", "off")
+
+def schema_strict_enabled():
+    """Schema-validation strictness gate (V6 formal-run default). Strict (refuse to emit a result that
+    fails spec/result.schema.json, including the jsonschema-missing fail-closed case) is ON when ANY of:
+      - MH_SCHEMA_STRICT  (the explicit, pre-existing knob)
+      - MH_FORMAL         (this is a formal benchmark run -> strict by default)
+      - MH_BENCH_STRICT    (formal-run alias)
+    Otherwise strict is OFF (exploratory: warn but still emit). Exposed as a function so conformance
+    can test the wiring without re-deriving the env logic."""
+    return any(_truthy_env(k) for k in ("MH_SCHEMA_STRICT", "MH_FORMAL", "MH_BENCH_STRICT"))
+
 def validate_result(result):
+    # FAIL CLOSED (V6): a missing jsonschema dependency means we CANNOT prove the result conforms to
+    # spec/result.schema.json, so we must NOT silently treat it as valid. Return a structured
+    # {valid: False, errors:[...]} (NOT a bare string that the caller coerces to valid=True). This makes
+    # the MH_SCHEMA_STRICT / formal-run path correctly refuse to emit an unvalidated result.
     try:
         from jsonschema import Draft7Validator, RefResolver
     except Exception:
-        return "(jsonschema missing)"
+        return {"valid": False, "errors": ["jsonschema dependency missing"]}
     spec = os.path.join(ROOT, "spec"); store = {}
     for f in glob.glob(os.path.join(spec, "*.json")):
         s = json.load(open(f))
@@ -377,13 +396,21 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
                   "fidelity": fidelity, "medcta_config": _medcta_cfg, "capabilities": _caps}
     result = scoring.build_result(task, trajectory, results, provenance)
     _sv = validate_result(result)
-    _sv = _sv if isinstance(_sv, dict) else {"valid": True, "errors": [], "note": str(_sv)}
+    # validate_result is contracted to return a dict (valid result, schema errors, OR fail-closed
+    # 'jsonschema dependency missing'). If anything unexpected leaks through, treat it as NOT valid
+    # (fail closed) rather than coercing to valid=True -- an unprovable result must never pass silently.
+    _sv = _sv if isinstance(_sv, dict) else {"valid": False, "errors": ["validator returned non-dict: " + str(_sv)]}
     result["schema_validation"] = _sv                 # NON-underscore -> survives --out / run_batch
     result["_schema"] = "OK" if _sv.get("valid") else "INVALID: " + "; ".join(_sv.get("errors", []))
+    # Formal-run default: a formal/benchmark run must always be strict, WITHOUT the operator having to
+    # remember MH_SCHEMA_STRICT. Wiring (least surprising): MH_SCHEMA_STRICT stays the explicit knob;
+    # MH_FORMAL / MH_BENCH_STRICT additionally turn strict ON (any truthy value). So strict is the
+    # default for formal runs and opt-in otherwise.
+    _strict = schema_strict_enabled()
     if not _sv.get("valid"):
         print("SCHEMA INVALID:", result["_schema"])
-        if os.environ.get("MH_SCHEMA_STRICT"):        # fail-closed: refuse to emit a protocol-violating result
-            raise SystemExit("result fails spec/result.schema.json (MH_SCHEMA_STRICT): " + result["_schema"])
+        if _strict:                                   # fail-closed: refuse to emit a protocol-violating result
+            raise SystemExit("result fails spec/result.schema.json (strict): " + result["_schema"])
     result["_trajectory"] = trajectory
     result["_job_dir"] = job_dir
     # ---- qualification: downgrade ONLY for mock / replay / proxy / hidden-reference — NOT by substrate.

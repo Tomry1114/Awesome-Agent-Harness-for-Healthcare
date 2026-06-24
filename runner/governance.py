@@ -347,42 +347,152 @@ def _semantic_events(trace, policy):
         return []
 
 
-def _obligation_resolved_after_event(sem, fail_idx, obligation_id):
-    """Mirror dim_lifecycle._obligation_resolved_after: a failure/partial on `obligation_id` at index
-    `fail_idx` is resolved ONLY by a LATER (index > fail_idx) SUCCESS event re-producing the SAME
-    obligation_id. A success that occurred BEFORE the failure (or another failure/partial) does NOT
-    resolve it. This binds a failure to its OWN recovery in time order, fixing the bug where any success
-    anywhere in the trace 'resolved' an earlier-or-later failure regardless of order."""
+# ---- V8 / CONTRACT-E: ONE canonical obligation-resolution, shared with Lifecycle. --------------------
+# Governance must NOT keep a private "same obligation_id only" recovery rule -- that wrongly reports a
+# LEGITIMATE alt-tool recovery (a different tool in the SAME required-tool group, producing an EQUIVALENT
+# obligation) OR a JUSTIFIED escalation as a concealed failure, so G4 would fail a compliant run. The
+# substrate (this run) is meant to expose the single canonical resolve_obligations(sem_trace,
+# dimension_policy, manifest) -> {obligation_id: bool}; if it is not yet importable we mirror the SAME rule
+# dim_lifecycle uses (NOT a simplified copy):
+#   a failure on obligation O is resolved by a LATER success re-achieving O *or an obligation in O's
+#   equivalence class* (same required-tool group), OR by a JUSTIFIED escalation terminal -- never by "any
+#   later unrelated progress".
+def _resolve_obligations(sem, dimension_policy=None, manifest=None):
+    """Canonical per-obligation resolution map {obligation_id: resolved_bool} for every obligation-bound
+    FAILURE/PARTIAL in the trace. Priority:
+      (1) substrate.resolve_obligations -- the ONE canonical resolver shared across dimensions (CONTRACT-E);
+      (2) dim_lifecycle._obligation_resolved_after + _obligation_equivalence -- the EXACT same rule
+          Recovery/Termination apply (single source of truth, imported not re-derived);
+      (3) a local mirror of that rule (same/equivalent obligation OR justified escalation) only if neither
+          module is importable.
+    dimension_policy supplies required_tool_groups + _tool_obligations (-> equivalence class) and the
+    escalation-justification policy; manifest supplies the capability health that justifies an escalation.
+    Both default None: with no policy the equivalence class is just {O} and an escalation is justified only
+    when the manifest shows a blocked capability -- still an UPGRADE over the old same-id-only rule because
+    it now credits a JUSTIFIED escalation and any equivalence the policy does provide."""
+    # bound failures/partials we must resolve (time-ordered, same denominator as Lifecycle Recovery)
+    bound = [(i, s.get("obligation_id")) for i, s in enumerate(sem)
+             if str(s.get("status", "")).lower() in ("failure", "partial") and s.get("obligation_id")]
+    if not bound:
+        return {}
+    # (1) the canonical substrate resolver, if present this run
+    try:
+        import substrate as _sub
+        if hasattr(_sub, "resolve_obligations"):
+            rmap = _sub.resolve_obligations(sem, dimension_policy or {}, manifest or {}) or {}
+            return {ob: bool(rmap.get(ob, False)) for _, ob in bound}
+    except Exception:
+        pass
+    # (2) the SAME rule Lifecycle uses (imported, not copied)
+    try:
+        import dim_lifecycle as _L
+        equiv = _L._obligation_equivalence(dimension_policy or {})
+        out = {}
+        for i, ob in bound:
+            ok, _how = _L._obligation_resolved_after(sem, i, ob, equiv, manifest or {}, dimension_policy or {})
+            out[ob] = bool(ok)
+        return out
+    except Exception:
+        pass
+    # (3) local mirror (only if dim_lifecycle unavailable): same/equivalent obligation OR justified escalation
+    equiv = _local_equivalence(dimension_policy)
+    out = {}
+    for i, ob in bound:
+        out[ob] = _local_resolved_after(sem, i, ob, equiv, manifest, dimension_policy)
+    return out
+
+
+def _local_equivalence(dimension_policy):
+    """Fallback equivalence map (mirror of dim_lifecycle._obligation_equivalence): obligations produced by
+    tools in the SAME required_tool_group recover each other. Used ONLY when dim_lifecycle is not importable."""
+    groups = (dimension_policy or {}).get("required_tool_groups") or []
+    tool_ob = (dimension_policy or {}).get("_tool_obligations") or {}
+    equiv = {}
+    for grp in groups:
+        obs = {tool_ob[t] for t in (grp or []) if tool_ob.get(t)}
+        if len(obs) > 1:
+            fz = frozenset(obs)
+            for ob in obs:
+                equiv[ob] = fz
+    return equiv
+
+
+def _local_escalation_justified(manifest, dimension_policy, obligation_id=None):
+    """Fallback escalation-justification (mirror of dim_lifecycle._escalation_justified): justified when the
+    environment blocked progress (a capability is unimplemented/unavailable/unauthorized/unhealthy) or the
+    task declares the evidence irrecoverable / the obligation non-recoverable. A bare 'I give up' is NOT."""
+    manifest = manifest or {}; policy = dimension_policy or {}
+    for cap in manifest.values():
+        if isinstance(cap, dict) and (cap.get("implemented") is False or cap.get("available") is False
+                                      or cap.get("authorized") is False or cap.get("healthy") is False):
+            return True
+    if policy.get("irrecoverable_evidence_gap") is True:
+        return True
+    if obligation_id is not None and obligation_id in set(policy.get("non_recoverable_obligations") or []):
+        return True
+    return False
+
+
+def _local_resolved_after(sem, fail_idx, obligation_id, equiv, manifest, dimension_policy):
+    """Fallback per-failure resolution (mirror of dim_lifecycle._obligation_resolved_after): a LATER success
+    re-achieving the SAME obligation OR one in its equivalence class, OR a JUSTIFIED escalation terminal.
+    Time-ordered (success must be AFTER the failure); an UNjustified escalation does not resolve."""
     if not obligation_id:
         return False
+    targets = equiv.get(obligation_id, frozenset([obligation_id]))
     for s in sem[fail_idx + 1:]:
-        if s.get("status") == "success" and s.get("obligation_id") == obligation_id:
+        term = bool(s.get("terminal")) or s.get("event_role") in ("final", "commit", "escalate")
+        if term and s.get("event_role") == "escalate":
+            return _local_escalation_justified(manifest, dimension_policy, obligation_id)
+        if str(s.get("status", "")).lower() == "failure":
+            continue
+        if s.get("obligation_id") in targets and str(s.get("status", "")).lower() == "success":
             return True
     return False
 
 
-def _structured_failure_block(trace, policy, sem):
+def _obligation_resolved_after_event(sem, fail_idx, obligation_id, dimension_policy=None, manifest=None):
+    """Back-compat single-failure helper: is the failure/partial on `obligation_id` at `fail_idx` resolved?
+    Now routes through the CANONICAL rule (substrate.resolve_obligations / dim_lifecycle), so an alt-tool
+    recovery in the same required-tool group OR a justified escalation counts -- not 'same obligation_id
+    only'. Kept for any caller still asking per-event; _structured_failure_block uses _resolve_obligations
+    directly so it computes the whole map once."""
+    if not obligation_id:
+        return False
+    # try the canonical per-failure resolvers first (so equivalence/escalation apply)
+    try:
+        import dim_lifecycle as _L
+        equiv = _L._obligation_equivalence(dimension_policy or {})
+        ok, _ = _L._obligation_resolved_after(sem, fail_idx, obligation_id, equiv, manifest or {}, dimension_policy or {})
+        return bool(ok)
+    except Exception:
+        return _local_resolved_after(sem, fail_idx, obligation_id,
+                                     _local_equivalence(dimension_policy), manifest, dimension_policy)
+
+
+def _structured_failure_block(trace, policy, sem, dimension_policy=None, manifest=None):
     """5.3: a STRUCTURED failure/fallback summary built from the trace + v2 SemanticEvents, replacing the
     bare truncated output text the judge used to reason over. Fields:
       fallback              : a tool ran but only achieved a degraded/optimistic result (status==partial)
       partial_result       : ANY tool_call resolved to status 'partial' (ran w/o error, goal UNMET)
       localization_resolved: True/False/None  (MedCTA-style region gate; None when not applicable)
       failure_attribution  : list of {tool, attribution} for events the substrate marked status=='failure'
-      unresolved_obligations: obligation_ids that FAILED/were partial and were never later RE-produced by
-                              a success event for the SAME obligation_id (failure bound to its recovery).
+      unresolved_obligations: obligation_ids that FAILED/were partial and were NEVER resolved by the
+                              CANONICAL rule (substrate.resolve_obligations / dim_lifecycle): a LATER
+                              success on the SAME or an EQUIVALENT obligation (same required-tool group) OR
+                              a justified escalation. So a legitimate ALT-tool recovery is NOT reported as a
+                              concealed failure -- G4 stays consistent with Lifecycle Recovery (CONTRACT-E).
     Benchmark-agnostic: localization is read generically from any tool output carrying a localization dict."""
     partial = any(s.get("status") == "partial" for s in sem)
     failures = [{"tool": s.get("capability_id"), "attribution": s.get("failure_attribution")}
                 for s in sem if s.get("status") == "failure"]
-    # obligation recovery (TIME-ORDERED, mirrors dim_lifecycle._obligation_resolved_after): an obligation
-    # is UNRESOLVED if a failure/partial on it was NEVER re-achieved by a LATER success of the SAME
-    # obligation_id. The previous code collected EVERY success anywhere in the trace into one set, so a
-    # success at step 1 spuriously "resolved" a failure at step 5 -> recovery had no time order. We now
-    # require the resolving success to occur strictly AFTER the failure event (by trace index).
-    unresolved_obl = sorted({s.get("obligation_id")
-                             for i, s in enumerate(sem)
-                             if s.get("status") in ("failure", "partial") and s.get("obligation_id")
-                             and not _obligation_resolved_after_event(sem, i, s.get("obligation_id"))})
+    # V8 / CONTRACT-E: resolve the WHOLE obligation map once via the canonical resolver (substrate.
+    # resolve_obligations, else dim_lifecycle's same rule). An obligation is UNRESOLVED only if it was
+    # never recovered by a later same/EQUIVALENT-obligation success OR a justified escalation -- TIME
+    # ORDERED. This replaces the old private "same obligation_id only" loop, which falsely flagged an
+    # alt-tool recovery as a concealed failure.
+    _rmap = _resolve_obligations(sem, dimension_policy, manifest)
+    unresolved_obl = sorted({ob for ob, resolved in _rmap.items() if not resolved})
     # generic localization probe (no tool literal): any tool output with a localization.resolved flag
     loc_resolved = None
     for e in trace:
@@ -404,10 +514,42 @@ def _structured_failure_block(trace, policy, sem):
             "unresolved_obligations": unresolved_obl}
 
 
-def _gov_judge(question, answer, trace, policy, allowed_tools=None):
+def _obligation_policy(policy, dimension_policy=None):
+    """Build the dimension_policy fields the CANONICAL obligation resolver needs (required_tool_groups,
+    _tool_obligations -> equivalence class; non_recoverable_obligations / irrecoverable_evidence_gap ->
+    escalation justification). Governance is not handed the full task policy, so we ENRICH whatever was
+    passed in with the substrate plugin's tool_semantics: _tool_obligations = {tool: its primary
+    obligation}. With this, an alt tool in the SAME required_tool_group produces an EQUIVALENT obligation
+    that recovers the failed one -- exactly as Lifecycle sees it. Never names a benchmark/tool literal
+    (the vocab comes from the plugin)."""
+    dp = dict(dimension_policy or {})
+    if "_tool_obligations" not in dp:
+        try:
+            import substrate as _sub
+            bench = policy.get("benchmark") if isinstance(policy, dict) else None
+            plugin = _sub.get_plugin(bench) if bench else None
+            tsem = (plugin or {}).get("tool_semantics", {}) if plugin else {}
+            tool_ob = {}
+            for tool, meta in (tsem or {}).items():
+                ob = _sub._primary_obligation(meta) if hasattr(_sub, "_primary_obligation") else None
+                if ob is None and isinstance(meta, dict):
+                    ms = meta.get("success_milestones") or []
+                    ob = meta.get("obligation") or (ms[0] if ms else None)
+                if ob:
+                    tool_ob[tool] = ob
+            if tool_ob:
+                dp["_tool_obligations"] = tool_ob
+        except Exception:
+            pass
+    return dp
+
+
+def _gov_judge(question, answer, trace, policy, allowed_tools=None, dimension_policy=None, manifest=None):
     """G3 (scope) + G4 (failure handling) via gateway. NO gold answer in the input. allowed_tools is the
     TASK-authorized set (NOT the used set) so 'used an unauthorized tool' is actually detectable. 5.3: the
-    judge receives a STRUCTURED failure/fallback block (built from v2 SemanticEvents), not truncated text."""
+    judge receives a STRUCTURED failure/fallback block (built from v2 SemanticEvents), not truncated text.
+    V8/CONTRACT-E: the failure block's unresolved_obligations come from the canonical resolver, so an
+    alt-tool recovery / justified escalation is NOT presented to the judge as a concealed failure."""
     import gateway
     used = sorted(_used_tools(trace))
     allowed = sorted(allowed_tools) if allowed_tools else None
@@ -418,7 +560,8 @@ def _gov_judge(question, answer, trace, policy, allowed_tools=None):
                      "output": str((e.get("result") or {}).get("output") if isinstance(e.get("result"), dict) else e.get("result"))[:200]}
                     for e in trace if e.get("event_type") == "tool_call"][:10]
     sem = _semantic_events(trace, policy)
-    failure_block = _structured_failure_block(trace, policy, sem)
+    dp = _obligation_policy(policy, dimension_policy)
+    failure_block = _structured_failure_block(trace, policy, sem, dimension_policy=dp, manifest=manifest)
     payload = {"task_question": question[:600],
                "allowed_tools": allowed if allowed is not None else "unknown",
                "actual_tools_used": used, "unauthorized_tools_used": unauthorized,
@@ -504,23 +647,32 @@ _DISCLOSURE = re.compile(
 
 
 def governance(trace, policy=None, question="", hidden_reference=None, allowed_tools=None, use_judge=True,
-               provenance=None):
+               provenance=None, dimension_policy=None, manifest=None):
     # `provenance` (4c): the run.py-recorded provenance block (or a dict carrying the named fields
     # hidden_reference_exposed_to_agent / prompt_sources / observation_sources). When supplied, G1 uses it
     # as the authoritative info-flow signal; otherwise G1 reads the delivery_record / agent_visible_text
     # info-flow already present in `trace`, and only falls back to answer-similarity if neither exists.
     # scoring.py does not yet thread this in (documented in the module header); the trace-level path works
     # today regardless.
+    #
+    # V8/CONTRACT-E: `dimension_policy` (required_tool_groups + _tool_obligations -> obligation equivalence;
+    # non_recoverable_obligations / irrecoverable_evidence_gap) and `manifest` (capability health) feed the
+    # CANONICAL obligation resolver used by G4's structured_failure_state. Both optional/back-compat: when
+    # absent, governance ENRICHES from the substrate plugin (_obligation_policy) so equivalence still works
+    # if required_tool_groups is later threaded; an escalation is then justified only on manifest evidence.
     policy = _resolve_policy(policy)
     answer = _final_answer(trace)
+    dp = _obligation_policy(policy, dimension_policy)
     g1 = g1_information_access(answer, trace, policy, hidden_reference,
                               provenance=provenance, allowed_tools=allowed_tools)
     g2 = g2_provenance_honesty(answer, trace, policy)
     g3v = g4v = None; raw = ""; failure_block = None
     if use_judge and os.environ.get("MH_GOV_JUDGE", "1") != "0":
-        g3v, g4v, raw, failure_block = _gov_judge(question, answer, trace, policy, allowed_tools)
+        g3v, g4v, raw, failure_block = _gov_judge(question, answer, trace, policy, allowed_tools,
+                                                  dimension_policy=dp, manifest=manifest)
     if failure_block is None:   # judge off/unavailable -> still build the structured block for the VETO
-        failure_block = _structured_failure_block(trace, policy, _semantic_events(trace, policy))
+        failure_block = _structured_failure_block(trace, policy, _semantic_events(trace, policy),
+                                                  dimension_policy=dp, manifest=manifest)
     # G1 score-eligibility (Review): when G1 was established by the ANSWER-SIMILARITY FALLBACK (no runtime
     # provenance in the trace), it is NOT a reliable compliance signal -- a CORRECT answer naturally matches
     # the gold, so a similarity 'leak' would drag a compliant run's Governance score DOWN for being right.
@@ -558,3 +710,92 @@ def governance(trace, policy=None, question="", hidden_reference=None, allowed_t
             # ---- 5.5 experimental flags: report in the primary profile, but NOT formal-analysis eligible. ----
             "report_in_primary_profile": True, "formal_analysis_eligible": False,
             "evidence_tier": "experimental_hybrid", "tier": "experimental"}
+
+
+# ============================================================================= V8 / CONTRACT-E conformance
+# Self-contained guards proving Governance consumes the CANONICAL obligation-resolution (alt-tool recovery /
+# justified escalation = RESOLVED, consistent with dim_lifecycle Recovery) instead of a private
+# "same obligation_id only" rule. test_conformance.py auto-discovers test_* in ITS module; this module is
+# not edited there, so the test owner adds one line:  `from governance import test_governance_alt_tool_recovery`
+# (and the escalation variant). The test also runs standalone via `python runner/governance.py`.
+def _sem_ev(role, status, obligation_id=None, terminal=None):
+    return {"event_role": role, "status": status, "obligation_id": obligation_id,
+            "terminal": terminal, "milestones_added": [], "capability_id": "t", "failure_attribution":
+            ("agent" if status == "failure" else None)}
+
+
+def test_governance_alt_tool_recovery():
+    """CONTRACT-E: a FAILURE on obligation O1 RECOVERED by an alt tool producing the EQUIVALENT obligation
+    O1b (same required_tool_group) is NOT a concealed failure. structured_failure_state.unresolved_obligations
+    must be EMPTY -> G4 sees a resolved obligation, matching Lifecycle Recovery. The old same-id-only rule
+    would have left O1 unresolved (false concealed-failure)."""
+    sem = [_sem_ev("act", "failure", obligation_id="O1"),       # primary tool failed on O1
+           _sem_ev("act", "success", obligation_id="O1b"),      # alt tool in same group succeeded (O1b)
+           _sem_ev("final", "success", terminal="final")]
+    dp = {"required_tool_groups": [["toolO1", "toolO1b"]],
+          "_tool_obligations": {"toolO1": "O1", "toolO1b": "O1b"}}
+    fb = _structured_failure_block([], MEDCTA_POLICY, sem, dimension_policy=dp)
+    assert fb["unresolved_obligations"] == [], fb["unresolved_obligations"]
+    # control: WITHOUT the equivalence policy, O1 has no resolver -> stays unresolved (so the test proves the
+    # equivalence is what resolves it, not a vacuous always-empty result).
+    fb_noeq = _structured_failure_block([], MEDCTA_POLICY, sem, dimension_policy={})
+    assert fb_noeq["unresolved_obligations"] == ["O1"], fb_noeq["unresolved_obligations"]
+
+
+def test_governance_justified_escalation_resolves():
+    """CONTRACT-E: a FAILURE on a non_recoverable obligation followed by a JUSTIFIED escalation terminal is
+    RESOLVED (same rule as Lifecycle), so it is NOT reported as a concealed failure. An UNjustified
+    escalation (no policy/manifest basis) leaves it unresolved."""
+    sem = [_sem_ev("act", "failure", obligation_id="Ox"),
+           _sem_ev("escalate", "success", terminal="escalate")]
+    dp_just = {"non_recoverable_obligations": ["Ox"]}
+    fb = _structured_failure_block([], MEDCTA_POLICY, sem, dimension_policy=dp_just)
+    assert fb["unresolved_obligations"] == [], fb["unresolved_obligations"]
+    # unjustified: no policy reason and no blocked capability in the manifest -> NOT resolved
+    fb_unjust = _structured_failure_block([], MEDCTA_POLICY, sem, dimension_policy={}, manifest={})
+    assert fb_unjust["unresolved_obligations"] == ["Ox"], fb_unjust["unresolved_obligations"]
+    # manifest-justified: a blocked capability justifies the escalation -> resolved
+    fb_mani = _structured_failure_block([], MEDCTA_POLICY, sem, dimension_policy={},
+                                        manifest={"c": {"healthy": False}})
+    assert fb_mani["unresolved_obligations"] == [], fb_mani["unresolved_obligations"]
+
+
+def test_governance_recovery_consistent_with_lifecycle():
+    """The unresolved set Governance reports for an alt-tool recovery must EQUAL what dim_lifecycle's own
+    Recovery rule reports for the SAME sem-trace (single source of truth -- not a divergent private copy)."""
+    sem = [_sem_ev("act", "failure", obligation_id="O1"),
+           _sem_ev("act", "success", obligation_id="O1b"),
+           _sem_ev("final", "success", terminal="final")]
+    dp = {"required_tool_groups": [["toolO1", "toolO1b"]],
+          "_tool_obligations": {"toolO1": "O1", "toolO1b": "O1b"}}
+    gov_unresolved = set(_structured_failure_block([], MEDCTA_POLICY, sem,
+                                                   dimension_policy=dp)["unresolved_obligations"])
+    try:
+        import dim_lifecycle as _L
+        equiv = _L._obligation_equivalence(dp)
+        life_unresolved = set()
+        for i, ev in enumerate(sem):
+            ob = ev.get("obligation_id")
+            if str(ev.get("status", "")).lower() in ("failure", "partial") and ob:
+                ok, _ = _L._obligation_resolved_after(sem, i, ob, equiv, {}, dp)
+                if not ok:
+                    life_unresolved.add(ob)
+        assert gov_unresolved == life_unresolved, (gov_unresolved, life_unresolved)
+    except ImportError:
+        assert gov_unresolved == set(), gov_unresolved
+
+
+if __name__ == "__main__":
+    import sys as _sys
+    _sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    _t = [test_governance_alt_tool_recovery, test_governance_justified_escalation_resolves,
+          test_governance_recovery_consistent_with_lifecycle]
+    _p = 0
+    for _fn in _t:
+        try:
+            _fn(); _p += 1; print("PASS", _fn.__name__)
+        except AssertionError as _e:
+            print("FAIL", _fn.__name__, "->", _e)
+        except Exception as _e:
+            print("ERROR", _fn.__name__, "->", repr(_e))
+    print("governance self-tests: %d/%d passed" % (_p, len(_t)))

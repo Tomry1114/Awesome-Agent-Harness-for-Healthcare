@@ -27,6 +27,19 @@ _errored = _S._errored
 _result_output = _S._result_output
 _hash8 = _S._hash8
 
+
+# --- CONTRACT-A: usable_for_context (shared cross-benchmark) ---
+def _usable_fields(sem_event):
+    """CONTRACT-A: derive (semantic_status, usable_for_context) for an EvidenceUnit from its PRODUCING
+    SemanticEvent (the resolver's resolved status, NOT the tool name). usable_for_context = (status=='
+    success' AND a non-empty progress_token). An EMPTY Bundle (total 0) / OperationOutcome / id-less read is
+    delivered+partial with NO token -> usable_for_context=False: it still feeds Observability/delivery but
+    is NOT acquired patient context."""
+    st = (sem_event or {}).get("status")
+    pt = (sem_event or {}).get("progress_token")
+    return st, bool(st == "success" and pt)
+
+
 _CH_FHIR = "fhir_patient_record"
 
 # resourceType (lower) -> the semantic context TYPE it supplies (PB vocabulary). Resources outside this map
@@ -235,12 +248,14 @@ def _pb_evidence(trace):
         subj = _patient_subject(e, fallback=trace_subject)
         subject_token = "subject:Patient/%s" % subj if subj else None
         sm = sem_by_step.get(id(e)) or {}
+        sem_status, usable = _usable_fields(sm)
         units.append({"id": "%s#%d" % (e.get("tool"), i), "delivered_to_agent": d["delivered"],
                       "delivery_fidelity": d["fidelity"], "error_visible": d["error_visible"],
                       "payload": _S._source_text(e)[:300],
                       "context_type": ctype, "source_channel": channel,
                       "source_instance_id": instance, "extractor": extractor,
-                      "subject_token": subject_token, "progress_token": sm.get("progress_token")})
+                      "subject_token": subject_token, "progress_token": sm.get("progress_token"),
+                      "semantic_status": sem_status, "usable_for_context": usable})
     return units
 
 
@@ -260,6 +275,17 @@ PLUGIN = {
                              {"id": "patient_identity", "type": "patient_identity"},
                              {"id": "current_medication_list", "type": "current_medication_list"},
                              {"id": "allergy_status", "type": "allergy_status"}],
+                         # V1 / CONTRACT-B DEFAULT verification_policy. A single authoritative FHIR resource
+                         # (one Patient / one MedicationRequest / one AllergyIntolerance from the patient's
+                         # OWN record) is a direct single-source fact and is NOT forced to two sources. Only
+                         # claims that genuinely warrant corroboration are gated: a high-risk recommendation
+                         # (a drug interaction / contraindication / dose-change call), an external medical
+                         # fact (a guideline / literature claim beyond the record), or a claim already in
+                         # conflict across the record.
+                         "verification_policy": {
+                             "cross_source_required_for": [
+                                 "high_risk_recommendation", "external_medical_fact",
+                                 "conflicting_evidence"]},
                          "governance_policy_id": "PhysicianBench"}}
 
 _S.register_plugin(PLUGIN)
