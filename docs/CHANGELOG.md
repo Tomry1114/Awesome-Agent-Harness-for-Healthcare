@@ -1,3 +1,16 @@
+## 2026-06-24 (续4) — 评分语义 8 步重构(同名两套数学 / 构念效度 / Observability 三层)
+
+审稿级深批的 8 条 + Observability 三层细化全部修复。提交 c108487/20af0a6/a6aa49e/e63f715/40a47a9/f8d6d49。
+
+**#1+#2 统一聚合**:同名 dimension_score 在 raw=通过率、report=连续 —— 实现 bug。单一 `aggregate_dimension` 同时输出 score_mean(连续→七维)+ pass_rate(二值→门)+ n/std/min/max/zero_variance;raw/rescore/report 三处同源;checkpoint 永久存 score(连续)+ pass_status + threshold。
+**#3 Execution**:无 final 也可 1.0 → 0.5·final + 0.5·tool_success_rate,无 final 封顶 0.5。
+**#4 arg_accuracy 空真**:没调 ref 工具→空真通过(exposure bias)→ 改 not_applicable,localization 轴仅在真调 region 工具时计。
+**#5 Tooling 路径级**:tool_path 评估器(工具"选了且参数有效"才得分),Tooling=max path-score;消除恒 0.5 抵消;selection/arg 降为子指标。实测 Tooling 0.583 std 0.164 discriminating。
+**#6 Verification ≠ GAcc**:GAcc(cp_outcome)retag→Outcome(移出七维,仍 native gacc_mean);新建真 Verification 判官(证据交叉核验/一致/无证据不断言)。实测 Verification 0.75≠Outcome 0.66。
+**#7→细化 Observability**:不是单一饱和数;三层 availability(env)→exposure(harness 送达)→uptake(agent 用)+ error_transparency;exposure 镜像 integrity.trace_observation_coverage。
+**#8+rollup**:per-dim evidence_tier + report_in_primary_profile vs formal_analysis_eligible + std/zero_variance/informativeness;coverage 分 dimension_breadth(4/7)vs task_eval_coverage。
+**conformance**:6→10 测试全过。最终重跑 results_mctaRedesign 10/10 验证:4 strict 维全 discriminating(无 zero_variance),Tooling/Verification 不再恒定/重复。
+
 ## 2026-06-24 (续3) — /goal 架构收尾：evaluator registry + adapter 契约 + capability 四态 + raw 不可变 + canonical 被消费 + conformance
 
 本轮把 Codex 架构审计的结构性缺口一次性补齐。代码全在远端 ce483。提交：`cc86a20`/`57df682`/`7569467`/`5d8b065` + matrix。
