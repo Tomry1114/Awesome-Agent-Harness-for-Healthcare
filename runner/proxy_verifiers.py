@@ -101,7 +101,11 @@ def proxy_dimensions(events):
         for v in (_canon_modalities(e) or {}).values():
             _terms.update(w for w in str(v).lower().split() if len(w) > 6)
     uptake = round(sum(1 for w in _terms if w in _fa) / len(_terms), 3) if (_terms and _fa) else None
-    _score = exposure if err_transp is None else round(0.7 * exposure + 0.3 * err_transp, 3)
+    # composite reflects the FULL pipeline: delivery (exposure) + failure transparency + agent uptake.
+    # uptake is the discriminating layer (delivery alone saturates at 1.0). uptake None -> fall back to exposure.
+    _up = uptake if uptake is not None else exposure
+    _et = err_transp if err_transp is not None else 1.0
+    _score = round(0.5 * exposure + 0.2 * _et + 0.3 * _up, 3)
     out["Observability"] = {"score": _score, "evidence_availability": availability,
                             "evidence_exposure": exposure, "evidence_uptake": uptake,
                             "error_transparency": err_transp,

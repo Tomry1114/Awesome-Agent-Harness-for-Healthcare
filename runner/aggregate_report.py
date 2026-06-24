@@ -186,7 +186,18 @@ def _proxy_dims(agent_dir, strict_covered):
         except Exception as e:
             sys.stderr.write("proxy skip %s: %r\n" % (tp, e))
     allp = average_proxy(per_task)
-    gap_only = {d: v for d, v in allp.items() if d not in strict_covered}
+    # per-dim spread so a SATURATED proxy (mean 1.0, var 0) is not mistaken for a discriminating one
+    import statistics as _st2
+    spread = {}
+    for d in allp:
+        vs = [t[d]["score"] for t in per_task if isinstance(t.get(d), dict) and isinstance(t[d].get("score"), (int, float))]
+        if vs:
+            spread[d] = {"std": round(_st2.pstdev(vs), 3) if len(vs) > 1 else 0.0,
+                         "min": round(min(vs), 3), "max": round(max(vs), 3),
+                         "zero_variance": len(set(vs)) == 1,
+                         "informativeness": "saturated" if len(set(vs)) == 1 else "discriminating"}
+    gap_only = {d: ({**v, **spread.get(d, {})} if isinstance(v, dict) else v)
+                for d, v in allp.items() if d not in strict_covered}
     return {"kind": "trajectory_heuristic_soft", "score_eligible": False,
             "note": "gap-fill only; dims with strict coverage excluded",
             "by_dimension": gap_only}
