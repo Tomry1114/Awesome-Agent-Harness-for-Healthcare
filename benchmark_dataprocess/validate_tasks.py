@@ -14,7 +14,13 @@ def load_store():
     return store
 
 def main():
-    jsonl = sys.argv[1]
+    import argparse
+    ap = argparse.ArgumentParser()
+    ap.add_argument("jsonl")
+    ap.add_argument("--strict", action="store_true",
+                    help="also FAIL on deprecated trigger/required_before ordering syntax (for CI / new tasks)")
+    args = ap.parse_args()
+    jsonl = args.jsonl
     store = load_store()
     task_schema = json.load(open(os.path.join(SPEC_DIR, "task.schema.json")))
     resolver = RefResolver(base_uri=task_schema["$id"], referrer=task_schema, store=store)
@@ -36,10 +42,10 @@ def main():
     print(f"\nvalidated {ok}/{n} tasks OK against spec/task.schema.json")
     # registry membership (supported values live in spec/registry.json, NOT the schema enum) -- a 4th
     # dataset must register its prefix/domain/modality/environment here to pass strict validation.
+    unreg, legacy = [], []
     try:
         reg = json.load(open(os.path.join(SPEC_DIR, "registry.json")))
         benches = reg.get("benchmarks", {}); adapters = set(reg.get("environment_adapters", []))
-        unreg = []
         for t in tasks:
             sb = t.get("source_benchmark")
             if sb not in benches:
@@ -56,7 +62,6 @@ def main():
         else:
             print("registry: all %d tasks registered (benchmarks=%s)" % (len(tasks), sorted(benches)))
         # lint: NEW tasks must use canonical predecessor/successor ordering syntax (legacy reads backwards)
-        legacy = []
         for t in tasks:
             for c in ((t.get("lifecycle_policy") or {}).get("ordering_constraints") or []):
                 if isinstance(c, dict) and any(k in c for k in ("trigger", "trigger_role", "required_before",
@@ -68,7 +73,10 @@ def main():
     except FileNotFoundError:
         print("registry: spec/registry.json missing (skipped)")
 
-    sys.exit(0 if ok == n else 1)
+    strict_ok = (ok == n) and not unreg          # schema valid AND all registered
+    if args.strict:
+        strict_ok = strict_ok and not legacy        # CI / new tasks: no deprecated ordering syntax
+    sys.exit(0 if strict_ok else 1)
 
 if __name__ == "__main__":
     main()

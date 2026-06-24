@@ -246,15 +246,17 @@ def _obligation_resolved_after(sem_trace, fail_idx, obligation_id, equiv, manife
     return False, None
 
 
-def _unresolved_agent_obligations(sem_trace, equiv, manifest, dimension_policy, term_idx):
-    """Agent-attributed obligations still unresolved going INTO the terminal -- so termination can apply the
-    SAME obligation-specific escalation policy Recovery uses (e.g. an obligation in non_recoverable_
-    obligations), instead of only the global capability check."""
+def _unresolved_obligations(sem_trace, equiv, manifest, dimension_policy, term_idx):
+    """ALL obligation-bound failures still unresolved going INTO the terminal -- NOT filtered by attribution,
+    matching Recovery's denominator -- so the obligation-specific escalation justification is consistent
+    between Recovery and Termination even for an ENVIRONMENT-attributed failure on a non_recoverable
+    obligation. (The agent-only unresolved-failure penalty for final/commit is a SEPARATE concern handled by
+    _has_unresolved_agent_failure.)"""
     pre = sem_trace[:term_idx] if term_idx is not None else sem_trace
     unresolved = []
     for i, ev in enumerate(pre):
         ob = ev.get("obligation_id")
-        if _is_failure(ev) and ev.get("failure_attribution") == "agent" and ob:
+        if _is_failure(ev) and ob:
             resolved, _ = _obligation_resolved_after(pre, i, ob, equiv, manifest, dimension_policy)
             if not resolved:
                 unresolved.append(ob)
@@ -378,7 +380,7 @@ def lifecycle(sem_trace, dimension_policy, manifest=None):
         # SAME escalation policy as Recovery/unresolved-failure (single source of truth): justified when a
         # capability is unimplemented/unavailable/unauthorized/unhealthy or the policy declares the evidence
         # irrecoverable. No longer a narrower healthy/authorized-only check (which disagreed with Recovery).
-        _unres = _unresolved_agent_obligations(sem_trace, _equiv, manifest, dimension_policy, term_idx)
+        _unres = _unresolved_obligations(sem_trace, _equiv, manifest, dimension_policy, term_idx)
         justified = (_escalation_justified(manifest, dimension_policy, obligation_id=None)
                      or any(_escalation_justified(manifest, dimension_policy, obligation_id=ob) for ob in _unres))
         sub["termination_quality"] = _sm(1.0 if justified else 0.5, terminal="escalate",
