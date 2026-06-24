@@ -241,8 +241,11 @@ def _experimental_evaluators(agent_dir, bench):
     if os.path.exists(tf):
         for l in open(tf):
             t = json.loads(l); ref = t.get("reference") or {}
-            pol[t.get("task_id")] = {"required_tool_groups": ref.get("required_tool_groups")}
+            pol[t.get("task_id")] = {"required_tool_groups": ref.get("required_tool_groups"),
+                                     "prerequisites": (t.get("policy") or {}).get("required_tool_before_action"),
+                                     "lifecycle_policy": t.get("lifecycle_policy")}
     ex_t, lc_t = {}, {}
+    _lc_cov, _lc_unreportable = {}, []
     for tp in sorted(glob.glob(os.path.join(agent_dir, "*", "trajectory.jsonl"))):
         tid = os.path.basename(os.path.dirname(tp))
         try:
@@ -254,9 +257,14 @@ def _experimental_evaluators(agent_dir, bench):
         if os.path.exists(rp):
             try: caps = (json.load(open(rp)).get("provenance") or {}).get("capabilities")
             except Exception: caps = None
-        e = _le.execution(evs, capabilities=caps, task_policy=pol.get(tid)); l = _le.lifecycle(evs, task_policy=pol.get(tid))
+        e = _le.execution(evs, capabilities=caps, task_policy=pol.get(tid))
+        l = _le.lifecycle(evs, task_policy=pol.get(tid), capabilities=caps)   # Review: Lifecycle ALSO gets capabilities
         if isinstance(e.get("score"), (int, float)): ex_t[tid] = e["score"]
-        if isinstance(l.get("score"), (int, float)): lc_t[tid] = l["score"]
+        if isinstance(l.get("score"), (int, float)) and l.get("reportable_score"): lc_t[tid] = l["score"]
+        for k, st in (l.get("submetric_status") or {}).items():
+            _lc_cov.setdefault(k, {"valid": 0, "total": 0})
+            _lc_cov[k]["total"] += 1; _lc_cov[k]["valid"] += 1 if st == "valid" else 0
+        if not l.get("reportable_score"): _lc_unreportable.append(tid)
     def _agg(d):
         v = list(d.values())
         return {"mean": round(sum(v) / len(v), 3) if v else None, "n": len(v),
@@ -264,9 +272,12 @@ def _experimental_evaluators(agent_dir, bench):
                 "zero_variance": (len(set(v)) == 1) if v else None,
                 "informativeness": ("saturated" if (v and len(set(v)) == 1) else ("discriminating" if v else "none")),
                 "tier": "experimental_state_machine"}
+    _life = _agg(lc_t)
+    _life["submetric_coverage"] = {k: "%d/%d" % (v["valid"], v["total"]) for k, v in sorted(_lc_cov.items())}
+    _life["n_unreportable_insufficient_coverage"] = len(_lc_unreportable)
     panel = {"tier": "experimental_fault_injection_validated", "deterministic": True,
              "promotion_path": "experimental -> human_audited -> strict",
-             "Execution_sm": _agg(ex_t), "Lifecycle_sm": _agg(lc_t)}
+             "Execution_sm": _agg(ex_t), "Lifecycle_sm": _life}
     return panel, ex_t, lc_t
 
 

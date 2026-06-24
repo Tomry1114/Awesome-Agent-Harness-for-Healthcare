@@ -161,7 +161,7 @@ def _is_loop(calls):
     return loops
 
 
-def lifecycle(events, task_policy=None):
+def lifecycle(events, task_policy=None, capabilities=None):
     calls = [e for e in events if e.get("event_type") == "tool_call"]
     has_final = any(e.get("event_type") == "final_answer" for e in events)
     escalated = any(e.get("event_type") in ("escalation", "deliverable_budget_warning") or
@@ -209,23 +209,48 @@ def lifecycle(events, task_policy=None):
     else:
         sub["loop_avoidance"] = _sm(None, "not_applicable", n)
 
-    # 4. termination quality: reached a terminal state (final OR escalate) and not loop-exhausted
+    # 3b. readiness before terminal (Review): required_tool_groups -> a UNIVERSAL readiness signal so
+    #     termination is NOT just "did it emit final". A final before completing a required path is premature.
+    _groups = [set(g) for g in ((task_policy or {}).get("required_tool_groups") or []) if g]
+    _done = {c.get("tool") for c in calls if produced_valid_result(c)}
+    if _groups:
+        readiness = max(len(g & _done) / len(g) for g in _groups)
+        sub["readiness_before_terminal"] = _sm(round(readiness, 3), opportunities=len(_groups))
+    else:
+        readiness = None
+        sub["readiness_before_terminal"] = _sm(None, "not_applicable", 0)
+
+    # 4. termination quality: terminal reached AND ready AND no UNRESOLVED agent-attributable failure AND
+    #    not truncated. No longer "has_final -> 1".
+    _unresolved = False
+    for i, c in enumerate(calls):
+        if _pv._errored(c) and error_attribution(c) == "agent":
+            if not any((x.get("tool") == c.get("tool")) and not _pv._errored(x) for x in calls[i + 1:]):
+                _unresolved = True
     if truncated:
-        sub["termination_quality"] = _sm(0.0)                       # ran out of steps / circuit-broke = poor termination
+        sub["termination_quality"] = _sm(0.0)
     elif has_final or escalated:
-        sub["termination_quality"] = _sm(1.0)
+        _rd = readiness if readiness is not None else 1.0
+        sub["termination_quality"] = _sm(round(_rd * (0.5 if _unresolved else 1.0), 3))
     else:
         sub["termination_quality"] = _sm(0.0)
 
-    # 5. escalation appropriateness: if a required capability was unhealthy, did the agent escalate/stop
-    #    instead of flailing to truncation? Needs capability info; else N/A.
-    unhealthy = bool((task_policy or {}).get("had_unhealthy_capability"))
+    # 5. escalation appropriateness: capability unhealthy (manifest) or policy flag -> should escalate/stop.
+    unhealthy = bool((task_policy or {}).get("had_unhealthy_capability")) or (
+        bool(capabilities) and any(isinstance(v, dict) and v.get("healthy") is False for v in capabilities.values()))
     if unhealthy:
         sub["escalation_appropriateness"] = _sm(1.0 if (escalated and not truncated) else 0.0, opportunities=1)
     else:
         sub["escalation_appropriateness"] = _sm(None, "not_applicable", 0)
 
     out = _aggregate(sub)
+    # coverage gate (Review): do NOT emit a confident Lifecycle number off a single sub-metric. Require
+    # >=2 of the CORE constructs (readiness / ordering / termination) to be applicable to be reportable.
+    _core = ("readiness_before_terminal", "ordering_quality", "termination_quality")
+    _valid_core = [k for k in _core if sub.get(k, {}).get("status") == "valid"]
+    out["reportable_score"] = len(_valid_core) >= 2
+    out["coverage_status"] = "ok" if len(_valid_core) >= 2 else "insufficient_construct_coverage"
+    out["submetric_status"] = {k: v.get("status") for k, v in sub.items()}
     out["opportunity_count"] = {k: v.get("opportunities") for k, v in sub.items() if v.get("opportunities")}
     out["state_path"] = {"has_final": has_final, "escalated": escalated, "truncated": truncated}
     out["tier"] = "experimental"
