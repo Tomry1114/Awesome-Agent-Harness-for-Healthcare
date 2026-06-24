@@ -5,7 +5,7 @@ load unified task -> environment adapter -> agent loop -> unified trajectory -> 
 Runs end-to-end with the stub agent (no API key). native_pytest executes via subprocess pytest;
 deterministic/llm_judge are skipped (skip_reason) pending B-line. Result validated vs spec/result.schema.json.
 """
-import os, sys, json, glob, argparse, shutil, datetime
+import os, sys, json, glob, argparse, shutil, datetime, hashlib
 import canonical_schema as _canon
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -13,6 +13,18 @@ sys.path.insert(0, HERE)
 import environments, agents, scoring
 from pb_policy import DeliverableScaffold
 from environments import _canon_fhir_tool
+
+
+def _state_hash(env):
+    """Real environment state digest for state_before/after (review 3.4). None for stateless envs."""
+    try:
+        st = env.state_summary() if hasattr(env, "state_summary") else getattr(env, "full_state", None)
+        if st is None:
+            return None
+        return hashlib.sha256(json.dumps(st, sort_keys=True, default=str).encode("utf-8", "replace")).hexdigest()[:12]
+    except Exception:
+        return None
+
 
 def load_task(bench, task_id):
     p = os.path.join(ROOT, "benchmark_dataprocess", bench, "tasks_unified.jsonl")
@@ -116,11 +128,14 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
         if action["type"] != "tool_call" or not action.get("tool"):
             trajectory.append({"step": step, "event_type": "agent_error", "error": "bad_action_type", "raw": str(action)[:200], "status": "error"})
             finished = True; break
+        _state_before = _state_hash(env)
         try:
             res = env.call_tool(action["tool"], action.get("args", {}))
         except Exception as _e:
             res = {"error": repr(_e)}
-        obs = json.dumps(res, ensure_ascii=False)[:int(os.environ.get("MH_OBS_MAX_LEN", "10000"))]  # official mini_agent caps tool output to LLM at 10k (was 200 -> agent could not see search results -> over-read)
+        _state_after = _state_hash(env)
+        _src_full = json.dumps(res, ensure_ascii=False)
+        obs = _src_full[:int(os.environ.get("MH_OBS_MAX_LEN", "10000"))]  # official mini_agent caps tool output to LLM at 10k (was 200 -> agent could not see search results -> over-read)
         _err = res.get("error") if isinstance(res, dict) else None
         if not _err and isinstance(res, dict):  # F2: tool_sandbox tools report errors as a bracketed string in "output"
             _out = res.get("output")
@@ -133,7 +148,15 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
                "status": "error" if _err else "ok",
                "canonical_action": _canon.canonical_action(action, env_type),
                "canonical_result": _canon.canonical_result(res),
-               "canonical_observation": _canon.canonical_observation(res, env_type)}  # F2: explicit per-action status + canonical observation (Codex #5: wire the defined-but-unused observation)
+               "agent_visible_text": obs,  # EXACT string fed into the agent context (Observability truth)
+               "canonical_observation": _canon.canonical_observation(res, env_type),  # F2: explicit per-action status + canonical observation (Codex #5: wire the defined-but-unused observation)
+               "delivery_record": {"produced": bool(res), "rendered_to_agent": True,
+                                   "source_hash": hashlib.sha256(_src_full.encode("utf-8", "replace")).hexdigest()[:12],
+                                   "rendered_hash": hashlib.sha256(obs.encode("utf-8", "replace")).hexdigest()[:12],
+                                   "truncated": len(_src_full) > len(obs),
+                                   "error_state_rendered": bool(_err) and any(w in obs.lower() for w in ("error", "fail", "invalid", "exception", "operationoutcome"))},
+               "state_record": {"state_before_hash": _state_before, "state_after_hash": _state_after,
+                                "state_changed": (_state_before != _state_after) if (_state_before is not None and _state_after is not None) else None}}
         if _err:
             _es = str(_err)
             _ev["error_type"] = next(("http_" + c for c in ("400", "401", "403", "404", "409", "422", "500", "502", "503")

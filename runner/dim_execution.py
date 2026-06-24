@@ -108,16 +108,20 @@ def execution(sem_trace, dimension_policy=None, manifest=None):
     def _eff_attr(s):
         """Effective ownership of a FAILED action. CapabilityManifest is authoritative: a failure on a
         capability the env reports unhealthy is environmental; unauthorized -> harness. Else the
-        substrate's per-event failure_attribution stands. (Manifest keyed by progress_token, which the
-        mapper derives from the capability/tool — we never read a tool literal, just the token.)"""
+        substrate's per-event failure_attribution stands. (Manifest keyed by capability_id, which the
+        mapper sets on every event including failures — never a tool literal at scoring time.)"""
         if _ok(s):
             return None
-        tok = s.get("progress_token")
-        cap = manifest.get(tok) if isinstance(manifest, dict) else None
+        cap_id = s.get("capability_id")
+        cap = manifest.get(cap_id) if (isinstance(manifest, dict) and cap_id) else None
         if isinstance(cap, dict):
             if cap.get("healthy") is False:
                 return "environment"
             if cap.get("authorized") is False:
+                return "harness"
+            if cap.get("available") is False:
+                return "environment"
+            if cap.get("implemented") is False:
                 return "harness"
         return s.get("failure_attribution")
 

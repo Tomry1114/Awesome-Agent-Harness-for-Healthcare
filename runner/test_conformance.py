@@ -211,8 +211,8 @@ def test_substrate_benchmark_agnostic():
     for lit in ("MedCTA", "OCR", "ImageDescription", "fhir", "snapshot", "RegionAttribute"):
         assert lit not in src, "core leaks benchmark literal: %s" % lit
     # same core, two different plugins -> roles come from the plugin, not the core
-    tr = [{"event_type": "tool_call", "tool": "fhir_search", "status": "ok"},
-          {"event_type": "tool_call", "tool": "submit", "status": "ok"},
+    tr = [{"event_type": "tool_call", "tool": "fhir_search", "status": "ok", "semantic_assume_success": True},
+          {"event_type": "tool_call", "tool": "submit", "status": "ok", "semantic_assume_success": True},
           {"event_type": "final_answer", "thought": "done"}]
     pb = sub.map_trace(tr, sub.get_plugin("PhysicianBench"))
     hab = sub.map_trace(tr, sub.get_plugin("HealthAdminBench"))
@@ -222,6 +222,18 @@ def test_substrate_benchmark_agnostic():
     # evidence units carry the required delivery fields
     ev = sub.evidence_view(tr, sub.get_plugin("PhysicianBench"))
     assert ev and all(set(u) >= {"id", "delivered_to_agent", "delivery_fidelity", "error_visible"} for u in ev)
+
+
+def test_execution_uses_capability_id_for_attribution():
+    """A failure on a capability the manifest reports unhealthy must be attributed to the environment via
+    capability_id (NOT progress_token, which a failure usually lacks) -> excluded from agent blame."""
+    import substrate as _S, dim_execution as _E
+    ev = _S.semantic_event("acquire", status="failure", capability_id="OCR", progress_token=None,
+                           failure_attribution="agent")
+    manifest = {"OCR": {"implemented": True, "available": True, "authorized": True, "healthy": False}}
+    r = _E.execution([ev], {}, manifest)
+    assert r["error_attribution"]["env_or_harness_failures_excluded"] >= 1, r["error_attribution"]
+    assert r["submetrics"]["tool_invocation_success"].get("agent_failures", 0) == 0
 
 
 def _run():

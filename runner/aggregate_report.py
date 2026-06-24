@@ -109,6 +109,15 @@ def _harness_dims(results):
         for m in MODULES:
             if ds.get(m) is not None: acc[m].append(ds[m])
             if pr.get(m) is not None: prate[m].append(pr[m])
+    # per-dimension evidence_tier override declared by checkpoints: a dimension whose checkpoint carries a
+    # non-strict evidence_tier (e.g. Governance evidence_tier=experimental_hybrid, review 5.5) must NOT be
+    # reported as strict/formal even though it produces a number.
+    tier_override = {}
+    for r in results:
+        for c in (r.get("checkpoints") or r.get("cps") or []):
+            dim = c.get("dimension"); et = c.get("evidence_tier")
+            if dim and et and et != "strict":
+                tier_override[dim] = et
     dims = {}
     for m in MODULES:
         v = acc[m]; covered = bool(v)
@@ -121,8 +130,9 @@ def _harness_dims(results):
                    "min": round(min(v), 3) if v else None, "max": round(max(v), 3) if v else None,
                    "zero_variance": (len(set(v)) == 1) if v else None,
                    "informativeness": ("saturated" if (v and len(set(v)) == 1) else ("discriminating" if v else "none")),
-                   "evidence_tier": "strict" if covered else "not_evaluated",
-                   "report_in_primary_profile": True, "formal_analysis_eligible": covered,
+                   "evidence_tier": (tier_override.get(m) or "strict") if covered else "not_evaluated",
+                   "report_in_primary_profile": True,
+                   "formal_analysis_eligible": covered and (m not in tier_override),
                    "status": "covered" if covered else "not_exercised_by_benchmark"}
     cats = {cat: {m: dims[m] for m in members} for cat, members in CATEGORIES.items()}
     uncovered = [m for m in MODULES if dims[m]["status"] != "covered"]

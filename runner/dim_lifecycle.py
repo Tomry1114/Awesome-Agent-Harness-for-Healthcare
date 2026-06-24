@@ -100,8 +100,21 @@ def _ordering_constraints(dimension_policy):
     """
     raw = (dimension_policy or {}).get("ordering_constraints") or []
     out = []
+    def _ep(d):
+        if not isinstance(d, dict): return None
+        if d.get("milestone") is not None: return ("milestone", d["milestone"])
+        if d.get("role") is not None: return ("role", d["role"])
+        return None
     for c in raw:
         if not isinstance(c, dict):
+            continue
+        # canonical form: {"predecessor": {milestone|role}, "successor": {milestone|role}, "weight"}
+        if c.get("predecessor") is not None and c.get("successor") is not None:
+            tp, sp = _ep(c["predecessor"]), _ep(c["successor"])
+            if tp and sp:
+                try: _w = float(c.get("weight", 1.0))
+                except (TypeError, ValueError): _w = 1.0
+                out.append({"trigger": tp, "kind": "before", "target": sp, "weight": _w})
             continue
         if c.get("trigger") is not None:
             trig = ("milestone", c["trigger"])
@@ -151,14 +164,14 @@ def _score_ordering(sem_trace, dimension_policy):
     activated = 0
     detail = []
     for c in constraints:
-        t_idx = _first_occurrence(sem_trace, c["trigger"])
-        g_idx = _first_occurrence(sem_trace, c["target"])
-        if t_idx is None or g_idx is None:          # ACTIVATED only when BOTH endpoints occur
+        t_idx = _first_occurrence(sem_trace, c["trigger"])   # predecessor
+        g_idx = _first_occurrence(sem_trace, c["target"])    # successor
+        if g_idx is None:                           # successor never happened -> constraint NOT triggered
             detail.append({"trigger": c["trigger"], "target": c["target"], "activated": False})
             continue
-        activated += 1
+        activated += 1                              # ACTIVATED once the successor occurs
         activated_w += c["weight"]
-        ok = t_idx < g_idx                          # trigger strictly before target
+        ok = (t_idx is not None) and (t_idx < g_idx)  # predecessor present AND strictly before successor
         if ok:
             satisfied_w += c["weight"]
         detail.append({"trigger": c["trigger"], "target": c["target"], "activated": True,
@@ -191,7 +204,41 @@ def _obligation_equivalence(dimension_policy):
     return equiv
 
 
-def _score_recovery(sem_trace, equiv):
+def _escalation_justified(manifest, dimension_policy, obligation_id=None):
+    """An escalation terminal is APPROPRIATE only when the environment blocked progress (a capability is
+    unimplemented/unavailable/unauthorized/unhealthy) or the task declares the evidence irrecoverable. A bare
+    'I give up' escalation is NOT justified (and must not count as recovery)."""
+    manifest = manifest or {}; policy = dimension_policy or {}
+    for cap in manifest.values():
+        if isinstance(cap, dict) and (cap.get("implemented") is False or cap.get("available") is False
+                                      or cap.get("authorized") is False or cap.get("healthy") is False):
+            return True
+    if policy.get("irrecoverable_evidence_gap") is True:
+        return True
+    if obligation_id is not None and obligation_id in set(policy.get("non_recoverable_obligations") or []):
+        return True
+    return False
+
+
+def _obligation_resolved_after(sem_trace, fail_idx, obligation_id, equiv, manifest=None, dimension_policy=None):
+    """THE single definition of 'a failure was resolved' shared by Recovery AND Termination: a LATER success
+    re-achieving the SAME obligation (or one in its equivalence class), OR a JUSTIFIED escalation. NEVER 'any
+    later unrelated milestone'."""
+    targets = equiv.get(obligation_id, frozenset([obligation_id])) if obligation_id else frozenset()
+    for s in sem_trace[fail_idx + 1:]:
+        if _is_terminal(s) and s.get("event_role") == "escalate":
+            if _escalation_justified(manifest, dimension_policy, obligation_id):
+                return True, "justified_escalation"
+            return False, None                       # an UNjustified escalation does not resolve the obligation
+        if _is_failure(s):
+            continue
+        if obligation_id is not None and s.get("obligation_id") in targets and \
+           str(s.get("status", "")).lower() == "success":
+            return True, "obligation_reachieved"
+    return False, None
+
+
+def _score_recovery(sem_trace, equiv, manifest=None, dimension_policy=None):
     """A failure on obligation O is recovered ONLY by a LATER SUCCESS producing the SAME obligation_id (or
     an obligation in O's equivalence class), OR by a justified escalation terminal. Failures with
     obligation_id=None are excluded. N/A if no obligation-bound failures."""
@@ -202,17 +249,7 @@ def _score_recovery(sem_trace, equiv):
     recovered = 0
     detail = []
     for i, ob in bound:
-        targets = equiv.get(ob, frozenset([ob]))
-        ok, how = False, None
-        for s in sem_trace[i + 1:]:
-            if _is_terminal(s) and s.get("event_role") == "escalate":
-                ok, how = True, "escalation"           # deliberate escalation legitimately ends the obligation
-                break
-            if _is_failure(s):
-                continue
-            if s.get("obligation_id") in targets and str(s.get("status", "")).lower() == "success":
-                ok, how = True, "obligation_reachieved"
-                break
+        ok, how = _obligation_resolved_after(sem_trace, i, ob, equiv, manifest, dimension_policy)
         recovered += 1 if ok else 0
         detail.append({"failed_obligation": ob, "recovered": ok, "via": how})
     return _sm(round(recovered / len(bound), 3), opportunities=len(bound),
@@ -233,25 +270,15 @@ def _trace_truncated(sem_trace, dimension_policy):
     return False
 
 
-def _has_unresolved_agent_failure(sem_trace):
-    """An AGENT-attributed failure never resolved by a later success re-establishing the SAME obligation
-    (or adding any new milestone). Termination defect: the agent ended holding a self-inflicted error."""
+def _has_unresolved_agent_failure(sem_trace, equiv=None, manifest=None, dimension_policy=None):
+    """An AGENT-attributed failure never resolved (SAME definition as Recovery via _obligation_resolved_after:
+    same/equivalent obligation re-achieved OR justified escalation). An unrelated later milestone does NOT
+    resolve it -- Recovery and Termination now agree."""
+    equiv = equiv or {}
     for i, s in enumerate(sem_trace):
         if _is_failure(s) and s.get("failure_attribution") == "agent":
-            ob = s.get("obligation_id")
-            ms_before = _milestones_upto(sem_trace, i + 1)
-            resolved = False
-            for x in sem_trace[i + 1:]:
-                if _is_failure(x):
-                    continue
-                if set(x.get("milestones_added") or []) - ms_before:
-                    resolved = True
-                    break
-                if ob is not None and x.get("obligation_id") == ob and \
-                   str(x.get("status", "")).lower() == "success":
-                    resolved = True
-                    break
-            if not resolved:
+            ok, _ = _obligation_resolved_after(sem_trace, i, s.get("obligation_id"), equiv, manifest, dimension_policy)
+            if not ok:
                 return True
     return False
 
@@ -315,7 +342,8 @@ def lifecycle(sem_trace, dimension_policy, manifest=None):
                                 note="fewer than %d non-terminal events" % N)
 
     # 4. recovery -- OBLIGATION-bound ----------------------------------------------------------------
-    sub["recovery"] = _score_recovery(sem_trace, _obligation_equivalence(dimension_policy))
+    _equiv = _obligation_equivalence(dimension_policy)
+    sub["recovery"] = _score_recovery(sem_trace, _equiv, manifest, dimension_policy)
 
     # 5. termination_quality [CORE] -- terminal MANAGEMENT, NOT readiness ----------------------------
     terminal_role = sem_trace[term_idx].get("event_role") if has_terminal else None
@@ -332,7 +360,7 @@ def lifecycle(sem_trace, dimension_policy, manifest=None):
                                          note="escalation appropriateness; readiness NOT applied")
     else:
         post_goal = sum(1 for s in sem_trace[term_idx + 1:] if not _is_terminal(s))
-        unresolved_agent = _has_unresolved_agent_failure(sem_trace)
+        unresolved_agent = _has_unresolved_agent_failure(sem_trace, _equiv, manifest, dimension_policy)
         score = 1.0                                  # a final/commit terminal is a valid TYPE
         if truncated:
             score *= 0.5

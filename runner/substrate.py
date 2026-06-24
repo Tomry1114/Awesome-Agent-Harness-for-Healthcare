@@ -149,29 +149,38 @@ def map_trace(trace, plugin):
             obligation = _primary_obligation(meta)
             ok = not _errored(e)
             res = resolvers.get(tool)
-            if res and _no_payload(e):
-                res = None          # nothing to condition on -> fall back to static optimistic semantics
-            if res:
-                r = res(e, prev_state) or {}
-                role = r.get("role") or meta.get("role", default_role)
-                status = r.get("status", "success" if ok else "failure")
-                ms = list(r.get("milestones_added") or [])
-                pt = r.get("progress_token")
-                obligation = r.get("obligation_id", obligation)
-                explicit_changed = r.get("state_changed")
+            if res and _no_payload(e) and not e.get("semantic_assume_success"):
+                # P6: a resolver exists (this tool HAS a semantic completion condition) but there is NO output
+                # to prove it was met -> CONSERVATIVE partial, milestone WITHHELD (never optimistic). Test
+                # fixtures that legitimately assume success set semantic_assume_success=True.
+                role, status, ms, pt, explicit_changed = meta.get("role", default_role), "partial", [], None, False
             else:
-                role = meta.get("role", default_role)
-                status = "success" if ok else "failure"
-                ms = list(meta.get("success_milestones", [])) if ok else []
-                # default semantic token: content-hashed evidence (never the tool name)
-                pt = _default_token(e, tool) if ok else None
-                explicit_changed = None
+                if res and _no_payload(e):
+                    res = None      # flagged test stub -> static optimistic semantics
+                if res:
+                    r = res(e, prev_state) or {}
+                    role = r.get("role") or meta.get("role", default_role)
+                    status = r.get("status", "success" if ok else "failure")
+                    ms = list(r.get("milestones_added") or [])
+                    pt = r.get("progress_token")
+                    obligation = r.get("obligation_id", obligation)
+                    explicit_changed = r.get("state_changed")
+                else:
+                    role = meta.get("role", default_role)
+                    status = "success" if ok else "failure"
+                    ms = list(meta.get("success_milestones", [])) if ok else []
+                    pt = _default_token(e, tool) if ok else None     # content-hashed evidence, never tool name
+                    explicit_changed = None
             if status not in STATUSES:
                 status = "success" if ok else "failure"
             attr = None if status != "failure" else _attr(e)
             new_ms = [m for m in ms if m not in seen_ms]
             new_pt = pt is not None and pt not in seen_pt
-            if explicit_changed is not None:
+            _sr = e.get("state_record") if isinstance(e.get("state_record"), dict) else None
+            _rec_changed = _sr.get("state_changed") if _sr else None
+            if _rec_changed is not None:                         # authoritative real state diff (review 3.4)
+                changed = bool(_rec_changed) and status == "success"
+            elif explicit_changed is not None:
                 changed = bool(explicit_changed) and status == "success"
             else:
                 changed = (status == "success") and (bool(new_ms) or new_pt)
@@ -204,7 +213,14 @@ def milestones_reached(sem_trace):
 
 # ----------------------------------------------------------------------------- EvidenceView
 def _rendered_text(e):
-    """What the agent ACTUALLY saw for this step (recorded agent-visible surface), not the raw tool result."""
+    """What the agent ACTUALLY saw. Priority: runner-recorded agent_visible_text (exact string put into the
+    agent context) > raw observation > canonical_observation (audit mirror, compat fallback only)."""
+    av = e.get("agent_visible_text")
+    if isinstance(av, str) and av:
+        return av
+    ob = e.get("observation")
+    if isinstance(ob, str) and ob:
+        return ob
     co = e.get("canonical_observation")
     if isinstance(co, dict):
         t = (co.get("modalities") or {}).get("text")
@@ -221,6 +237,16 @@ def _source_text(e):
     return str(out or "")
 
 def _real_delivery(e):
+    """Prefer the RECORDED delivery_record (run.py renderer-level instrumentation, review 4.2); fall back to
+    deriving from canonical_observation when an older trace carries no record."""
+    dr = e.get("delivery_record")
+    if isinstance(dr, dict):
+        errored = _errored(e)
+        delivered = bool(dr.get("rendered_to_agent")) and bool(dr.get("produced")) and not errored
+        fid = 0.0 if errored else (0.5 if dr.get("truncated") else (1.0 if dr.get("rendered_to_agent") else 0.0))
+        return {"delivered": delivered, "fidelity": fid, "error_visible": bool(dr.get("error_state_rendered"))}
+    # --- legacy fallback (no delivery_record): derive from canonical_observation ---
+
     """REAL info-flow from the RECORDED rendering, NOT inferred from tool status. delivered = content was
     actually rendered into the agent context; fidelity = how much of the source survived (truncation/drop);
     error_visible = the failure actually appears in the agent-visible surface."""
@@ -293,7 +319,12 @@ def dimension_policy(task, plugin=None):
         if groups_ms:
             base["required_milestone_groups"] = groups_ms
             base["required_milestones"] = max(groups_ms, key=len)   # the most complete required path
-    base.update(task.get("lifecycle_policy") and {"lifecycle_policy": task["lifecycle_policy"]} or {})
+    lifecycle_policy = task.get("lifecycle_policy") or {}
+    base["lifecycle_policy"] = lifecycle_policy                      # P3: SINGLE normalization entry --
+    for _f in ("ordering_constraints", "terminal_policy", "escalation_conditions", "stagnation_window",
+               "irrecoverable_evidence_gap", "non_recoverable_obligations"):
+        if _f in lifecycle_policy:                                  # lift sub-fields to top level so the
+            base[_f] = lifecycle_policy[_f]                         # evaluator never guesses where they live
     base.setdefault("governance_policy_id", task.get("source_benchmark"))
     return base
 
