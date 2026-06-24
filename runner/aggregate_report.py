@@ -115,7 +115,8 @@ def _harness_dims(results):
     tier_override = {}
     for r in results:
         for c in (r.get("checkpoints") or r.get("cps") or []):
-            dim = c.get("dimension"); et = c.get("evidence_tier")
+            dim = c.get("dimension")
+            et = c.get("evidence_tier") or (c.get("detail") or {}).get("evidence_tier")
             if dim and et and et != "strict":
                 tier_override[dim] = et
     dims = {}
