@@ -21,12 +21,13 @@ Each sub-metric measures EXACTLY ONE thing (construct overlaps removed in the v2
                               milestones declared; 0 if the run never terminated.            [CORE]
 
   ordering_precedence       : DECLARATIVE precedence. Reads dimension_policy.ordering_constraints, each
-                              { (trigger | trigger_role) , (required_before|required_after as milestone
-                              or *_role) , weight }. A constraint is ACTIVATED when both its endpoints
-                              actually occur in the trace. Score = satisfied_weight / activated_weight
-                              over ACTIVATED constraints ONLY. N/A when the task declares no non-trivial
-                              ordering constraint (NOT an auto 1.0). The trivial 'acquire-before-terminal'
-                              score is DELETED.                                               [CORE]
+                              { predecessor:{milestone|role}, successor:{milestone|role}, weight } (the
+                              canonical form). A constraint is ACTIVATED when its SUCCESSOR occurs; it is
+                              SATISFIED only when the predecessor also occurs strictly BEFORE the successor.
+                              If the successor never occurs the constraint is not exercised. Score =
+                              satisfied_weight / activated_weight over ACTIVATED constraints ONLY. N/A when
+                              the task declares no non-trivial ordering constraint (NOT an auto 1.0). The
+                              trivial 'acquire-before-terminal' score is DELETED.             [CORE]
 
   stagnation                : a window of N>=3 consecutive non-terminal events that add NO new milestone,
                               NO new progress_token, and have state_changed=False -> stagnant. Judged by
@@ -245,6 +246,21 @@ def _obligation_resolved_after(sem_trace, fail_idx, obligation_id, equiv, manife
     return False, None
 
 
+def _unresolved_agent_obligations(sem_trace, equiv, manifest, dimension_policy, term_idx):
+    """Agent-attributed obligations still unresolved going INTO the terminal -- so termination can apply the
+    SAME obligation-specific escalation policy Recovery uses (e.g. an obligation in non_recoverable_
+    obligations), instead of only the global capability check."""
+    pre = sem_trace[:term_idx] if term_idx is not None else sem_trace
+    unresolved = []
+    for i, ev in enumerate(pre):
+        ob = ev.get("obligation_id")
+        if _is_failure(ev) and ev.get("failure_attribution") == "agent" and ob:
+            resolved, _ = _obligation_resolved_after(pre, i, ob, equiv, manifest, dimension_policy)
+            if not resolved:
+                unresolved.append(ob)
+    return sorted(set(unresolved))
+
+
 def _score_recovery(sem_trace, equiv, manifest=None, dimension_policy=None):
     """A failure on obligation O is recovered ONLY by a LATER SUCCESS producing the SAME obligation_id (or
     an obligation in O's equivalence class), OR by a justified escalation terminal. Failures with
@@ -362,10 +378,12 @@ def lifecycle(sem_trace, dimension_policy, manifest=None):
         # SAME escalation policy as Recovery/unresolved-failure (single source of truth): justified when a
         # capability is unimplemented/unavailable/unauthorized/unhealthy or the policy declares the evidence
         # irrecoverable. No longer a narrower healthy/authorized-only check (which disagreed with Recovery).
-        justified = _escalation_justified(manifest, dimension_policy, obligation_id=None)
+        _unres = _unresolved_agent_obligations(sem_trace, _equiv, manifest, dimension_policy, term_idx)
+        justified = (_escalation_justified(manifest, dimension_policy, obligation_id=None)
+                     or any(_escalation_justified(manifest, dimension_policy, obligation_id=ob) for ob in _unres))
         sub["termination_quality"] = _sm(1.0 if justified else 0.5, terminal="escalate",
-                                         escalation_justified=justified,
-                                         note="shared escalation policy; readiness NOT applied")
+                                         escalation_justified=justified, unresolved_obligations=_unres,
+                                         note="shared escalation policy (global + obligation-specific); readiness NOT applied")
     else:
         post_goal = sum(1 for s in sem_trace[term_idx + 1:] if not _is_terminal(s))
         unresolved_agent = _has_unresolved_agent_failure(sem_trace, _equiv, manifest, dimension_policy)
@@ -460,7 +478,7 @@ if __name__ == "__main__":
 
     # (a) ordering: wrong-order < right-order when an ordering_constraint is DECLARED
     pol_ord = {"required_milestones": ["A", "B"], "required_milestone_groups": [["A", "B"]],
-               "ordering_constraints": [{"trigger": "A", "required_before": "B", "weight": 1.0}]}
+               "ordering_constraints": [{"predecessor": {"milestone": "A"}, "successor": {"milestone": "B"}, "weight": 1.0}]}
     right = [ev("acquire", ms=["A"], pt="evidence:x:1"),
              ev("acquire", ms=["B"], pt="evidence:y:2"), ev("final", terminal="final")]
     wrong = [ev("acquire", ms=["B"], pt="evidence:y:2"),

@@ -335,6 +335,26 @@ def test_missing_plugin_produces_no_dimension_scores():
     assert problem.startswith("missing_benchmark_plugin")
 
 
+def test_obligation_policy_escalation_consistent():
+    """#P0: escalation justified ONLY by non_recoverable_obligations must score 1.0 in BOTH recovery and
+    termination -- termination now derives the unresolved obligation instead of passing obligation_id=None."""
+    import dim_lifecycle as _L
+    tr = [{"event_role": "acquire", "status": "failure", "obligation_id": "obtain_target_region", "failure_attribution": "agent"},
+          {"event_role": "escalate", "status": "success", "terminal": "escalate"}]
+    pol = {"non_recoverable_obligations": ["obtain_target_region"]}
+    r = _L.lifecycle(tr, pol, {})
+    assert r["submetrics"]["recovery"]["score"] == 1.0, r["submetrics"]["recovery"]
+    assert r["submetrics"]["termination_quality"]["score"] == 1.0, r["submetrics"]["termination_quality"]
+
+
+def test_aggregate_report_missing_plugin_returns_no_scores():
+    """#P1: the REPORT layer (not just require_plugin) fails closed for an unregistered benchmark."""
+    import aggregate_report as _A
+    panel, ex, lc, ob = _A._experimental_evaluators("/nonexistent_agent_dir", "FourthBenchmark")
+    assert panel.get("score_eligible") is False and panel.get("tier") == "unavailable"
+    assert ex == {} and lc == {} and ob == {}
+
+
 def _run():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     passed = 0

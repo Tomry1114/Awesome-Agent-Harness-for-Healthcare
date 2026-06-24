@@ -55,6 +55,16 @@ def main():
             for tid, why in unreg[:10]: print("  - %s: %s" % (tid, why))
         else:
             print("registry: all %d tasks registered (benchmarks=%s)" % (len(tasks), sorted(benches)))
+        # lint: NEW tasks must use canonical predecessor/successor ordering syntax (legacy reads backwards)
+        legacy = []
+        for t in tasks:
+            for c in ((t.get("lifecycle_policy") or {}).get("ordering_constraints") or []):
+                if isinstance(c, dict) and any(k in c for k in ("trigger", "trigger_role", "required_before",
+                                              "required_before_role", "required_after", "required_after_role")):
+                    legacy.append(t.get("task_id")); break
+        if legacy:
+            print("LEGACY_ORDERING_SYNTAX_FOUND: %d task(s) use deprecated trigger/required_before ordering "
+                  "syntax (use predecessor/successor): %s" % (len(legacy), legacy[:10]))
     except FileNotFoundError:
         print("registry: spec/registry.json missing (skipped)")
 
