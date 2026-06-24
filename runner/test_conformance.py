@@ -315,6 +315,26 @@ def test_circuit_broken_last_call_not_consumed():
     assert _S.evidence_view(ev, pl)[0]["delivered_to_agent"] is True
 
 
+def test_escalation_consistent_between_recovery_and_termination():
+    """#1: an escalation justified by available=False must score 1.0 in BOTH recovery and termination (they
+    now share _escalation_justified) -- previously termination's narrower healthy/authorized check gave 0.5."""
+    import dim_lifecycle as _L
+    tr = [{"event_role": "acquire", "status": "failure", "obligation_id": "obtain_evidence", "failure_attribution": "agent"},
+          {"event_role": "escalate", "status": "success", "terminal": "escalate"}]
+    man = {"retriever": {"implemented": True, "available": False, "authorized": True, "healthy": True}}
+    r = _L.lifecycle(tr, {}, man)
+    assert r["submetrics"]["recovery"]["score"] == 1.0, r["submetrics"]["recovery"]
+    assert r["submetrics"]["termination_quality"]["score"] == 1.0, r["submetrics"]["termination_quality"]
+
+
+def test_missing_plugin_produces_no_dimension_scores():
+    """#3: an unregistered benchmark fails closed -- require_plugin flags it, no vacuous default plugin."""
+    import substrate as _S
+    plugin, problem = _S.require_plugin("FourthBenchmark")
+    assert plugin is None
+    assert problem.startswith("missing_benchmark_plugin")
+
+
 def _run():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     passed = 0

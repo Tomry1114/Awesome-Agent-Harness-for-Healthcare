@@ -275,7 +275,9 @@ def _experimental_evaluators(agent_dir, bench):
         import dim_tooling as _dtool
     except Exception:
         _dtool = None
-    plugin = _sub.get_plugin(bench)
+    plugin, _plugin_problem = _sub.require_plugin(bench)
+    if _plugin_problem:                                  # unknown benchmark -> fail-closed, NO vacuous scores
+        return {"tier": "unavailable", "score_eligible": False, "problem": _plugin_problem}, {}, {}, {}
     ex_t, lc_t, ob_t = {}, {}, {}
     ctx_t, ver_t, tool_t = {}, {}, {}
     _lc_cov, _lc_unreportable = {}, []
@@ -300,6 +302,8 @@ def _experimental_evaluators(agent_dir, bench):
         # substrate structures (the ONLY inputs the dimension evaluators consume)
         sem = _sub.map_trace(evs, plugin)
         dp = _sub.dimension_policy(task, plugin)
+        if dp.get("score_eligible") is False:
+            continue        # fail-closed: missing/invalid dimension policy -> no score for this task
         manifest = _sub.capability_manifest(prov)
         ev = _sub.evidence_view(evs, plugin)
         e = _dex.execution(sem, dp, manifest)

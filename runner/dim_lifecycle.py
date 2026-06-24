@@ -88,7 +88,11 @@ def _milestones_upto(sem_trace, idx):
 
 # -------------------------------------------------------------------- ordering constraint resolution
 def _ordering_constraints(dimension_policy):
-    """Normalize dimension_policy.ordering_constraints into a list of
+    """Normalize dimension_policy.ordering_constraints. CANONICAL authoring form (the only one new tasks
+    should emit): {"predecessor": {milestone|role}, "successor": {milestone|role}, "weight"}. The legacy
+    trigger/required_before(_role)/required_after(_role) form is still PARSED for back-compat but each such
+    constraint is flagged deprecated_syntax=True and a DeprecationWarning is emitted (it reads backwards:
+    required_before=B under trigger=A actually means A-before-B). Normalizes to a list of
        {trigger, kind, target, weight}  where trigger/target each carry one of
        ("milestone", <name>) or ("role", <role>), and kind=="before" means trigger MUST precede target.
        A 'required_after' clause is stored as the symmetric 'before' with endpoints swapped.
@@ -126,18 +130,21 @@ def _ordering_constraints(dimension_policy):
             w = float(c.get("weight", 1.0))
         except (TypeError, ValueError):
             w = 1.0
+        import warnings
+        warnings.warn("ordering_constraints legacy trigger/required_before syntax is deprecated; use "
+                      "predecessor/successor", DeprecationWarning)
         if c.get("required_before") is not None:
-            out.append({"trigger": trig, "kind": "before",
-                        "target": ("milestone", c["required_before"]), "weight": w})
+            out.append({"trigger": trig, "kind": "before", "target": ("milestone", c["required_before"]),
+                        "weight": w, "deprecated_syntax": True})
         elif c.get("required_before_role") is not None:
-            out.append({"trigger": trig, "kind": "before",
-                        "target": ("role", c["required_before_role"]), "weight": w})
+            out.append({"trigger": trig, "kind": "before", "target": ("role", c["required_before_role"]),
+                        "weight": w, "deprecated_syntax": True})
         elif c.get("required_after") is not None:
-            out.append({"trigger": ("milestone", c["required_after"]), "kind": "before",
-                        "target": trig, "weight": w})
+            out.append({"trigger": ("milestone", c["required_after"]), "kind": "before", "target": trig,
+                        "weight": w, "deprecated_syntax": True})
         elif c.get("required_after_role") is not None:
-            out.append({"trigger": ("role", c["required_after_role"]), "kind": "before",
-                        "target": trig, "weight": w})
+            out.append({"trigger": ("role", c["required_after_role"]), "kind": "before", "target": trig,
+                        "weight": w, "deprecated_syntax": True})
     return out
 
 
@@ -352,12 +359,13 @@ def lifecycle(sem_trace, dimension_policy, manifest=None):
         sub["termination_quality"] = _sm(0.0, terminal=None, truncated=truncated,
                                          note="no terminal event reached (or truncated before terminal)")
     elif terminal_role == "escalate":
-        degraded = bool(manifest) and any(
-            isinstance(v, dict) and (v.get("healthy") is False or v.get("authorized") is False)
-            for v in manifest.values())
-        sub["termination_quality"] = _sm(1.0 if degraded else 0.5, terminal="escalate",
-                                         escalation_justified=bool(degraded),
-                                         note="escalation appropriateness; readiness NOT applied")
+        # SAME escalation policy as Recovery/unresolved-failure (single source of truth): justified when a
+        # capability is unimplemented/unavailable/unauthorized/unhealthy or the policy declares the evidence
+        # irrecoverable. No longer a narrower healthy/authorized-only check (which disagreed with Recovery).
+        justified = _escalation_justified(manifest, dimension_policy, obligation_id=None)
+        sub["termination_quality"] = _sm(1.0 if justified else 0.5, terminal="escalate",
+                                         escalation_justified=justified,
+                                         note="shared escalation policy; readiness NOT applied")
     else:
         post_goal = sum(1 for s in sem_trace[term_idx + 1:] if not _is_terminal(s))
         unresolved_agent = _has_unresolved_agent_failure(sem_trace, _equiv, manifest, dimension_policy)
