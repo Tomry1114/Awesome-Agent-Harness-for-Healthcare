@@ -95,12 +95,20 @@ def proxy_dimensions(events):
     availability = round(valid / n, 3)                                 # env/tools produced usable evidence
     _errs = [e for e in calls if _errored(e)]
     err_transp = round(sum(1 for e in _errs if e.get("error_type") or str(e.get("status", "")).lower() == "error") / len(_errs), 3) if _errs else None
+    # Review #3: uptake via EVIDENCE-UNIT matching, NOT raw long-word overlap (which rewarded copying
+    # tool prose and penalized correct paraphrase). Extract salient, matchable units — measurements/
+    # numbers+units and key radiology finding terms — and check coverage in the final answer. Still a
+    # COARSE deterministic signal (true semantic uptake needs a judge): reported with its method + a
+    # reliability flag, and kept at low weight so it does not dominate the composite.
     _fa = " ".join(str(e.get("thought", "")) for e in events if e.get("event_type") == "final_answer").lower()
-    _terms = set()
+    _units = set()
     for e in calls:
         for v in (_canon_modalities(e) or {}).values():
-            _terms.update(w for w in str(v).lower().split() if len(w) > 6)
-    uptake = round(sum(1 for w in _terms if w in _fa) / len(_terms), 3) if (_terms and _fa) else None
+            t = str(v).lower()
+            _units |= set(re.findall(r"\d+(?:\.\d+)?\s?(?:cm|mm|hu|%|ml|mg|mmhg)?", t))
+            _units |= set(re.findall(r"\b(?:left|right|bilateral|anterior|posterior|superior|inferior|hypodense|hyperdense|hypoattenuating|enhancing|mass|lesion|nodule|cyst|stenosis|occlusion|thrombus|calcification|hemorrhage|dilation|dilated)\b", t))
+    _units = {u.strip() for u in _units if u.strip() and not u.strip().isdigit() or (u.strip().isdigit() and len(u.strip()) >= 2)}
+    uptake = round(sum(1 for u in _units if u in _fa) / len(_units), 3) if (_units and _fa) else None
     # composite reflects the FULL pipeline: delivery (exposure) + failure transparency + agent uptake.
     # uptake is the discriminating layer (delivery alone saturates at 1.0). uptake None -> fall back to exposure.
     # Review #2: average ONLY applicable layers. error_transparency is N/A (not 1.0) when there was no
@@ -116,6 +124,8 @@ def proxy_dimensions(events):
                             "evidence_exposure": exposure, "evidence_uptake": uptake,
                             "error_transparency": err_transp,
                             "measures": "evidence_pipeline_effectiveness(delivery+uptake), not pure agent observability",
+                            "uptake_method": "evidence_unit_matching(measurements+finding_terms)",
+                            "uptake_reliability": "coarse_deterministic_proxy_judge_needed_for_semantic",
                             "applicable_layers": [n for n, _, _ in _layers],
                             "basis": "exposure=%d/%d avail=%d/%d err_transp=%s uptake=%s" % (exposed, n, valid, n, err_transp, uptake)}
     out["trace_observation_coverage"] = {"score": exposure,           # harness-side mirror for agent-vs-harness comparison (-> integrity)
