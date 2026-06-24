@@ -132,6 +132,25 @@ def test_unified_aggregation_dual_semantics():
     assert c0["score"] == 0.45 and c0["pass_status"] == "failed", "dual fields not persisted"
 
 
+def test_execution_proxy_sensitivity():
+    """Step (a): the Execution proxy must RESPOND when execution degrades (sensitivity + directionality).
+    Guards against a regression to a flat/insensitive metric."""
+    import proxy_verifiers as pv
+    def c(t, ok=True): 
+        e={"event_type":"tool_call","tool":t,"status":"ok" if ok else "error","canonical_observation":{"modalities":{"text":"x"}}}
+        if not ok: e["error_type"]="tool_error"; e["result"]="[error] failed"
+        return e
+    F={"event_type":"final_answer","thought":"x"}
+    base=pv.proxy_dimensions([c("A"),c("B"),F])["Execution"]["score"]
+    no_final=pv.proxy_dimensions([c("A"),c("B")])["Execution"]["score"]
+    errs=pv.proxy_dimensions([c("A",ok=False),c("B",ok=False),F])["Execution"]["score"]
+    recover=pv.proxy_dimensions([c("A",ok=False),c("A",ok=True),F])["Execution"]["score"]
+    repeated=pv.proxy_dimensions([c("A",ok=False),c("A",ok=False),F])["Execution"]["score"]
+    assert no_final < base, "Execution insensitive to missing terminal completion"
+    assert errs < base, "Execution insensitive to tool failures"
+    assert recover > repeated, "Execution does not distinguish recovery from repeated failure"
+
+
 def _run():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     passed = 0
