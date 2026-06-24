@@ -19,6 +19,7 @@ Does NOT re-run any model. Pure read over existing bundles. Usage:
 import json, os, sys, glob, collections, argparse
 from scoring import is_score_eligible
 from scoring import compute_dim_status
+from scoring import aggregate_dimension
 try:
     from proxy_verifiers import proxy_dimensions, average_proxy
 except Exception:
