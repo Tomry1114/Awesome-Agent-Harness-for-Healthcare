@@ -264,8 +264,11 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
     # grounding via multimodal judge (MH_MM_JUDGE) | local Qwen. Record EACH truthfully — result.json
     # must say who judged the answer and who judged grounding (reproducibility / integrity gate).
     def _ind_str(jm):
-        return "independent" if (jm and (jm not in (agent_model or "")) and (jm != (tool_backend_model or ""))) \
-               else "shared_model_with_agent_or_tool"
+        # EXACT model identity, NOT substring: gpt-5.4 judging gpt-5.4-mini IS independent (different
+        # models) — the old `jm not in agent_model` substring wrongly flagged gpt-5.4 in gpt-5.4-mini.
+        am = str(agent_model or "").split(" (")[0].strip()          # "gpt-5.4-mini (api brain)" -> "gpt-5.4-mini"
+        tb = str(tool_backend_model or "").split(":")[-1].strip()   # "api:gateway:gpt-5.5" -> "gpt-5.5"
+        return "independent" if (jm and jm != am and jm != tb) else "shared_model_with_agent_or_tool"
     _TIER = {"gacc_judge": "gacc_semantic", "multimodal_judge": "multimodal_judge",
              "llm_judge": "local_model_judge", "proxy": "offline_whitelist_proxy"}
     # judges are derived from what ACTUALLY ran (per-checkpoint evaluator_kind), NOT from env flags, so a
