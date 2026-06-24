@@ -211,6 +211,10 @@ def build(agent_dir, bench):
     strict_covered = {m for cat in hd["by_category"].values() for m, v in cat.items()
                       if v["status"] == "covered"}
     proxy = _proxy_dims(agent_dir, strict_covered)
+    _integ = _integrity(results)
+    _toc = (proxy.get("by_dimension") or {}).pop("trace_observation_coverage", None)   # Codex #7
+    if _toc is not None:
+        _integ["trace_observation_coverage"] = _toc
     _proxy_filled = sorted((set((proxy.get("by_dimension") or {}).keys()) & set(MODULES)) - strict_covered)
     coverage_summary = {
         "strict_scored": "%d/7" % len(strict_covered), "strict_dimensions": sorted(strict_covered),
@@ -227,7 +231,7 @@ def build(agent_dir, bench):
         "tool_use_quality": _tool_use_quality(results),
         "harness_dimensions": hd,
         "proxy_dimensions": proxy,
-        "integrity": _integrity(results),
+        "integrity": _integ,
         "failure_taxonomy": _failure_taxonomy(results),
     }
 

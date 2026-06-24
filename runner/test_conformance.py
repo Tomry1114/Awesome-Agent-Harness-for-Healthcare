@@ -69,7 +69,8 @@ def test_observability_consumes_canonical():
     assert proxy_verifiers._has_observation(ev_empty) is False      # canonical layer empty -> no observation
     out = proxy_verifiers.proxy_dimensions([ev_canon, ev_empty,
                                             {"event_type": "final_answer"}])
-    assert "Observability" in out and 0.0 <= out["Observability"]["score"] <= 1.0
+    # Codex #7: now reported as harness instrumentation coverage, not an agent Observability dimension
+    assert "trace_observation_coverage" in out and 0.0 <= out["trace_observation_coverage"]["score"] <= 1.0
 
 
 # ---- tightened error detection: bare word 'error' must NOT trigger a false failure ----

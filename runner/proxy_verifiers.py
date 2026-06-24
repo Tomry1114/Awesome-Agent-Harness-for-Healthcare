@@ -86,8 +86,10 @@ def proxy_dimensions(events):
 
     # --- Observability: fraction of tool calls that produced a recorded observation (audit trail) ---
     observed = sum(1 for e in calls if _has_observation(e))   # consumes canonical_observation (Codex)
-    out["Observability"] = {"score": round(observed / n, 3),
-                            "basis": "%d/%d calls produced a canonical observation" % (observed, n)}
+    # Codex #7: this measures whether the HARNESS captured each tool result into the canonical trace
+    # (instrumentation coverage), NOT agent observability. Reported under INTEGRITY, not the 7-dim profile.
+    out["trace_observation_coverage"] = {"score": round(observed / n, 3),
+                                         "basis": "%d/%d tool results captured into canonical trace" % (observed, n)}
 
     # --- Lifecycle: ordering sanity = each goal (mutation OR final answer) preceded by info-gathering ---
     info_seen, goals, ok = False, 0, 0
