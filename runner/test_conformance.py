@@ -108,6 +108,24 @@ def test_evaluator_type_persisted():
     assert c0.get("evaluator_version"), "build_result dropped evaluator_version"
 
 
+def test_unified_aggregation_dual_semantics():
+    """Codex #1+#2: ONE aggregate_dimension; the same field is never reused with two maths.
+    score_mean (graded) != pass_rate (binary) for a GAcc-style cp; build_result (raw) now emits
+    score_mean (NOT pass-rate), plus per-checkpoint dual fields score + pass_status."""
+    cps = [{"dimension": "Verification", "score": 0.45, "pass_status": "failed",
+            "score_eligible": True, "checkpoint_status": "failed", "weight": 1.0}]
+    agg = scoring.aggregate_dimension(cps)
+    assert agg["score_mean"] == 0.45 and agg["pass_rate"] == 0.0, agg   # two semantics, two fields
+    assert agg["zero_variance"] is True and agg["n_scored"] == 1, agg
+    r = {"id": "cp_outcome", "dimension": "Verification", "subdimension": "result_verification",
+         "checkpoint_status": "failed", "score": 0.45, "score_eligible": True}
+    out = scoring.build_result({"task_id": "T", "checkpoints": [{"id": "cp_outcome"}]}, [], [r], {})
+    assert out["dimension_scores"]["Verification"] == 0.45, "raw must use score_mean (graded), not pass-rate"
+    assert out["dimension_pass_rate"]["Verification"] == 0.0, "pass_rate is a SEPARATE field"
+    c0 = out["checkpoints"][0]
+    assert c0["score"] == 0.45 and c0["pass_status"] == "failed", "dual fields not persisted"
+
+
 def _run():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     passed = 0

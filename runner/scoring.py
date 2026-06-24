@@ -452,6 +452,44 @@ def compute_dim_status(results, dim_scores, proxy_scores):
     return status, reason
 
 
+def _cp_score(c):
+    """Continuous score in [0,1]: graded judges carry numeric score; binary cp -> passed=1.0/failed=0.0;
+    None for not_applicable/skipped/error."""
+    sc = c.get("score")
+    if isinstance(sc, (int, float)):
+        return float(sc)
+    ps = c.get("pass_status") or c.get("checkpoint_status")
+    return 1.0 if ps == "passed" else (0.0 if ps == "failed" else None)
+
+
+def _cp_eligible(c):
+    """formal_analysis_eligible: enters the dimension score. Excludes proxy (score_eligible False),
+    not_applicable, skipped, error."""
+    return c.get("score_eligible") is True and (c.get("pass_status") or c.get("checkpoint_status")) in ("passed", "failed")
+
+
+def aggregate_dimension(cps):
+    """SINGLE source of dimension aggregation (Codex: raw/rescore/report ALL call THIS — no second
+    _remap math). Returns BOTH semantics so the same field is never reused with two different maths:
+      score_mean       = weighted mean of continuous cp scores  (-> 7-dim profile)
+      pass_rate        = weighted fraction passed                (-> gates)
+    plus distribution stats so mean=0.5,var=0 is distinguishable from mean=0.5 spread."""
+    import statistics as _st
+    elig = [c for c in cps if _cp_eligible(c)]
+    w = lambda c: float(c.get("weight", 1.0))
+    tw = sum(w(c) for c in elig)
+    vals = [v for v in (_cp_score(c) for c in elig) if v is not None]
+    if not tw or not vals:
+        return {"score_mean": None, "pass_rate": None, "n_scored": len(elig), "n_applicable": len(cps),
+                "std": None, "min": None, "max": None, "zero_variance": None}
+    sm = sum(w(c) * _cp_score(c) for c in elig) / tw
+    pr = sum(w(c) for c in elig if (c.get("pass_status") or c.get("checkpoint_status")) == "passed") / tw
+    std = _st.pstdev(vals) if len(vals) > 1 else 0.0
+    return {"score_mean": round(sm, 3), "pass_rate": round(pr, 3), "n_scored": len(elig),
+            "n_applicable": len(cps), "std": round(std, 3), "min": round(min(vals), 3),
+            "max": round(max(vals), 3), "zero_variance": std == 0.0}
+
+
 def build_result(task, trajectory, results, provenance):
     cps = []
     for r in results:
@@ -464,12 +502,21 @@ def build_result(task, trajectory, results, provenance):
         if r.get("detail"): c["detail"] = r["detail"]   # was dropped by the whitelist -> arg_accuracy/three_class/gacc detail all surfaced now
         if r.get("evaluator_type"): c["evaluator_type"] = r["evaluator_type"]       # registry provenance (Codex B)
         if r.get("evaluator_version"): c["evaluator_version"] = r["evaluator_version"]
-        if "score" in r: c["score"] = r["score"]
+        c["pass_status"] = c["checkpoint_status"]                    # passed/failed/skipped/error (na set by evaluators)
+        _sc = r.get("score")
+        c["score"] = float(_sc) if isinstance(_sc, (int, float)) else (
+            1.0 if c["checkpoint_status"] == "passed" else (0.0 if c["checkpoint_status"] == "failed" else None))
+        _thr = (r.get("detail") or {}).get("threshold")
+        if _thr is not None: c["threshold"] = _thr
         if "score_eligible" in r: c["score_eligible"] = r["score_eligible"]
         _ec = error_class(r)
         if _ec is not None: c["error_class"] = _ec
         cps.append(c)
-    dim, cov, proxy_dim, proxy_cov = aggregate(results)
+    _, _, proxy_dim, proxy_cov = aggregate(results)            # proxy_* (proxy CHECKPOINTS, if any)
+    _dims = {m: aggregate_dimension([c for c in cps if c.get("dimension") == m]) for m in MODULES}
+    dim = {m: _dims[m]["score_mean"] for m in MODULES}        # dimension_scores = graded score_mean
+    dim_pass_rate = {m: _dims[m]["pass_rate"] for m in MODULES}
+    cov = {m: _dims[m]["n_scored"] for m in MODULES}
     # Codex #3: every null dimension score carries an EXPLICIT status (never an unexplained void).
     dim_status, dim_status_reason = compute_dim_status(results, dim, proxy_dim)
     evaluated = [r for r in results if is_score_eligible(r)]
@@ -504,6 +551,7 @@ def build_result(task, trajectory, results, provenance):
             "proxy_dimension_scores": proxy_dim, "proxy_dimension_coverage": proxy_cov,
             "dimension_status": dim_status,
             "dimension_status_reason": dim_status_reason,
+            "dimension_pass_rate": dim_pass_rate, "dimension_stats": _dims,
             "tool_calls": sum(1 for e in trajectory if e.get("event_type") == "tool_call"),
             "failure_tags": sorted(tags), "provenance": provenance,
             "_checkpoints_full": results}

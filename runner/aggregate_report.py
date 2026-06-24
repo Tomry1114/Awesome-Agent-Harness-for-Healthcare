@@ -62,24 +62,15 @@ def _remap(results, bench):
         for cp in (json.loads(l).get("checkpoints") or []):
             idmap[cp.get("id")] = (cp.get("dimension"), cp.get("subdimension"), cp.get("weight", 1.0))
     for r in results:
-        passw, totw = collections.defaultdict(float), collections.defaultdict(float)
         for c in (r.get("checkpoints") or []):
             if c.get("id") in idmap:
-                c["dimension"], c["subdimension"], _ = idmap[c["id"]]
-            if not is_score_eligible(c):   # single source of truth w/ scoring (fail-closed: missing flag -> excluded)
-                continue
-            w = idmap.get(c.get("id"), (None, None, 1.0))[2]
-            st = c.get("checkpoint_status")
-            if st in ("passed", "failed"):
-                # graded judges carry a numeric `score` (e.g. tool_use_quality, gacc) -> use it;
-                # binary checkpoints contribute 1.0/0.0. Weighted mean per dimension.
-                sc = c.get("score")
-                val = sc if isinstance(sc, (int, float)) else (1.0 if st == "passed" else 0.0)
-                totw[c["dimension"]] += w
-                passw[c["dimension"]] += w * val
-        # recompute dimension_scores from remapped checkpoints (old precomputed dict used stale tags)
-        r["dimension_scores"] = {m: (round(passw[m] / totw[m], 3) if totw[m] else None) for m in MODULES}
-        # Codex #3: status is a single source of truth with the recomputed scores at report time too.
+                c["dimension"], c["subdimension"], _w = idmap[c["id"]]
+                c["weight"] = _w                      # carry task weight so aggregate_dimension is exact
+        # Codex #1: report layer uses the SAME aggregate_dimension as raw/rescore — no second math.
+        _dims = {m: aggregate_dimension([c for c in (r.get("checkpoints") or []) if c.get("dimension") == m]) for m in MODULES}
+        r["dimension_scores"] = {m: _dims[m]["score_mean"] for m in MODULES}
+        r["dimension_pass_rate"] = {m: _dims[m]["pass_rate"] for m in MODULES}
+        r["dimension_stats"] = _dims
         _st, _rsn = compute_dim_status(r.get("checkpoints") or [], r["dimension_scores"], r.get("proxy_dimension_scores") or {})
         r["dimension_status"] = _st
         r["dimension_status_reason"] = _rsn

@@ -10,7 +10,7 @@ before/after dimension coverage. Reuses the same gateway contract as risk_annota
 """
 import json, os, sys, glob, base64, collections, hashlib
 import gateway
-from scoring import is_score_eligible, compute_dim_status
+from scoring import is_score_eligible, compute_dim_status, aggregate_dimension
 
 MODULES = ["Execution", "Tooling", "Context", "Lifecycle", "Observability", "Verification", "Governance"]
 _BASE = (os.environ.get("MH_JUDGE_BASE") or os.environ.get("MH_OPENAI_BASE", "https://www.micuapi.ai")).rstrip("/")
@@ -147,24 +147,17 @@ def rescore(agent_dir, bench):
                 c["failure_mode"] = None if passed else "agent_failure"
                 c["score_eligible"] = True   # post-hoc judge IS a formal scoring tier (STATUS 2); make it eligible in BOTH layers
                 c["evaluator_kind"] = "post_hoc_gateway_judge"
+                c["pass_status"] = c["checkpoint_status"]            # dual-field (Codex #2)
+                c["score"] = 1.0 if passed else 0.0
                 c["judge_backend"] = _MODEL
                 n_judged += 1
             after[c.get("checkpoint_status")] += 1
-        # recompute per-task dimension_scores with the SAME predicate as report._remap -> layers never diverge
-        passw, totw = collections.defaultdict(float), collections.defaultdict(float)
-        for c in (r.get("checkpoints") or []):
-            if not is_score_eligible(c):
-                continue
-            w = defs.get(c.get("id"), {}).get("weight", 1.0)
-            sc = c.get("score")
-            val = sc if isinstance(sc, (int, float)) else (1.0 if c.get("checkpoint_status") == "passed" else 0.0)
-            totw[c.get("dimension")] += w
-            passw[c.get("dimension")] += w * val
-        ds = dict(r.get("dimension_scores") or {})
-        for m in MODULES:
-            if totw.get(m):
-                ds[m] = round(passw[m] / totw[m], 3)
+        # recompute via the SINGLE aggregate_dimension (Codex #1: raw/rescore/report share ONE function)
+        _dims = {m: aggregate_dimension([c for c in (r.get("checkpoints") or []) if c.get("dimension") == m]) for m in MODULES}
+        ds = {m: _dims[m]["score_mean"] for m in MODULES}
         r["dimension_scores"] = ds
+        r["dimension_pass_rate"] = {m: _dims[m]["pass_rate"] for m in MODULES}
+        r["dimension_stats"] = _dims
         # SSOT: refresh dimension_status from the SAME recomputed scores so post-hoc Governance never
         # reads "not_exercised" while scoring 1.0 (the decoupling bug).
         _st, _rsn = compute_dim_status(r.get("checkpoints") or [], ds, r.get("proxy_dimension_scores") or {})
