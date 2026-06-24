@@ -48,23 +48,48 @@ def _attr(e):
         return "unknown"
 
 def map_trace(trace, plugin):
-    """SemanticEventMapper: raw canonical trace -> [SemanticEvent] using ONLY plugin.tool_semantics. The
-    core assigns final/escalate by event_type; the benchmark decides what each tool MEANS (role/milestone)."""
+    """SemanticEventMapper: raw canonical trace -> [SemanticEvent]. A tool's meaning comes from the plugin:
+    a RESULT-CONDITIONAL resolver(event, prev_state) if declared (reads the actual OUTPUT to decide real
+    state change / which milestones were truly achieved), else the static tool_semantics (optimistic).
+    state_changed is NOVELTY-gated: a successful call that yields no milestone/progress not already seen does
+    NOT advance state -> repeated no-progress calls become visible to stagnation, and a tool that 'returns OK'
+    without doing real work is not auto-credited. The core still names no benchmark/tool; the plugin does."""
     tool_sem = (plugin or {}).get("tool_semantics", {})
+    resolvers = (plugin or {}).get("resolvers", {})
     default_role = (plugin or {}).get("default_tool_role", "act")
     out = []
+    seen_ms, seen_pt = set(), set()
+    prev_state = {"milestones": seen_ms, "tokens": seen_pt}
     for e in trace:
         et = e.get("event_type")
         if et == "tool_call":
-            meta = tool_sem.get(e.get("tool"), {"role": default_role, "success_milestones": []})
             ok = not _errored(e)
-            out.append(semantic_event(
-                meta.get("role", default_role),
-                status="success" if ok else "failure",
-                failure_attribution=None if ok else _attr(e),
-                milestones_added=meta.get("success_milestones", []) if ok else [],
-                progress_token=(meta.get("progress_token") or e.get("tool")) if ok else None,
-                state_changed=ok, raw=e))
+            res = resolvers.get(e.get("tool"))
+            if res:
+                r = res(e, prev_state) or {}
+                role = r.get("role") or tool_sem.get(e.get("tool"), {}).get("role", default_role)
+                status = r.get("status", "success" if ok else "failure")
+                ms = list(r.get("milestones_added") or [])
+                pt = r.get("progress_token")
+                explicit_changed = r.get("state_changed")
+            else:
+                meta = tool_sem.get(e.get("tool"), {"role": default_role, "success_milestones": []})
+                role = meta.get("role", default_role)
+                status = "success" if ok else "failure"
+                ms = list(meta.get("success_milestones", [])) if ok else []
+                pt = (meta.get("progress_token") or e.get("tool")) if ok else None
+                explicit_changed = None
+            attr = None if status != "failure" else _attr(e)
+            new_ms = [m for m in ms if m not in seen_ms]
+            new_pt = pt is not None and pt not in seen_pt
+            if explicit_changed is not None:
+                changed = bool(explicit_changed) and status != "failure"
+            else:
+                changed = (status != "failure") and (bool(new_ms) or new_pt)
+            out.append(semantic_event(role, status=status, failure_attribution=attr,
+                       milestones_added=ms, progress_token=pt, state_changed=changed, raw=e))
+            seen_ms.update(ms)
+            if pt is not None: seen_pt.add(pt)
         elif et == "final_answer":
             out.append(semantic_event("final", terminal="final", raw=e))
         elif et and ("escalat" in str(et).lower() or et == "deliverable_budget_warning"):
@@ -128,6 +153,23 @@ def dimension_policy(task, plugin=None):
     return base
 
 # ----------------------------------------------------------------------------- plugin registrations
+def _resolve_region(event, prev_state):
+    """RegionAttributeDescription: a successful HTTP call that FELL BACK to the whole image (resolved=False)
+    did NOT examine the targeted region -> it must NOT be credited target_region_examined. Reads the real
+    localization status from result.output.localization."""
+    out = (event.get("result") or {}).get("output") if isinstance(event.get("result"), dict) else None
+    loc = out.get("localization") if isinstance(out, dict) else None
+    if _errored(event):
+        return {"role": "acquire", "status": "failure", "milestones_added": [], "state_changed": False}
+    if isinstance(loc, dict) and loc.get("resolved") is True:
+        return {"role": "acquire", "status": "success", "state_changed": True,
+                "milestones_added": ["target_region_examined", "relevant_image_evidence_obtained"],
+                "progress_token": str(loc.get("requested") or "region")}
+    # fell back to the full image: general image evidence only, the targeted region was NOT examined
+    return {"role": "acquire", "status": "partial", "state_changed": False,
+            "milestones_added": ["image_overview_obtained"], "progress_token": None}
+
+
 def _medcta_evidence(trace):
     """measurements + finding terms actually delivered to the agent (reuses Observability evidence units)."""
     units = []
@@ -151,6 +193,7 @@ register_plugin({
         "GoogleSearch": {"role": "acquire", "success_milestones": ["external_reference_obtained"]},
         "Calculator": {"role": "act", "success_milestones": []}},
     "evidence_extractor": _medcta_evidence,
+    "resolvers": {"RegionAttributeDescription": _resolve_region},
     "dimension_policy": {"required_milestones": ["relevant_image_evidence_obtained"],
                          "required_context_units": ["target_image_evidence"],
                          "governance_policy_id": "MedCTA"}})

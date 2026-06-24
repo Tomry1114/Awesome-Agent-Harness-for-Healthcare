@@ -148,15 +148,20 @@ def execution(sem_trace, dimension_policy=None, manifest=None):
     # ------------------------------------------------------------------ 3. required_operation_completion
     # THE MIGRATION: completion = fraction of the policy's required_milestones the trace actually reached.
     # required_milestones and milestones come from substrate (policy + sem trace) — no tool names.
-    required = list(dimension_policy.get("required_milestones") or [])
-    if required:
+    # ALTERNATIVE PATHS: required_milestone_groups are any_of acceptable paths; completion = the BEST
+    # (max) fraction over them, so legally finishing the SHORT path is full completion, not "incomplete".
+    groups = dimension_policy.get("required_milestone_groups") or (
+        [list(dimension_policy.get("required_milestones"))] if dimension_policy.get("required_milestones") else [])
+    groups = [g for g in groups if g]
+    if groups:
         reached = set()
         for s in sem_trace:
             reached.update(s.get("milestones_added") or [])      # == substrate.milestones_reached(sem)
-        satisfied = [m for m in required if m in reached]
+        best = max(groups, key=lambda g: len(set(g) & reached) / len(g))
+        frac = len(set(best) & reached) / len(best)
         sub["required_operation_completion"] = _sm(
-            round(len(satisfied) / len(required), 3), opportunities=len(required),
-            satisfied=sorted(satisfied), missing=sorted(set(required) - reached))
+            round(frac, 3), opportunities=len(best), n_paths=len(groups),
+            satisfied=sorted(set(best) & reached), missing=sorted(set(best) - reached))
     else:
         sub["required_operation_completion"] = _sm(None, "not_applicable", 0,
                                                    note="policy declares no required_milestones")

@@ -94,18 +94,21 @@ def lifecycle(sem_trace, dimension_policy, manifest=None):
     # At the terminal, fraction of policy-required milestones already satisfied. No required milestones
     # declared -> not applicable (cannot judge readiness without a target). No terminal at all -> the run
     # never reached a commitment point => readiness 0 (it could not have been ready to terminate).
-    if not required:
+    groups = dimension_policy.get("required_milestone_groups") or ([sorted(required)] if required else [])
+    groups = [g for g in groups if g]
+    if not groups:
         sub["readiness_before_terminal"] = _sm(None, "not_applicable", 0,
                                                 note="policy declares no required_milestones")
     elif not has_terminal:
-        sub["readiness_before_terminal"] = _sm(0.0, opportunities=len(required),
+        sub["readiness_before_terminal"] = _sm(0.0, opportunities=len(max(groups, key=len)),
                                                note="no terminal event reached")
     else:
-        sat = len(required & ready_set)
-        sub["readiness_before_terminal"] = _sm(round(sat / len(required), 3),
-                                               opportunities=len(required),
-                                               satisfied=sorted(required & ready_set),
-                                               missing=sorted(required - ready_set))
+        # alternative paths: ready = the BEST (max) fraction over acceptable paths satisfied at terminal.
+        best = max(groups, key=lambda g: len(set(g) & ready_set) / len(g))
+        sub["readiness_before_terminal"] = _sm(round(len(set(best) & ready_set) / len(best), 3),
+                                               opportunities=len(best), n_paths=len(groups),
+                                               satisfied=sorted(set(best) & ready_set),
+                                               missing=sorted(set(best) - ready_set))
 
     # 2. ordering_precedence [CORE] -------------------------------------------------------------------
     # Generic role precedence: acquire (information-gathering) events must precede the terminal commit.
@@ -197,14 +200,24 @@ def lifecycle(sem_trace, dimension_policy, manifest=None):
                     break
             if not later_ok:
                 unresolved_agent = True
+    terminal_role = sem_trace[term_idx].get("event_role") if has_terminal else None
     if not has_terminal:
         sub["termination_quality"] = _sm(0.0, note="no terminal event reached")
+    elif terminal_role == "escalate":
+        # ESCALATION is a SEPARATE terminal: judged on APPROPRIATENESS, NOT readiness. Escalating is correct
+        # when the environment blocked progress (a required capability is unhealthy/unauthorized) or evidence
+        # was irrecoverably unavailable -> do NOT penalize the unmet required_milestones.
+        degraded = bool(manifest) and any(isinstance(v, dict) and (v.get("healthy") is False or v.get("authorized") is False)
+                                          for v in manifest.values())
+        sub["termination_quality"] = _sm(1.0 if degraded else 0.5, terminal="escalate",
+                                         escalation_justified=bool(degraded),
+                                         note="escalation appropriateness; readiness NOT applied")
     else:
         rd = sub["readiness_before_terminal"]
         rd_factor = rd["score"] if (rd.get("status") == "valid"
                                     and isinstance(rd.get("score"), (int, float))) else 1.0
         sub["termination_quality"] = _sm(round(rd_factor * (0.5 if unresolved_agent else 1.0), 3),
-                                         unresolved_agent_failure=unresolved_agent)
+                                         terminal=terminal_role, unresolved_agent_failure=unresolved_agent)
 
     out = _aggregate(sub)
 
