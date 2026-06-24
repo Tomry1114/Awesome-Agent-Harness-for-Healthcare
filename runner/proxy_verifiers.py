@@ -108,9 +108,12 @@ def proxy_dimensions(events):
 
     # --- Execution: operational completion = reached a terminal answer with >=1 successful tool call ---
     ok_calls = sum(1 for e in calls if not _errored(e))
-    done = has_final and ok_calls > 0
-    out["Execution"] = {"score": 1.0 if done else round(ok_calls / n, 3),
-                        "basis": "final=%s ok_calls=%d/%d" % (has_final, ok_calls, n)}
+    tool_success_rate = ok_calls / n
+    # Codex #3: a trajectory with NO final answer must NOT score 1.0 just because tools succeeded.
+    # Split the two concepts and combine; final_reached and tool_success_rate are kept as sub-signals.
+    out["Execution"] = {"score": round(0.5 * (1.0 if has_final else 0.0) + 0.5 * tool_success_rate, 3),
+                        "final_reached": bool(has_final), "tool_success_rate": round(tool_success_rate, 3),
+                        "basis": "0.5*final(%s) + 0.5*tool_success(%d/%d)" % (has_final, ok_calls, n)}
     return out
 
 

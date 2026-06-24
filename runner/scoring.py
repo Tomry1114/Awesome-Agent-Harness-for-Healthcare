@@ -213,24 +213,35 @@ def _ev_deterministic(cp, ctx, base):
         for n, a in ag:
             ag_keys.setdefault(n, set()).update(
                 {_al(k) for k, v in (a or {}).items() if k not in SYS and v not in (None, "", [], {}, ())})
-        # arg_accuracy judges ARGUMENTS of tools the agent ACTUALLY called (intersection with ref).
-        # NOT-calling a reference tool is tool_selection's concern (3-class), NOT an argument failure.
-        missing = [n for n in (set(ref_keys) & set(ag_keys)) if not (ref_keys[n] <= ag_keys[n])]
-        schema_ok = bool(ref) and not missing                       # axis 1: localization arg provided
-        _loc = _localization_status(ctx)                            # axis 2: tool actually localized?
-        loc_ok = (_loc["region_calls"] == 0) or (_loc["unresolved"] == 0)
+        # Codex #4 (exposure bias): only judge args of reference tools the agent ACTUALLY invoked.
+        # If NONE were invoked there are no args to check -> NOT a vacuous pass: mark NOT_APPLICABLE
+        # (the un-selection is tool_selection's concern, #8). Empty-set never counts as arg competence.
+        invoked = sorted(set(ref_keys) & set(ag_keys))
+        _loc = _localization_status(ctx)
+        if not ref or not invoked:
+            _reason = "no_reference_tools" if not ref else "missing_due_to_unselected_ref_tool"
+            return {**base, "checkpoint_status": "skipped", "pass_status": "not_applicable",
+                    "failure_mode": None, "skip_reason": _reason, "score_eligible": True,
+                    "detail": {"mode": "arg_accuracy_3axis", "applicable": False, "reason": _reason,
+                               "ref_tools": sorted(ref_keys), "agent_tools": sorted(ag_keys), "localization": _loc}}
+        missing = [n for n in invoked if not (ref_keys[n] <= ag_keys[n])]
+        schema_ok = not missing                                     # axis 1: arg keys present on invoked ref tools
+        loc_applicable = _loc["region_calls"] > 0                   # axis 2 applies ONLY if a region tool was invoked
+        loc_ok = (not loc_applicable) or (_loc["unresolved"] == 0)  # no auto-pass when no region tool called
         _sem = _arg_semantic_judge(ctx, ag)                         # axis 3: regions relevant? (opt-in)
         sem_ok = (_sem is None) or bool(_sem.get("appropriate", True))
         ok = schema_ok and loc_ok and sem_ok
         _tag = None if ok else ("tool_argument_error" if not schema_ok else
                                 ("missing_evidence" if not loc_ok else "tool_argument_error"))
         return {**base, "checkpoint_status": "passed" if ok else "failed",
+                "pass_status": "passed" if ok else "failed",
                 "failure_mode": None if ok else "agent_failure",
                 "failure_tag": _tag, "score_eligible": True,
-                "detail": {"mode": "arg_accuracy_3axis",
-                           "axes": {"schema_validity": int(schema_ok), "localization_success": int(loc_ok),
+                "detail": {"mode": "arg_accuracy_3axis", "applicable": True,
+                           "axes": {"schema_validity": int(schema_ok),
+                                    "localization_success": (None if not loc_applicable else int(loc_ok)),
                                     "semantic_appropriateness": (None if _sem is None else int(sem_ok))},
-                           "missing": missing, "localization": _loc, "semantic": _sem,
+                           "invoked_ref_tools": invoked, "missing": missing, "localization": _loc, "semantic": _sem,
                            "ref_keys": {k: sorted(v) for k, v in ref_keys.items()},
                            "ag_keys": {k: sorted(v) for k, v in ag_keys.items()}}}
     if chk.get("method") == "jmespath" and ctx.get("full_state") is not None:
@@ -502,7 +513,7 @@ def build_result(task, trajectory, results, provenance):
         if r.get("detail"): c["detail"] = r["detail"]   # was dropped by the whitelist -> arg_accuracy/three_class/gacc detail all surfaced now
         if r.get("evaluator_type"): c["evaluator_type"] = r["evaluator_type"]       # registry provenance (Codex B)
         if r.get("evaluator_version"): c["evaluator_version"] = r["evaluator_version"]
-        c["pass_status"] = c["checkpoint_status"]                    # passed/failed/skipped/error (na set by evaluators)
+        c["pass_status"] = r.get("pass_status") or c["checkpoint_status"]   # evaluator may set not_applicable
         _sc = r.get("score")
         c["score"] = float(_sc) if isinstance(_sc, (int, float)) else (
             1.0 if c["checkpoint_status"] == "passed" else (0.0 if c["checkpoint_status"] == "failed" else None))
