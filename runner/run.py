@@ -155,6 +155,10 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
     # deliverable enforcement (final): guarantee ONE write attempt if the required file is still missing
     # (covers both "finished early" and "ran out of steps"), then normalize a mis-named single file.
     deliv.enforce(env, agent, task, trajectory, max_steps)
+    try:
+        _caps = env.capabilities()   # Codex #10: four-state manifest captured while env is alive (pre-teardown)
+    except Exception:
+        _caps = {}
     env.teardown()
 
     # upstream-format trajectory.log for native_pytest
@@ -338,7 +342,7 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
                   "judge_independence_policy": _judge_policy,
                   "judge_decoding": judge_decoding, "judges": judges,
                   "uses_hidden_reference": uses_hidden_ref, "scorer_validation_only": validation_only,
-                  "fidelity": fidelity, "medcta_config": _medcta_cfg}
+                  "fidelity": fidelity, "medcta_config": _medcta_cfg, "capabilities": _caps}
     result = scoring.build_result(task, trajectory, results, provenance)
     result["_schema"] = validate_result(result)
     result["_trajectory"] = trajectory
@@ -356,6 +360,9 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
         quals.append("non_independent_judge")
     if any(c.get("score_eligible") is False for c in result.get("checkpoints", [])): quals.append("proxy_scored_checkpoints")
     if any("API_BRAIN_ERROR" in str(ev.get("thought", "")) for ev in trajectory): quals.append("api_backend_error")
+    quals = sorted(set(quals))
+    if any(not (c or {}).get("healthy", True) for c in (_caps or {}).values()):
+        quals.append("degraded_tool_health")   # Codex #10: a down backing service is NOT agent incompetence
     quals = sorted(set(quals))
     result["qualification"] = quals  # F1: non-underscore -> survives --out / run_batch result.json (meta.qualification_integrity)
     if quals:

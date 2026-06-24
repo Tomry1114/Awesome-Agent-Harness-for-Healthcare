@@ -160,7 +160,7 @@ def run_checkpoint(cp, ctx):
             alt_satisfied = (not alt_groups) or any(g <= used for g in alt_groups)
             # PASS when every truly-required tool was used AND (an alternative path was satisfied OR there
             # are no hard requirements at all). Skipping OPTIONAL/sufficient tools is NOT a failure.
-            ok = (not missing_required) and (alt_satisfied or not req["required"])
+            ok = (not missing_required) and alt_satisfied
             note = None
             if ok and not req["required"] and (req["optional"] or alt_groups):
                 # the only "expected" tools were optional/alternative; if none of them were used the

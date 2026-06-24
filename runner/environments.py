@@ -13,6 +13,20 @@ class EnvironmentAdapter:
     def available_tools(self): return [t["name"] for t in self.task.get("available_tools", [])]
 
     def call_tool(self, name, args): raise NotImplementedError
+
+    def _healthy(self):
+        """Best-effort runtime health of this env's backing service. Subclasses override with a real
+        reachability check. Codex #10: a tool that is implemented+available but NOT healthy (service
+        DOWN) means a failure is NOT the agent's fault and must not be scored as agent incompetence."""
+        return True
+
+    def capabilities(self):
+        """Four-state capability manifest per tool (Codex #10): implemented (runner has code) /
+        available (offered to this task) / authorized (allowed) / healthy (backing service up)."""
+        deny = set(getattr(self, "_denied_tools", []) or [])
+        healthy = self._healthy()
+        return {n: {"implemented": True, "available": True, "authorized": n not in deny, "healthy": healthy}
+                for n in sorted(self.available_tools())}
     def teardown(self): ...
 
 class FhirEnv(EnvironmentAdapter):
@@ -24,6 +38,17 @@ class FhirEnv(EnvironmentAdapter):
         self.aug_dir = aug_dir
         os.makedirs(self.workspace, exist_ok=True)
         self._lab = None
+        self._health_cache = None
+    def _healthy(self):
+        if self._health_cache is None:
+            try:
+                import urllib.request as _u
+                _u.urlopen(_u.Request(self.base.rstrip("/") + "/metadata",
+                                      headers={"Accept": "application/fhir+json"}), timeout=3)
+                self._health_cache = True
+            except Exception:
+                self._health_cache = False
+        return self._health_cache
     def _as_entries(self, res):
         """Flatten a FHIR search Bundle into {"entries":[resource,...], "total", "pages"} to match the
         upstream PhysicianBench tool output (eval_helpers/get_all_fhir_resources_from_trajectory expects
@@ -162,6 +187,8 @@ class ToolSandboxEnv(EnvironmentAdapter):
             os.path.dirname(__file__), "..", "benchmark", "MedCTA", "opencompass", "data", "medcta_dataset"))
         fp = os.path.join(root, rel)
         return fp if os.path.exists(fp) else rel
+    def _healthy(self):
+        return bool(self.image_path and os.path.exists(self.image_path))
     def reset(self):
         self._i = 0
     def call_tool(self, name, args):
@@ -217,6 +244,8 @@ class GuiEnvReal(EnvironmentAdapter):
         self.workspace = os.environ.get("MH_GUI_WORKSPACE", "/tmp/hab_ws_%d" % os.getpid())
         self._last_download = None
         self._prev_hash = None  # NoProgress: detect API-success-but-no-state-change
+    def _healthy(self):
+        return self.page is not None
 
     def reset(self):
         from playwright.sync_api import sync_playwright
@@ -261,7 +290,7 @@ class GuiEnvReal(EnvironmentAdapter):
         changed = self._prev_hash is not None and h != self._prev_hash  # API success != semantic progress
         self._prev_hash = h
         return {"ok": True, "url": self.page.url, "title": self.page.title(), "observation": obs,
-                "state_changed": bool(changed), "semantic_progress": bool(changed)}
+                "state_changed": bool(changed), "surface_changed": bool(changed)}
 
     def _sel(self, a):
         if a.get("ref") not in (None, ""):

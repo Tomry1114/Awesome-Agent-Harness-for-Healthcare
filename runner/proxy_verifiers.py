@@ -29,6 +29,22 @@ def _observation(e):
     return str(e.get("result") or e.get("observation") or "").strip()
 
 
+def _canon_modalities(e):
+    """Read the CANONICAL observation layer (Codex: canonical_observation must be consumed, not just
+    written). Returns the non-empty modality dict of e["canonical_observation"], or None if absent."""
+    co = e.get("canonical_observation")
+    if isinstance(co, dict) and isinstance(co.get("modalities"), dict):
+        return {k: v for k, v in co["modalities"].items() if v}
+    return None
+
+
+def _has_observation(e):
+    cm = _canon_modalities(e)
+    if cm is not None:        # canonical layer present -> audit-grade signal
+        return bool(cm)
+    return bool(_observation(e))   # pre-canonical bundle fallback
+
+
 def _errored(e):
     s = str(e.get("status", "")).lower()
     r = _observation(e).lower()
@@ -69,9 +85,9 @@ def proxy_dimensions(events):
                                      "basis": "n=%d err=%.2f redundant=%.2f" % (n, err, redun)}
 
     # --- Observability: fraction of tool calls that produced a recorded observation (audit trail) ---
-    observed = sum(1 for e in calls if _observation(e))
+    observed = sum(1 for e in calls if _has_observation(e))   # consumes canonical_observation (Codex)
     out["Observability"] = {"score": round(observed / n, 3),
-                            "basis": "%d/%d calls produced an observation" % (observed, n)}
+                            "basis": "%d/%d calls produced a canonical observation" % (observed, n)}
 
     # --- Lifecycle: ordering sanity = each goal (mutation OR final answer) preceded by info-gathering ---
     info_seen, goals, ok = False, 0, 0

@@ -25,6 +25,14 @@ except Exception:
     proxy_dimensions = average_proxy = None
 
 MODULES = ["Execution", "Tooling", "Context", "Lifecycle", "Observability", "Verification", "Governance"]
+
+
+def _bundle_path(rp):
+    """Codex #14: prefer the rescored layer (post-hoc judged: Governance etc.) over the IMMUTABLE raw
+    result.json. raw stays untouched on disk; the report reflects the rescored view when present."""
+    import os as _os
+    rescored = _os.path.join(_os.path.dirname(rp), "result.rescored.json")
+    return rescored if _os.path.exists(rescored) else rp
 _ROOT = "benchmark_dataprocess"
 CATEGORIES = {
     "task_competence": ["Execution", "Tooling", "Context", "Lifecycle"],   # 事做没做对
@@ -36,7 +44,7 @@ def _load(agent_dir):
     out = []
     for rp in sorted(glob.glob(os.path.join(agent_dir, "*", "result.json"))):
         try:
-            out.append(json.load(open(rp)))
+            out.append(json.load(open(_bundle_path(rp))))
         except Exception as e:
             sys.stderr.write("skip %s: %r\n" % (rp, e))
     return out

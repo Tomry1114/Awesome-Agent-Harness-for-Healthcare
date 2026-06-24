@@ -8,7 +8,7 @@ HAB full_state-templated rubrics are NOT post-hoc-fillable (full_state not persi
 Writes updated checkpoint_status into result.json (keeps original under _rescore audit) and prints
 before/after dimension coverage. Reuses the same gateway contract as risk_annotator.
 """
-import json, os, sys, glob, base64, collections
+import json, os, sys, glob, base64, collections, hashlib
 import gateway
 from scoring import is_score_eligible, compute_dim_status
 
@@ -110,6 +110,8 @@ def rescore(agent_dir, bench):
         r = json.load(open(rp))
         traj = os.path.join(os.path.dirname(rp), "trajectory.jsonl")
         mc, gui = None, None  # lazy-loaded evidence
+        _prompt_blob = []     # (#14) accumulate judge system+user prompts actually used, for provenance hash
+        _rescored_ids = []    # (#14) checkpoint ids re-judged in this bundle
         for c in (r.get("checkpoints") or []):
             before[c.get("checkpoint_status")] += 1
             if c.get("checkpoint_status") != "skipped":
@@ -136,8 +138,10 @@ def rescore(agent_dir, bench):
             if userp is None:
                 after[c.get("checkpoint_status")] += 1
                 continue
+            _prompt_blob.append((sysp or "") + "\n" + (userp or ""))  # (#14) record exact judge prompt used
             passed, raw = gateway_verdict(sysp, userp)
             if passed is not None:
+                _rescored_ids.append(c.get("id"))
                 c["_rescore"] = {"from": "skipped", "judge_model": _MODEL, "raw": raw}
                 c["checkpoint_status"] = "passed" if passed else "failed"
                 c["failure_mode"] = None if passed else "agent_failure"
@@ -166,7 +170,23 @@ def rescore(agent_dir, bench):
         _st, _rsn = compute_dim_status(r.get("checkpoints") or [], ds, r.get("proxy_dimension_scores") or {})
         r["dimension_status"] = _st
         r["dimension_status_reason"] = _rsn
-        json.dump(r, open(rp, "w"), indent=1, ensure_ascii=False)
+        # (#14) RAW immutability: never overwrite the run-time result.json. Hash the original bytes,
+        # attach rescore provenance, and write the modified object to a SEPARATE rescore layer.
+        _raw_bytes = open(rp, "rb").read()
+        _prompt_sha = hashlib.sha256(("\n\n".join(_prompt_blob)).encode("utf-8")).hexdigest() if _prompt_blob else None
+        r["_rescore_provenance"] = {
+            "raw_result_sha256": hashlib.sha256(_raw_bytes).hexdigest(),
+            "judge_model": _MODEL,
+            # no versioned rubric field exists in the bundle/provenance; per-task criteria+rubric come
+            # verbatim from tasks_unified, and the judge instruction templates are static constants ->
+            # best-effort tag (not fabricated).
+            "rubric_version": "upstream_verbatim",
+            "prompt_sha256": _prompt_sha,
+            "eligibility_policy": "fail_closed",
+            "rescored_keys": _rescored_ids,
+        }
+        rescored_path = os.path.join(os.path.dirname(rp), "result.rescored.json")
+        json.dump(r, open(rescored_path, "w"), indent=1, ensure_ascii=False)
     return n_judged, dict(before), dict(after)
 
 

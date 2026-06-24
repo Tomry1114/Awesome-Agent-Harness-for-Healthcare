@@ -83,7 +83,7 @@ def canonical_result(res):
                 "artifact": res.get("downloaded") or res.get("uploaded")}
     sc = res.get("state_changed")
     if sc is False:
-        return {"status": "success", "kind": "NoProgress", "state_changed": False, "semantic_progress": False}
+        return {"status": "success", "kind": "NoProgress", "state_changed": False, "surface_changed": False}
     if sc is True:
         return {"status": "success", "kind": "StateChange", "state_changed": True}
     return {"status": "success", "kind": "Success"}
