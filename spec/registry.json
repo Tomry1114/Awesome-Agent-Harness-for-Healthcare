@@ -1,0 +1,34 @@
+{
+  "benchmarks": {
+    "PhysicianBench": {
+      "prefix": "PB",
+      "domain": "clinical_data_ops",
+      "modalities": [
+        "structured_fhir"
+      ],
+      "environment": "fhir"
+    },
+    "HealthAdminBench": {
+      "prefix": "HAB",
+      "domain": "healthcare_admin",
+      "modalities": [
+        "gui_web"
+      ],
+      "environment": "gui"
+    },
+    "MedCTA": {
+      "prefix": "MCTA",
+      "domain": "multimodal_clinical_reasoning",
+      "modalities": [
+        "image_text"
+      ],
+      "environment": "tool_sandbox"
+    }
+  },
+  "environment_adapters": [
+    "fhir",
+    "gui",
+    "tool_sandbox"
+  ],
+  "_doc": "Supported benchmarks/adapters. A new dataset adds an entry here (prefix + domain + modalities + environment); the JSON Schema stays open. validate_tasks.py enforces registry membership."
+}

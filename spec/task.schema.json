@@ -5,17 +5,17 @@
   "type": "object",
   "required": ["task_id", "source_benchmark", "domain", "modality", "environment", "context", "available_tools", "goal", "checkpoints", "scoring"],
   "properties": {
-    "task_id": {"type": "string", "pattern": "^(PB|HAB|MCTA)-.+"},
-    "source_benchmark": {"enum": ["PhysicianBench", "HealthAdminBench", "MedCTA"]},
-    "domain": {"enum": ["clinical_data_ops", "healthcare_admin", "multimodal_clinical_reasoning"]},
-    "modality": {"enum": ["structured_fhir", "gui_web", "image_text"]},
+    "task_id": {"type": "string", "pattern": "^[A-Za-z0-9_]+-.+", "description": "<registered-prefix>-<id>; prefix validated against spec/registry.json, NOT hardcoded"},
+    "source_benchmark": {"type": "string", "minLength": 1, "description": "validated against spec/registry.json benchmarks"},
+    "domain": {"type": "string", "minLength": 1},
+    "modality": {"oneOf": [{"type": "string", "minLength": 1}, {"type": "array", "items": {"type": "string"}, "minItems": 1}], "description": "string or array (multi-modal tasks)"},
     "specialty": {"type": "string"},
     "anatomical_region": {"type": "string"},
     "difficulty": {"enum": ["easy", "medium", "hard"]},
     "environment": {
       "type": "object",
       "required": ["type"],
-      "properties": {"type": {"enum": ["fhir", "gui", "tool_sandbox"]}, "config": {"type": "object"}}
+      "properties": {"type": {"type": "string", "minLength": 1, "description": "environment adapter id; validated against spec/registry.json environment_adapters"}, "adapter_id": {"type": "string"}, "config": {"type": "object"}}
     },
     "context": {
       "description": "AGENT-VISIBLE input only. Never put gold/reference here.",
