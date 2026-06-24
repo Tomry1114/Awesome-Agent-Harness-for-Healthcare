@@ -1,3 +1,28 @@
+## 2026-06-24 (续3) — /goal 架构收尾：evaluator registry + adapter 契约 + capability 四态 + raw 不可变 + canonical 被消费 + conformance
+
+本轮把 Codex 架构审计的结构性缺口一次性补齐。代码全在远端 ce483。提交：`cc86a20`/`57df682`/`7569467`/`5d8b065` + matrix。
+
+**🔴 B 架构**
+- **evaluator registry**：`scoring.run_checkpoint` 的 type if/elif 抽成 `EVALUATOR_REGISTRY{native_pytest/deterministic/llm_judge/policy}`，每个 `_ev_<type>(cp,ctx,base)`；新增 evaluator = 注册不改链；每个结果盖 `evaluator_type/evaluator_version`。行为保持（conformance 8/8 + 逐 type 实跑无 NameError）。
+- **BenchmarkAdapter 契约**：`EnvironmentAdapter` docstring 形式化契约（reset/available_tools/call_tool/capabilities/teardown），`ENV_REGISTRY` = 注册表；`test_benchmark_adapter_contract` 证明每个注册 env 满足。诚实：run.py 主循环仍有 env_type 分支，evaluate_source_metric 未完全并入 adapter（staged）。
+- **C conformance**：`runner/test_conformance.py` 0→8 个不变量测试（fail-closed / status-SSOT / error taxonomy / alt-enforcement / canonical 消费 / 子串收紧 / adapter 契约）。
+- **A capability 矩阵**：`docs/CAPABILITY_MATRIX.md` — 三数据集 native→canonical 表达力保留 + 偏差登记。
+- **canonical_observation 被消费**：Observability proxy 现读 `canonical_observation.modalities`（不再只写）。
+
+**🟠 快修**
+- #16 `semantic_progress→surface_changed`（只是 url+obs 哈希差，不过度解释）。
+- #14 raw 不可变：rescore 写 `result.rescored.json`（+`_rescore_provenance`: raw sha256/judge_model/prompt_sha256/eligibility_policy/rescored_keys），不覆盖 result.json；aggregate 优先读 rescored。验证：raw sha 不变。
+- #8 tool_selection 强制 alt_groups（MedCTA required_tools=0 不再白给分）。
+- #10 capabilities() 四态{implemented/available/authorized/healthy} + 每 env _healthy 运行时检查；入 provenance + `degraded_tool_health` 资格标。
+- #6 被漏的第三份 fail-open（benchmark_metric/report.py + remap_report.py）已 fail-closed。
+
+**🟡 构造效度**
+- #8 构造效度洞坐实：MedCTA 107 题 required_tools=0。
+- 7/7 限定：report 加 `coverage_summary`（strict X/7 + proxy + caveat）。
+- 卫生：native_parsers.pyc 删、--source-benchmark 死参删。
+
+**验证**：conformance 8/8；raw immutable OK；最终定版重跑（results_mctaVerify）进行中。dissociation.py（用户 thesis 脚本）待用户定。
+
 ## 2026-06-24 (续2) — Codex 结构性遗留 5 项并行清完 + score_eligible 两层单一真源
 
 大 review 里 P1/P2 结构债一次性清完。代码全在远端 ce483。提交：`418bc97` / `1842173` / `69c2d49`。
