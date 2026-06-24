@@ -462,6 +462,8 @@ def build_result(task, trajectory, results, provenance):
         if r.get("judge_backend"): c["judge_backend"] = r["judge_backend"]
         if r.get("evaluator_kind"): c["evaluator_kind"] = r["evaluator_kind"]
         if r.get("detail"): c["detail"] = r["detail"]   # was dropped by the whitelist -> arg_accuracy/three_class/gacc detail all surfaced now
+        if r.get("evaluator_type"): c["evaluator_type"] = r["evaluator_type"]       # registry provenance (Codex B)
+        if r.get("evaluator_version"): c["evaluator_version"] = r["evaluator_version"]
         if "score" in r: c["score"] = r["score"]
         if "score_eligible" in r: c["score_eligible"] = r["score_eligible"]
         _ec = error_class(r)

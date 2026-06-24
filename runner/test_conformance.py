@@ -92,6 +92,22 @@ def test_benchmark_adapter_contract():
         assert stt in src, "capability four-state missing: " + stt
 
 
+def test_evaluator_type_persisted():
+    """Codex B: the registry stamps evaluator_type/version on each checkpoint AND build_result must
+    persist it (not drop it in the output whitelist)."""
+    cp = {"id": "cp_tool_selection", "type": "deterministic", "dimension": "Tooling",
+          "subdimension": "tool_use_quality", "check": {"method": "toolset_contains"}}
+    ctx = {"reference": {"required_tool_groups": [["OCR", "ImageDescription"]]},
+           "agent_tool_calls": [("OCR", {}), ("ImageDescription", {})], "ref_tool_calls": []}
+    r = scoring.run_checkpoint(cp, ctx)
+    assert r.get("evaluator_type") == "deterministic", r.get("evaluator_type")
+    assert r.get("evaluator_version"), "no evaluator_version"
+    out = scoring.build_result({"task_id": "TEST", "checkpoints": [cp]}, [], [r], {})
+    c0 = out["checkpoints"][0]
+    assert c0.get("evaluator_type") == "deterministic", "build_result dropped evaluator_type"
+    assert c0.get("evaluator_version"), "build_result dropped evaluator_version"
+
+
 def _run():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     passed = 0
