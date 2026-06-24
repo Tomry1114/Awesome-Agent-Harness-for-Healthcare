@@ -126,9 +126,21 @@ def execution(events, capabilities=None, task_policy=None):
         sub["required_operation_completion"] = _sm(None, "not_applicable", 0)
     # terminal_completion
     sub["terminal_completion"] = _sm(1.0 if has_final else 0.0)
-    # semantic state-transition (region localized vs fallback) needs localization metadata not yet
-    # propagated through ToolSandboxEnv -> N/A (honest) until the env forwards it.
-    sub["state_transition_success"] = _sm(None, "not_applicable", note="needs localization metadata from env wrapper")
+    # semantic state-transition: region requests that ACTUALLY localized (resolved) vs fell back to the
+    # full image. localization lives at result.output.localization (env wraps the tool dict under output).
+    def _loc(e):
+        r = e.get("result")
+        if isinstance(r, dict):
+            o = r.get("output")
+            if isinstance(o, dict) and isinstance(o.get("localization"), dict): return o["localization"]
+            if isinstance(r.get("localization"), dict): return r["localization"]
+        return None
+    _region = [e for e in calls if _loc(e) is not None]
+    if _region:
+        _resolved = sum(1 for e in _region if _loc(e).get("resolved"))
+        sub["state_transition_success"] = _sm(round(_resolved / len(_region), 3), opportunities=len(_region))
+    else:
+        sub["state_transition_success"] = _sm(None, "not_applicable", 0)
     out = _aggregate(sub)
     out["error_attribution"] = {"agent_failures": sum(1 for c in agent_calls if _pv._errored(c)),
                                 "env_or_harness_failures_excluded": len(env_fail),
