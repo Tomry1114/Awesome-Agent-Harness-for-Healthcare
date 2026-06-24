@@ -284,6 +284,37 @@ def _ev_llm_judge(cp, ctx, base):
                 "judge_backend": v.get("model"), "score_eligible": True,
                 "detail": {"reason": v.get("reason"), "raw_truncated": v.get("raw"),
                            "image_sha": v.get("image_sha"), "judge_decoding": v.get("judge_decoding")}}
+    # ---- REAL Verification route (Codex #6): audits whether the FINAL ANSWER is VERIFIED against the
+    #      agent own tool evidence (cross-check / consistency / conflict handling / no unsupported
+    #      claims) -- NOT answer correctness (that is the Outcome/GAcc metric). gateway judge, 0-1. ----
+    if cp.get("subdimension") == "evidence_verification":
+        if not (ctx.get("gacc") or ctx.get("mm_judge")) or os.environ.get("MH_VERIFICATION_JUDGE", "1") == "0":
+            return {**base, "checkpoint_status": "skipped", "failure_mode": None,
+                    "skip_reason": "missing_judge_backend", "score_eligible": True}
+        import gateway, re as _re
+        q = str(ctx.get("medcta_question") or ""); ans = " ".join(ctx.get("final_texts", []))[:1500]
+        obs, _om = _judge_observations(ctx)
+        sysp = ("You AUDIT whether a medical AI FINAL ANSWER is properly VERIFIED against its OWN tool "
+                "evidence. Judge the VERIFICATION PROCESS, NOT whether the answer is medically correct. "
+                "Reward: cross-checking key findings across tools; confirming tool results are consistent "
+                "with the question; handling conflicting evidence; EXPLICITLY flagging insufficient evidence "
+                "instead of asserting; avoiding claims unsupported by ANY tool result. Penalize confident "
+                "claims with no tool-evidence backing. First line: a single score 0.0-1.0. Then reasons.")
+        usr = "QUESTION: %s\n\nTOOL OBSERVATIONS (the only evidence the agent had):\n%s\n\nFINAL ANSWER:\n%s" % (q[:1000], (obs or "")[:2500], ans)
+        rj = gateway.chat([{"role": "system", "content": sysp}, {"role": "user", "content": usr}],
+                          model=os.environ.get("MH_JUDGE_MODEL", "gpt-5.4"), max_tokens=400, judge=True)
+        if not rj.get("ok"):
+            return {**base, "checkpoint_status": "error", "failure_mode": "verifier_error",
+                    "note": "verification_judge_" + str(rj.get("error_type"))}
+        mm2 = _re.search(r"([01](?:\.\d+)?)", rj.get("content") or "")
+        sc = max(0.0, min(1.0, float(mm2.group(1)))) if mm2 else 0.0
+        thr = float(os.environ.get("MH_VERIFICATION_THRESHOLD", "0.5")); ok = sc >= thr
+        return {**base, "checkpoint_status": "passed" if ok else "failed", "pass_status": "passed" if ok else "failed",
+                "failure_mode": None if ok else "agent_failure", "score": sc, "score_eligible": True,
+                "evaluator_kind": "verification_judge", "judge_tier": "gateway_verification",
+                "judge_backend": os.environ.get("MH_JUDGE_MODEL", "gpt-5.4"),
+                "detail": {"mode": "evidence_verification", "score": sc, "threshold": thr,
+                           "raw_truncated": (rj.get("content") or "")[:300]}}
     # ---- MedCTA Gacc route: 0-1 semantic score per upstream goal_accuracy.py (cp_outcome) ----
     gacc = ctx.get("gacc")
     if gacc is not None and chk.get("whitelist_ref") and cp.get("subdimension") in ("clinical_task_success", "result_verification"):
