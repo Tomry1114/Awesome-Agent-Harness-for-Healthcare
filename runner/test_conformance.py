@@ -201,6 +201,29 @@ def test_execution_capability_healthy_attribution():
     assert r["attribution_source"].startswith("capability_manifest")
 
 
+def test_substrate_benchmark_agnostic():
+    """The SemanticEventMapper / EvidenceView core must consume plugin metadata and contain NO benchmark
+    tool literal -- a 4th dataset registers a plugin, the dimension-facing core is untouched."""
+    import inspect, substrate as sub
+    assert set(sub.list_plugins()) >= {"MedCTA", "PhysicianBench", "HealthAdminBench"}
+    # core mapper source names no tool/benchmark
+    src = inspect.getsource(sub.map_trace) + inspect.getsource(sub.evidence_view)
+    for lit in ("MedCTA", "OCR", "ImageDescription", "fhir", "snapshot", "RegionAttribute"):
+        assert lit not in src, "core leaks benchmark literal: %s" % lit
+    # same core, two different plugins -> roles come from the plugin, not the core
+    tr = [{"event_type": "tool_call", "tool": "fhir_search", "status": "ok"},
+          {"event_type": "tool_call", "tool": "submit", "status": "ok"},
+          {"event_type": "final_answer", "thought": "done"}]
+    pb = sub.map_trace(tr, sub.get_plugin("PhysicianBench"))
+    hab = sub.map_trace(tr, sub.get_plugin("HealthAdminBench"))
+    assert pb[0]["event_role"] == "acquire" and "patient_record_loaded" in pb[0]["milestones_added"]
+    assert hab[1]["event_role"] == "commit" and "form_submitted" in hab[1]["milestones_added"]
+    assert pb[-1]["terminal"] == "final"
+    # evidence units carry the required delivery fields
+    ev = sub.evidence_view(tr, sub.get_plugin("PhysicianBench"))
+    assert ev and all(set(u) >= {"id", "delivered_to_agent", "delivery_fidelity", "error_visible"} for u in ev)
+
+
 def _run():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     passed = 0
