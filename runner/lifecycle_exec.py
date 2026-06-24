@@ -28,6 +28,25 @@ def _norm_args(a):
     return json.dumps({k: re.sub(r"\s+", " ", str(v).strip().lower()) for k, v in sorted(a.items())}, ensure_ascii=False)
 
 
+def produced_valid_result(ev):
+    """SEMANTIC success, stricter than transport _errored: did the call return non-empty, non-error
+    content? Catches the cases the lenient detector misses (empty result, error text without the
+    bracket prefix, fallback descriptions)."""
+    if ev.get("event_type") != "tool_call":
+        return None
+    if _pv._errored(ev):
+        return False
+    out = (ev.get("result") or {}).get("output") if isinstance(ev.get("result"), dict) else ev.get("result")
+    txt = out.get("text") if isinstance(out, dict) else out
+    txt = str(txt or "").strip()
+    if not txt:
+        return False
+    low = txt.lower()
+    if low.startswith("[error") or low.startswith("error:") or "no result" in low or "not found" in low:
+        return False
+    return True
+
+
 def error_attribution(ev):
     """Who is responsible for this failure? agent / environment / external_service / harness / unknown.
     Returns None if the event is not an error."""
@@ -63,7 +82,7 @@ def _aggregate(subs):
 
 
 # ---------------------------------------------------------------- Execution
-def execution(events, capabilities=None):
+def execution(events, capabilities=None, task_policy=None):
     calls = [e for e in events if e.get("event_type") == "tool_call"]
     has_final = any(e.get("event_type") == "final_answer" for e in events)
     sub = {}
@@ -74,20 +93,29 @@ def execution(events, capabilities=None):
         sub["action_validity"] = _sm(round((n_act - bad) / n_act, 3))
     else:
         sub["action_validity"] = _sm(None, "not_applicable", 0)
-    # tool_execution_success: ONLY agent-attributable calls (exclude env/harness); unknown not auto-blamed
+    # tool_invocation_success: SEMANTIC (non-empty/non-error output), agent-attributable only.
     agent_calls = [c for c in calls if error_attribution(c) in (None, "agent")]
     env_fail = [c for c in calls if error_attribution(c) in ("environment", "external_service", "harness")]
     unknown_fail = [c for c in calls if error_attribution(c) == "unknown"]
     if agent_calls:
-        ok = sum(1 for c in agent_calls if not _pv._errored(c))
-        sub["tool_execution_success"] = _sm(round(ok / len(agent_calls), 3), opportunities=len(agent_calls))
+        ok = sum(1 for c in agent_calls if produced_valid_result(c))
+        sub["tool_invocation_success"] = _sm(round(ok / len(agent_calls), 3), opportunities=len(agent_calls))
     else:
-        sub["tool_execution_success"] = _sm(None, "not_applicable", 0)
-    # terminal_completion: did the agent reach a terminal answer
+        sub["tool_invocation_success"] = _sm(None, "not_applicable", 0)
+    # required_operation_completion: did the agent COMPLETE a required tool path (best acceptable group)?
+    # DISCRIMINATING — a weaker agent skips required ops even when nothing "errors". needs task policy.
+    groups = [set(g) for g in ((task_policy or {}).get("required_tool_groups") or []) if g]
+    used_valid = {c.get("tool") for c in calls if produced_valid_result(c)}
+    if groups:
+        best = max(sum(1 for t in g if t in used_valid) / len(g) for g in groups)
+        sub["required_operation_completion"] = _sm(round(best, 3), opportunities=len(groups))
+    else:
+        sub["required_operation_completion"] = _sm(None, "not_applicable", 0)
+    # terminal_completion
     sub["terminal_completion"] = _sm(1.0 if has_final else 0.0)
-    # required_operation_completion / state_transition_success need ENV state -> not derivable from trajectory alone
-    sub["required_operation_completion"] = _sm(None, "not_applicable", note="needs env target-state (per-bench adapter)")
-    sub["state_transition_success"] = _sm(None, "not_applicable", note="needs env state diff (per-bench adapter)")
+    # semantic state-transition (region localized vs fallback) needs localization metadata not yet
+    # propagated through ToolSandboxEnv -> N/A (honest) until the env forwards it.
+    sub["state_transition_success"] = _sm(None, "not_applicable", note="needs localization metadata from env wrapper")
     out = _aggregate(sub)
     out["error_attribution"] = {"agent_failures": sum(1 for c in agent_calls if _pv._errored(c)),
                                 "env_or_harness_failures_excluded": len(env_fail),

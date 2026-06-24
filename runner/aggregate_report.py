@@ -227,31 +227,42 @@ def _tool_use_quality(results):
             "judge": "llm_judge (gpt-5.5), 0-2 per sub x5 -> [0,1]"}
 
 
-def _experimental_evaluators(agent_dir):
-    """Step (b): deterministic state-machine Execution/Lifecycle. EXPERIMENTAL tier (fault-injection
-    validated, not yet human-audited -> NOT strict). Reported alongside, never mixed into the 7-dim
-    profile or success until promoted."""
+def _experimental_evaluators(agent_dir, bench):
+    """Step (b): deterministic state-machine Execution/Lifecycle (fault-injection validated). These FILL
+    the Execution/Lifecycle dimension cells (replacing the coarse/deprecated proxies); tier=experimental
+    until human-audited. Uses task policy (required_tool_groups) for required_operation_completion."""
+    import statistics as _st
     try:
-        import lifecycle_exec as _le, statistics as _st
+        import lifecycle_exec as _le
     except Exception:
-        return {"note": "lifecycle_exec unavailable"}
-    ex, lc = [], []
+        return {"note": "lifecycle_exec unavailable"}, {}, {}
+    pol = {}
+    tf = os.path.join(_ROOT, bench, "tasks_unified.jsonl")
+    if os.path.exists(tf):
+        for l in open(tf):
+            t = json.loads(l); ref = t.get("reference") or {}
+            pol[t.get("task_id")] = {"required_tool_groups": ref.get("required_tool_groups")}
+    ex_t, lc_t = {}, {}
     for tp in sorted(glob.glob(os.path.join(agent_dir, "*", "trajectory.jsonl"))):
+        tid = os.path.basename(os.path.dirname(tp))
         try:
             evs = [json.loads(l) for l in open(tp) if l.strip()]
         except Exception:
             continue
-        e = _le.execution(evs); l = _le.lifecycle(evs)
-        if isinstance(e.get("score"), (int, float)): ex.append(e["score"])
-        if isinstance(l.get("score"), (int, float)): lc.append(l["score"])
-    def _agg(v):
+        e = _le.execution(evs, task_policy=pol.get(tid)); l = _le.lifecycle(evs, task_policy=pol.get(tid))
+        if isinstance(e.get("score"), (int, float)): ex_t[tid] = e["score"]
+        if isinstance(l.get("score"), (int, float)): lc_t[tid] = l["score"]
+    def _agg(d):
+        v = list(d.values())
         return {"mean": round(sum(v) / len(v), 3) if v else None, "n": len(v),
                 "std": round(_st.pstdev(v), 3) if len(v) > 1 else (0.0 if v else None),
                 "zero_variance": (len(set(v)) == 1) if v else None,
-                "informativeness": ("saturated" if (v and len(set(v)) == 1) else ("discriminating" if v else "none"))}
-    return {"tier": "experimental_fault_injection_validated", "deterministic": True,
-            "promotion_path": "experimental -> human_audited -> strict",
-            "Execution_sm": _agg(ex), "Lifecycle_sm": _agg(lc)}
+                "informativeness": ("saturated" if (v and len(set(v)) == 1) else ("discriminating" if v else "none")),
+                "tier": "experimental_state_machine"}
+    panel = {"tier": "experimental_fault_injection_validated", "deterministic": True,
+             "promotion_path": "experimental -> human_audited -> strict",
+             "Execution_sm": _agg(ex_t), "Lifecycle_sm": _agg(lc_t)}
+    return panel, ex_t, lc_t
 
 
 def build(agent_dir, bench):
@@ -260,6 +271,12 @@ def build(agent_dir, bench):
     strict_covered = {m for cat in hd["by_category"].values() for m, v in cat.items()
                       if v["status"] == "covered"}
     proxy = _proxy_dims(agent_dir, strict_covered)
+    _exp_panel, _ex_t, _lc_t = _experimental_evaluators(agent_dir, bench)
+    # Codex: FILL the Execution/Lifecycle dimension cells with the validated state-machine evaluator
+    # (replaces the coarse Execution formula / deprecated info-gathering Lifecycle proxy).
+    if isinstance(proxy.get("by_dimension"), dict):
+        if _ex_t: proxy["by_dimension"]["Execution"] = _exp_panel["Execution_sm"]
+        if _lc_t: proxy["by_dimension"]["Lifecycle"] = _exp_panel["Lifecycle_sm"]
     _integ = _integrity(results)
     _toc = (proxy.get("by_dimension") or {}).pop("trace_observation_coverage", None)   # Codex #7
     if _toc is not None:
@@ -284,7 +301,7 @@ def build(agent_dir, bench):
         "tool_use_quality": _tool_use_quality(results),
         "harness_dimensions": hd,
         "proxy_dimensions": proxy,
-        "experimental_evaluators": _experimental_evaluators(agent_dir),
+        "experimental_evaluators": _exp_panel,
         "integrity": _integ,
         "failure_taxonomy": _failure_taxonomy(results),
     }

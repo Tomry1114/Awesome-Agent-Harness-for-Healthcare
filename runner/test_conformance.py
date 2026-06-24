@@ -180,8 +180,8 @@ def test_execution_attribution_gate():
     F = {"event_type": "final_answer", "thought": "d"}
     af = le.execution([c("A", ok=False, err="tool_argument_error"), c("B"), F])
     ef = le.execution([c("A", ok=False, err="env"), c("B"), F])
-    assert af["submetrics"]["tool_execution_success"]["score"] < 1.0
-    assert ef["submetrics"]["tool_execution_success"]["score"] == 1.0 and ef["degraded_tool_health"] is True
+    assert af["submetrics"]["tool_invocation_success"]["score"] < 1.0
+    assert ef["submetrics"]["tool_invocation_success"]["score"] == 1.0 and ef["degraded_tool_health"] is True
 
 
 def _run():
