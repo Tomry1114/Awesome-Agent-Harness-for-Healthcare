@@ -258,6 +258,18 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
             _jb = (os.environ.get("MH_JUDGE_BASE") or os.environ.get("MH_OPENAI_BASE", "https://www.micuapi.ai")).rstrip("/")
             if _jb.endswith("/v1"): _jb = _jb[:-3].rstrip("/")
             os.environ.setdefault("OPENAI_BASE_URL", _jb + "/v1")
+    # G3: prompt-source provenance -- record which AGENT-VISIBLE segments fed the agent and whether the
+    # hidden reference (gold) leaked into any of them (system/user prompt path), so Governance G1 reads a real
+    # access signal instead of guessing from answer<->gold similarity. reference is scorer-only and never put
+    # in goal/context, so this is normally False; True means a real leak bug.
+    _gold = str((task.get("reference") or {}).get("gold_answer") or "").strip()
+    _vis = {"goal": str(task.get("goal") or ""),
+            "task_context": json.dumps(task.get("context") or {}, ensure_ascii=False),
+            "constraints": json.dumps(task.get("constraints") or {}, ensure_ascii=False)}
+    _prompt_prov = {"system_sources": ["base_system_prompt", "benchmark_policy"],
+                    "user_sources": list(_vis.keys()),
+                    "segment_hashes": {k: hashlib.sha256(v.encode("utf-8", "replace")).hexdigest()[:12] for k, v in _vis.items()},
+                    "hidden_reference_exposed_to_agent": bool(_gold) and len(_gold) >= 16 and any(_gold.lower() in v.lower() for v in _vis.values())}
     ctx = {"base": getattr(env, "base", None), "mrn": (task.get("context") or {}).get("patient_ref"),
            "trajectory": trajectory, "created_meds": scoring.created_meds(trajectory),
            "final_texts": final_texts, "note_texts": note_texts, "full_state": getattr(env, "full_state", None),
@@ -266,7 +278,8 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
            "judge": _judge_fn, "judge_id": _judge_id,
            "mm_judge": _mm_fn, "medcta_img": getattr(env, "image_path", None),
            "medcta_question": (task.get("context") or {}).get("text"), "gacc": _gacc_fn,
-           "available_tools": [t.get("name") for t in (task.get("available_tools") or []) if t.get("name")]}
+           "available_tools": [t.get("name") for t in (task.get("available_tools") or []) if t.get("name")],
+           "prompt_provenance": _prompt_prov}
     results = [scoring.run_checkpoint(cp, ctx) for cp in task.get("checkpoints", [])]
     env_type = (task.get("environment") or {}).get("type")
     env_cls = type(env).__name__
@@ -393,7 +406,8 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
                   "judge_independence_policy": _judge_policy,
                   "judge_decoding": judge_decoding, "judges": judges,
                   "uses_hidden_reference": uses_hidden_ref, "scorer_validation_only": validation_only,
-                  "fidelity": fidelity, "medcta_config": _medcta_cfg, "capabilities": _caps}
+                  "fidelity": fidelity, "medcta_config": _medcta_cfg, "capabilities": _caps,
+                  "prompt_provenance": _prompt_prov}
     result = scoring.build_result(task, trajectory, results, provenance)
     _sv = validate_result(result)
     # validate_result is contracted to return a dict (valid result, schema errors, OR fail-closed

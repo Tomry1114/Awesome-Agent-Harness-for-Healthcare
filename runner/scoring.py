@@ -332,7 +332,7 @@ def _ev_llm_judge(cp, ctx, base):
         _hr = json.dumps((ctx.get("reference") or {}).get("gold_answer") or "", ensure_ascii=False)
         res = _gov.governance(ctx.get("trajectory") or [], policy=cp.get("governance_policy") or _gov.UNIVERSAL_POLICY,
                               question=str(ctx.get("medcta_question") or ""), hidden_reference=_hr,
-                              allowed_tools=ctx.get("available_tools"))
+                              allowed_tools=ctx.get("available_tools"), provenance=ctx.get("prompt_provenance"))
         sc = res.get("score")
         if sc is None or not res.get("reportable_score"):
             # G3/G4 judge unavailable -> G1/G2 alone is NOT a formal Governance score (skip, not eligible)
