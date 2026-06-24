@@ -151,6 +151,39 @@ def test_execution_proxy_sensitivity():
     assert recover > repeated, "Execution does not distinguish recovery from repeated failure"
 
 
+def test_lifecycle_sm_monotonicity():
+    """Step (b): state-machine Lifecycle DROPS on loops/repeated-failure; pagination != loop."""
+    import lifecycle_exec as le
+    def c(t, ok=True, obs="x", err=None):
+        e = {"event_type": "tool_call", "tool": t, "args": {"q": obs}, "status": "ok" if ok else "error",
+             "canonical_observation": {"modalities": {"text": obs} if ok else {}}}
+        if not ok: e["error_type"] = err or "tool_error"; e["result"] = "[error]"
+        return e
+    F = {"event_type": "final_answer", "thought": "d"}
+    normal = le.lifecycle([c("A", obs="a"), c("B", obs="b"), F])["score"]
+    repeated = le.lifecycle([c("A", ok=False), c("A", ok=False), c("A", ok=False), F])["score"]
+    loop = le.lifecycle([c("A", obs="a"), c("A", obs="a"), c("A", obs="a"), c("A", obs="a"), F])["score"]
+    pagination = le.lifecycle([c("A", obs="p1"), c("A", obs="p2"), c("A", obs="p3"), F])["score"]
+    assert repeated < normal and loop < normal, "Lifecycle insensitive to loops/repeated failure"
+    assert pagination > loop, "pagination (new evidence) mistaken for a loop"
+
+
+def test_execution_attribution_gate():
+    """Step (b): env failures EXCLUDED from agent score (degraded_tool_health); agent failures penalized."""
+    import lifecycle_exec as le
+    def c(t, ok=True, err=None):
+        e = {"event_type": "tool_call", "tool": t, "status": "ok" if ok else "error",
+             "canonical_observation": {"modalities": {"text": "x"}}}
+        if not ok: e["error_type"] = err; e["result"] = "[error]"; e["failure_mode"] = "environment_error" if err == "env" else "agent_failure"
+        else: e["result"] = "x"
+        return e
+    F = {"event_type": "final_answer", "thought": "d"}
+    af = le.execution([c("A", ok=False, err="tool_argument_error"), c("B"), F])
+    ef = le.execution([c("A", ok=False, err="env"), c("B"), F])
+    assert af["submetrics"]["tool_execution_success"]["score"] < 1.0
+    assert ef["submetrics"]["tool_execution_success"]["score"] == 1.0 and ef["degraded_tool_health"] is True
+
+
 def _run():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     passed = 0
