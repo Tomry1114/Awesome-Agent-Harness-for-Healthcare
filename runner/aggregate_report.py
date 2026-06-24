@@ -219,14 +219,23 @@ def build(agent_dir, bench):
     hd = _harness_dims(results)
     strict_covered = {m for cat in hd["by_category"].values() for m, v in cat.items()
                       if v["status"] == "covered"}
+    proxy = _proxy_dims(agent_dir, strict_covered)
+    _proxy_filled = sorted((set((proxy.get("by_dimension") or {}).keys()) & set(MODULES)) - strict_covered)
+    coverage_summary = {
+        "strict_scored": "%d/7" % len(strict_covered), "strict_dimensions": sorted(strict_covered),
+        "proxy_filled": "%d/7" % len(_proxy_filled), "proxy_dimensions": _proxy_filled,
+        "caveat": ("Only STRICT dims enter the main score (score_eligible=True). Proxy dims are "
+                   "trajectory-derived soft signals (score_eligible=False), NOT in the main score. "
+                   "Never report '7/7' unqualified — cite strict_scored.")}
     return {
         "source": agent_dir,
         "bench": bench,
         "n_tasks": len(results),
+        "coverage_summary": coverage_summary,
         "native_metrics": _native_metrics(bench, results),
         "tool_use_quality": _tool_use_quality(results),
         "harness_dimensions": hd,
-        "proxy_dimensions": _proxy_dims(agent_dir, strict_covered),
+        "proxy_dimensions": proxy,
         "integrity": _integrity(results),
         "failure_taxonomy": _failure_taxonomy(results),
     }
