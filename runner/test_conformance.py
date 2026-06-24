@@ -135,17 +135,17 @@ def test_unified_aggregation_dual_semantics():
 def test_execution_proxy_sensitivity():
     """Step (a): the Execution proxy must RESPOND when execution degrades (sensitivity + directionality).
     Guards against a regression to a flat/insensitive metric."""
-    import proxy_verifiers as pv
+    import lifecycle_exec as le
     def c(t, ok=True): 
         e={"event_type":"tool_call","tool":t,"status":"ok" if ok else "error","canonical_observation":{"modalities":{"text":"x"}}}
-        if not ok: e["error_type"]="tool_error"; e["result"]="[error] failed"
+        if not ok: e["error_type"]="tool_argument_error"; e["result"]="[error] failed"  # AGENT-attributable
         return e
     F={"event_type":"final_answer","thought":"x"}
-    base=pv.proxy_dimensions([c("A"),c("B"),F])["Execution"]["score"]
-    no_final=pv.proxy_dimensions([c("A"),c("B")])["Execution"]["score"]
-    errs=pv.proxy_dimensions([c("A",ok=False),c("B",ok=False),F])["Execution"]["score"]
-    recover=pv.proxy_dimensions([c("A",ok=False),c("A",ok=True),F])["Execution"]["score"]
-    repeated=pv.proxy_dimensions([c("A",ok=False),c("A",ok=False),F])["Execution"]["score"]
+    base=le.execution([c("A"),c("B"),F])["score"]
+    no_final=le.execution([c("A"),c("B")])["score"]
+    errs=le.execution([c("A",ok=False),c("B",ok=False),F])["score"]
+    recover=le.execution([c("A",ok=False),c("A",ok=True),F])["score"]
+    repeated=le.execution([c("A",ok=False),c("A",ok=False),F])["score"]
     assert no_final < base, "Execution insensitive to missing terminal completion"
     assert errs < base, "Execution insensitive to tool failures"
     assert recover > repeated, "Execution does not distinguish recovery from repeated failure"

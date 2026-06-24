@@ -39,6 +39,9 @@ def produced_valid_result(ev):
     out = (ev.get("result") or {}).get("output") if isinstance(ev.get("result"), dict) else ev.get("result")
     txt = out.get("text") if isinstance(out, dict) else out
     txt = str(txt or "").strip()
+    if not txt:                                   # fall back to the canonical observation layer
+        cm = _pv._canon_modalities(ev) or {}
+        txt = " ".join(str(v) for v in cm.values()).strip()
     if not txt:
         return False
     low = txt.lower()

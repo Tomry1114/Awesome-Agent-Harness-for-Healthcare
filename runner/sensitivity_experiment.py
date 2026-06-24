@@ -7,6 +7,7 @@ Run: python3 runner/sensitivity_experiment.py"""
 import os, sys, json
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import proxy_verifiers as pv
+import lifecycle_exec as le
 
 
 def call(tool, ok=True, args=None, obs="liver lesion hypodense", err=None):
@@ -43,6 +44,7 @@ CONDS = [
 rows = []
 for name, evs, note in CONDS:
     d = pv.proxy_dimensions(evs)
+    d["Execution"] = le.execution(evs); d["Lifecycle"] = le.lifecycle(evs)   # NEW state-machine evaluators
     rows.append((name, d.get("Execution", {}).get("score"), d.get("Lifecycle", {}).get("score"),
                  d.get("Observability", {}).get("score"), d.get("tool_execution_hygiene", {}).get("score"), note))
 

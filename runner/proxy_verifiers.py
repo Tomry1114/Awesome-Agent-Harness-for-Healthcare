@@ -121,33 +121,11 @@ def proxy_dimensions(events):
     out["trace_observation_coverage"] = {"score": exposure,           # harness-side mirror for agent-vs-harness comparison (-> integrity)
                                          "basis": "%d/%d tool results delivered into canonical trace" % (exposed, n)}
 
-    # --- Lifecycle: ordering sanity = each goal (mutation OR final answer) preceded by info-gathering ---
-    info_seen, goals, ok = False, 0, 0
-    for e in events:
-        et, t = e.get("event_type"), e.get("tool")
-        if et == "tool_call":
-            if _is_retrieval(t) or _observation(e):
-                info_seen = True
-            if _is_mutation(t):
-                goals += 1
-                ok += 1 if info_seen else 0
-        elif et == "final_answer":
-            goals += 1
-            ok += 1 if info_seen else 0
-    if goals:
-        out["Lifecycle"] = {"score": round(ok / goals, 3),
-                            "basis": "%d/%d goals after info-gathering" % (ok, goals),
-                            "tier": "deprecated_construct_invalid",   # step(a): flat 1.0 across loops/recovery; use lifecycle_exec.lifecycle
-                            "deprecated": True}
-
-    # --- Execution: operational completion = reached a terminal answer with >=1 successful tool call ---
-    ok_calls = sum(1 for e in calls if not _errored(e))
-    tool_success_rate = ok_calls / n
-    # Codex #3: a trajectory with NO final answer must NOT score 1.0 just because tools succeeded.
-    # Split the two concepts and combine; final_reached and tool_success_rate are kept as sub-signals.
-    out["Execution"] = {"score": round(0.5 * (1.0 if has_final else 0.0) + 0.5 * tool_success_rate, 3),
-                        "final_reached": bool(has_final), "tool_success_rate": round(tool_success_rate, 3),
-                        "basis": "0.5*final(%s) + 0.5*tool_success(%d/%d)" % (has_final, ok_calls, n)}
+    # Execution and Lifecycle are NO LONGER computed here. The old proxy formulas
+    # (info-before-action / 0.5*final + 0.5*tool_success) were construct-invalid — flat ~1.0 across
+    # loops / repeated-failure / recovery (proven in sensitivity_experiment.py). They are REPLACED by
+    # the deterministic state-machine evaluators in lifecycle_exec.py (execution / lifecycle), which
+    # fill the Execution/Lifecycle dimension cells. ONE source of truth — no lingering broken formula.
     return out
 
 
