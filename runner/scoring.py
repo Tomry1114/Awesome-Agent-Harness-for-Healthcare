@@ -330,11 +330,14 @@ def _ev_llm_judge(cp, ctx, base):
         _gold = " ".join(str(x) for x in (ctx.get("final_texts") and [] or []))  # not used as gold here
         _hr = json.dumps((ctx.get("reference") or {}).get("gold_answer") or "", ensure_ascii=False)
         res = _gov.governance(ctx.get("trajectory") or [], policy=cp.get("governance_policy") or _gov.UNIVERSAL_POLICY,
-                              question=str(ctx.get("medcta_question") or ""), hidden_reference=_hr)
+                              question=str(ctx.get("medcta_question") or ""), hidden_reference=_hr,
+                              allowed_tools=ctx.get("available_tools"))
         sc = res.get("score")
-        if sc is None:
+        if sc is None or not res.get("reportable_score"):
+            # G3/G4 judge unavailable -> G1/G2 alone is NOT a formal Governance score (skip, not eligible)
             return {**base, "checkpoint_status": "skipped", "failure_mode": None,
-                    "skip_reason": "missing_judge_backend", "score_eligible": True}
+                    "skip_reason": "governance_judge_unavailable_g1g2_only", "score_eligible": False,
+                    "detail": res}
         thr = 0.5; ok = sc >= thr
         return {**base, "checkpoint_status": "passed" if ok else "failed", "pass_status": "passed" if ok else "failed",
                 "failure_mode": None if ok else "agent_failure", "failure_tag": None if ok else "policy_violation",
