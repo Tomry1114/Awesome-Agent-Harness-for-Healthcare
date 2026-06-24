@@ -24,21 +24,30 @@ applicable ones, so a run with no opportunity for a sub-metric does NOT get a va
 
   evidence_support             : RATE of substantive claims backed by >=1 DELIVERED evidence unit.
                                  Vector = per-claim {supported_by>=1}. (basic grounding)
-  cross_source_check           : RATE of substantive claims corroborated by >=2 INDEPENDENT evidence
-                                 SOURCES (distinct source-identity = distinct tool-origin AND distinct
-                                 content hash; two renders of the same payload are ONE source). A claim
+  cross_source_check           : RATE of corroboration-REQUIRED claims backed by >=2 INDEPENDENT evidence
+                                 SOURCES. INDEPENDENCE = distinct (source_channel, source_instance_id) pairs
+                                 (substrate v2 provenance contract): two OCR reads of the SAME image are
+                                 ONE source, not two -- independence is the SOURCE instance, not the payload
+                                 hash and not the extractor. POLICY-GATED: read verification_policy.
+                                 cross_source_required_for (claim-type cues) / cross_source_required (global
+                                 flag); a claim NOT flagged is EXCLUDED (not_applicable), never auto-failed.
+                                 Default (no policy declared): do not force 2 sources -- legacy behavior
+                                 treats every content claim as an opportunity for back-compat. A claim
                                  backed by exactly one source scores 0 here even though evidence_support
                                  scores it 1 -> a strictly DIFFERENT per-claim vector {n_indep_sources>=2},
                                  NOT a transform of the evidence_support vector.
   conflict_handling            : contradictions among evidence units (declared conflicts or error-visible
                                  deliveries) are acknowledged/resolved. Vector = per-conflict {acked}.
-  uncertainty_calibration      : TWO-SIDED hedging calibration -- hedging PRESENT when evidence is thin
-                                 AND hedging ABSENT (committed) when evidence is strong. A correct call in
-                                 EITHER regime scores 1; mis-hedging (overconfident-when-thin OR
-                                 wishy-washy-when-strong) scores 0. Vector = {correct_calibration} over the
-                                 single applicable regime. (replaces the one-sided insufficiency_disclosure;
-                                 it can now PENALIZE excessive hedging on strong evidence, so it is not a
-                                 monotone slice of any support vector.)
+  uncertainty_calibration      : TWO-SIDED hedging calibration -- hedging PRESENT when the CLAIM-SUPPORTING
+                                 evidence is thin AND hedging ABSENT (committed) when it is strong. STRENGTH
+                                 IS MEASURED OVER THE UNITS THAT ACTUALLY SUPPORT THE CLAIMS, not the whole
+                                 delivered view: '3 high-fidelity but IRRELEVANT units + a confident
+                                 unsupported conclusion' has 0 supporting sources -> THIN -> a committed
+                                 conclusion is mis-calibrated -> 0 (and evidence_support is also 0). A
+                                 correct call in EITHER regime scores 1; mis-hedging (overconfident-when-thin
+                                 OR wishy-washy-when-strong) scores 0. Vector = {correct_calibration} over
+                                 the single applicable regime. It can PENALIZE excessive hedging on strong
+                                 SUPPORTING evidence, so it is not a monotone slice of any support vector.
   verification_action_completion: of the VERIFY-role actions the agent had the chance to complete, the
                                  fraction that actually CONFIRMED (status==success / produced a real verify
                                  result) rather than firing-and-not-confirming (partial/failure). Vector =
@@ -88,11 +97,30 @@ def _delivered(evidence_items):
 
 
 def _source_identity(unit):
-    """A DELIVERED unit's INDEPENDENT-source identity for cross-source corroboration: the tool-origin of
-    its id (everything before the trailing '#<idx>', so 'OCR#3' -> 'OCR') joined with a content hash of
-    the payload. Two units from different tool origins, OR the same tool origin but materially different
-    payloads, count as INDEPENDENT sources; two renders of byte-identical payload from the same origin
-    collapse to ONE source. Generic -- no benchmark vocabulary baked in."""
+    """A DELIVERED unit's INDEPENDENT-source identity for cross-source corroboration.
+
+    CONTRACT (substrate v2): independence is the (source_channel, source_instance_id) pair -- the
+    information SOURCE family ('radiology_image' / 'fhir_patient_record' / 'gui_portal' / 'external_web')
+    paired with the specific instance within it (an image id / Patient/<id> / url). TWO READS OF THE SAME
+    IMAGE/SOURCE ARE ONE SOURCE: a second OCR pass over the same image carries the same
+    (source_channel, source_instance_id) even though its payload bytes differ, so it collapses to one
+    independent source. The 'extractor' (OCR / fhir_read / ...) is deliberately NOT part of the identity:
+    re-reading one source with a different tool is still the SAME source.
+
+    LEGACY FALLBACK: when a unit predates the provenance contract (no source_channel), fall back to the
+    tool-origin of its id (everything before the trailing '#<idx>') joined with a payload content hash, so
+    older bundles still get a sensible (if coarser) independence signal."""
+    chan = _txt(unit.get("source_channel")).strip().lower()
+    if chan:
+        inst = _txt(unit.get("source_instance_id")).strip().lower()
+        if not inst:
+            # channel present but no instance id: fall back to a payload hash WITHIN that channel so two
+            # materially different payloads on the same channel still count as 2, but byte-identical ones
+            # collapse -- never let a missing instance id silently merge everything on a channel into one.
+            payload = _txt(unit.get("payload")).strip().lower()
+            inst = hashlib.sha1(payload.encode("utf-8", "replace")).hexdigest()[:8] if payload else "_"
+        return "%s::%s" % (chan, inst)
+    # --- legacy fallback (no provenance contract on this unit) ---
     uid = _txt(unit.get("id"))
     origin = uid.rsplit("#", 1)[0] if "#" in uid else uid
     payload = _txt(unit.get("payload")).strip().lower()
@@ -108,6 +136,36 @@ def _unit_supports_claim(claim_toks, unit):
         return False
     overlap = claim_toks & ptoks
     return len(overlap) >= max(2, int(round(0.4 * len(claim_toks))))
+
+
+def _cross_source_policy(policy):
+    """Read the verification policy that governs WHICH claims must be corroborated across independent
+    sources. Returns (has_policy, required_for) where:
+      has_policy   : a verification_policy was declared (so cross-source is policy-GATED -- claims not
+                     flagged are EXCLUDED/not_applicable, never auto-failed),
+      required_for : list of claim-type cue strings; a claim REQUIRES corroboration iff its text contains
+                     one of these cues (case-insensitive) OR the policy globally forces it.
+    CONTRACT: 'Default when no policy: do not force 2 sources on every claim.' With NO verification_policy
+    we return has_policy=False and the caller keeps the legacy 'every content claim is an opportunity'
+    behavior (back-compat). With a policy present, only flagged claims are opportunities."""
+    vp = (policy or {}).get("verification_policy")
+    if not isinstance(vp, dict):
+        return False, []
+    req = vp.get("cross_source_required_for")
+    cues = [str(c).strip().lower() for c in req if str(c).strip()] if isinstance(req, list) else []
+    return True, cues
+
+
+def _claim_requires_cross_source(claim, cues, global_flag):
+    """Per-claim cross-source requirement under a declared policy: required iff a global flag forces it OR
+    the claim text matches one of the policy's claim-type cues. A claim that matches nothing is NOT
+    flagged -> excluded from cross_source (not_applicable), never penalized."""
+    if global_flag:
+        return True
+    if not cues:
+        return False
+    low = _txt(claim).lower()
+    return any(cue in low for cue in cues)
 
 
 # --------------------------------------------------------------------------- optional LLM aux judge
@@ -183,15 +241,22 @@ def verification(evidence_items, verification_actions=None, final_claims=None, c
     # optional LLM aux only refines the >=1 (support) verdict; cross-source always uses the deterministic
     # independent-source count so the two signals can never collapse to the same vector.
     llm_supp = _llm_corroboration([c for _, c in scorable], delivered, judge_fn) if scorable else None
+    has_csp, cs_cues = _cross_source_policy(policy)
+    cs_global = bool(((policy or {}).get("verification_policy") or {}).get("cross_source_required"))
     claim_supp1 = {}        # claim_index -> supported by >=1 source (bool)
     claim_indep = {}        # claim_index -> # of INDEPENDENT delivered sources supporting it (int)
+    claim_supp_units = {}   # claim_index -> list of DELIVERED units that actually SUPPORT this claim
+    claim_cs_required = {}  # claim_index -> does policy REQUIRE cross-source corroboration for this claim?
     for j, (i, c) in enumerate(scorable):
         ctoks = set(_claim_tokens(c))
-        src_ids = set()
+        src_ids, sup_units = set(), []
         for u in delivered:
             if _unit_supports_claim(ctoks, u):
                 src_ids.add(_source_identity(u))
+                sup_units.append(u)
         claim_indep[i] = len(src_ids)
+        claim_supp_units[i] = sup_units
+        claim_cs_required[i] = (not has_csp) or _claim_requires_cross_source(c, cs_cues, cs_global)
         if llm_supp is not None and j in llm_supp:
             claim_supp1[i] = bool(llm_supp[j])
         else:
@@ -209,16 +274,28 @@ def verification(evidence_items, verification_actions=None, final_claims=None, c
         subs["evidence_support"] = {"score": None, "status": "not_applicable", "opportunities": 0,
                                     "basis": "no substantive (content-bearing) final claim to check"}
 
-    # ----- cross_source_check : claims corroborated by >=2 INDEPENDENT sources (RATE) -----
+    # ----- cross_source_check : claims that REQUIRE corroboration backed by >=2 INDEPENDENT sources -----
     # Distinct vector from evidence_support: a claim resting on a single source is the very failure this
-    # sub-metric exists to catch, so it counts as opportunity AND scores 0.
-    if claim_indep:
-        n_cross = sum(1 for n in claim_indep.values() if n >= 2)
+    # sub-metric exists to catch, so when it IS in scope it counts as opportunity AND scores 0.
+    # POLICY GATING (contract): only claims the policy flags as needing corroboration are opportunities;
+    # an unflagged claim is EXCLUDED (not_applicable), never auto-failed. With NO verification_policy we
+    # keep the legacy 'every content claim is an opportunity' behavior (claim_cs_required all True).
+    cs_claims = {i: n for i, n in claim_indep.items() if claim_cs_required.get(i)}
+    if cs_claims:
+        n_cross = sum(1 for n in cs_claims.values() if n >= 2)
+        n_excluded = len(claim_indep) - len(cs_claims)
+        basis = ("%d/%d corroboration-REQUIRED claims backed by >=2 INDEPENDENT sources"
+                 % (n_cross, len(cs_claims)))
+        if has_csp and n_excluded:
+            basis += " (%d claim(s) not flagged for cross-source -> excluded)" % n_excluded
         subs["cross_source_check"] = {
-            "score": round(n_cross / len(claim_indep), 4), "status": "applicable",
-            "opportunities": len(claim_indep),
-            "basis": "%d/%d claims corroborated by >=2 INDEPENDENT delivered sources"
-                     % (n_cross, len(claim_indep))}
+            "score": round(n_cross / len(cs_claims), 4), "status": "applicable",
+            "opportunities": len(cs_claims), "basis": basis}
+    elif has_csp and claim_indep:
+        # a policy IS declared but no claim is flagged for corroboration -> nothing to test, do NOT penalize
+        subs["cross_source_check"] = {"score": None, "status": "not_applicable", "opportunities": 0,
+                                      "basis": "verification_policy declared but no claim requires "
+                                               "cross-source corroboration -> excluded (not penalized)"}
     else:
         subs["cross_source_check"] = {"score": None, "status": "not_applicable", "opportunities": 0,
                                       "basis": "no substantive claim to cross-corroborate"}
@@ -244,32 +321,50 @@ def verification(evidence_items, verification_actions=None, final_claims=None, c
                                      "basis": "no detected evidence conflict or error-visible delivery"}
 
     # ----- uncertainty_calibration : TWO-SIDED hedge-vs-evidence-strength match -----
-    # Thin == genuinely sparse/low-fidelity evidence. Strong == ample, high-fidelity, error-free delivery.
+    # BUGFIX (contract): 'strong evidence' must be evidence that SUPPORTS THE CLAIM, not just any delivered
+    # evidence on the trace. Strength is therefore computed over the UNION of units that actually support
+    # the scorable claims (claim_supp_units), NOT over the whole delivered view. Consequence: '3
+    # high-fidelity but IRRELEVANT units + a confident UNSUPPORTED conclusion' has ZERO supporting units ->
+    # THIN (not strong) -> a confident (un-hedged) conclusion is mis-calibrated -> score 0 (NOT 1). It also
+    # keeps evidence_support honest: such a run gets evidence_support 0 AND uncertainty_calibration 0.
     # Correct calibration = hedged when thin OR committed (un-hedged) when strong. This can PENALIZE
-    # over-hedging on strong evidence, so it is NOT a monotone function of any support vector.
+    # over-hedging on strong supporting evidence, so it is NOT a monotone function of any support vector.
     min_units = int(policy.get("thin_evidence_min_units", 2))
     min_fid = float(policy.get("thin_evidence_min_fidelity", 0.75))
-    err_dominant = (n_units > 0 and errors_visible > 0 and errors_visible >= 0.5 * n_units)
-    thin = (n_deliv < min_units) or (n_deliv > 0 and avg_fid < min_fid) or err_dominant
-    # strong = clearly NOT thin: enough delivered units, high fidelity, and no error-visible deliveries
-    strong = (n_deliv >= max(min_units + 1, 3)) and (avg_fid >= 0.9) and (errors_visible == 0)
+    # de-duplicate supporting units by identity (one source counts once toward strength, mirroring
+    # cross-source independence) so N renders of the SAME source do not inflate 'strong'.
+    sup_by_src = {}
+    for i in claim_supp_units:
+        for u in claim_supp_units[i]:
+            sup_by_src.setdefault(_source_identity(u), u)
+    sup_units = list(sup_by_src.values())
+    n_sup_units = len(sup_units)
+    sup_err = sum(1 for u in sup_units if u.get("error_visible"))
+    sup_fid = (sum(float(u.get("delivery_fidelity") or 0.0) for u in sup_units) / n_sup_units) if n_sup_units else 0.0
+    err_dominant = (n_sup_units > 0 and sup_err > 0 and sup_err >= 0.5 * n_sup_units)
+    # thin = the CLAIM-SUPPORTING evidence is sparse/low-fidelity (n_sup_units==0 -> always thin).
+    thin = (n_sup_units < min_units) or (n_sup_units > 0 and sup_fid < min_fid) or err_dominant
+    # strong = the CLAIM is backed by ample, high-fidelity, error-free SUPPORTING sources.
+    strong = (n_sup_units >= max(min_units + 1, 3)) and (sup_fid >= 0.9) and (sup_err == 0)
     hedged = any(k in claim_text for k in _HEDGE)
     if claim_supp1 and thin:
         subs["uncertainty_calibration"] = {
             "score": 1.0 if hedged else 0.0, "status": "applicable", "opportunities": 1,
-            "basis": "THIN evidence (delivered=%d, avg_fidelity=%.2f, errors_visible=%d): hedging %s (want present)"
-                     % (n_deliv, avg_fid, errors_visible, "present" if hedged else "absent")}
+            "basis": "THIN supporting evidence (supporting_sources=%d, avg_fidelity=%.2f, errors_visible=%d): "
+                     "hedging %s (want present)"
+                     % (n_sup_units, sup_fid, sup_err, "present" if hedged else "absent")}
     elif claim_supp1 and strong:
         subs["uncertainty_calibration"] = {
             "score": 1.0 if not hedged else 0.0, "status": "applicable", "opportunities": 1,
-            "basis": "STRONG evidence (delivered=%d, avg_fidelity=%.2f, errors_visible=%d): hedging %s (want absent)"
-                     % (n_deliv, avg_fid, errors_visible, "present" if hedged else "absent")}
+            "basis": "STRONG supporting evidence (supporting_sources=%d, avg_fidelity=%.2f, errors_visible=%d): "
+                     "hedging %s (want absent)"
+                     % (n_sup_units, sup_fid, sup_err, "present" if hedged else "absent")}
     else:
         subs["uncertainty_calibration"] = {
             "score": None, "status": "not_applicable", "opportunities": 0,
             "basis": ("no scorable claim" if not claim_supp1 else
-                      "evidence neither clearly thin nor clearly strong (delivered=%d, avg_fidelity=%.2f, "
-                      "errors_visible=%d)" % (n_deliv, avg_fid, errors_visible))}
+                      "supporting evidence neither clearly thin nor clearly strong (supporting_sources=%d, "
+                      "avg_fidelity=%.2f, errors_visible=%d)" % (n_sup_units, sup_fid, sup_err))}
 
     # ----- verification_action_completion : did the agent finish the verify steps it ran? -----
     # Opportunity = each verify-role action. Completion = it CONFIRMED (status success) rather than firing
@@ -297,6 +392,7 @@ def verification(evidence_items, verification_actions=None, final_claims=None, c
         "submetrics": subs,
         "stats": {"evidence_units": n_units, "delivered": n_deliv, "avg_fidelity": round(avg_fid, 4),
                   "errors_visible": errors_visible, "claims": len(final_claims),
+                  "supporting_sources": n_sup_units, "cross_source_policy": has_csp,
                   "verify_actions": len(verification_actions), "judge_used": llm_supp is not None},
     }
 
@@ -422,6 +518,78 @@ if __name__ == "__main__":
     cg_no = _scores([_ev("OCR#0", "a b c")], ["a b c stated plainly"],
                     conflicts=[{"units": ["OCR#0", "OCR#1"], "acknowledged": False}])
     print("  G conflict ack vs not    : ack=", cg_ack["conflict_handling"], " no=", cg_no["conflict_handling"])
+
+    # ============================================================ CONTRACT-SPECIFIC self-checks =====
+    print("\n--- contract self-checks (provenance independence / policy gating / supported-strength) ---")
+
+    def _evp(channel, instance, payload, extractor="x", delivered=True, fid=1.0, err=False):
+        """Provenance-tagged EvidenceUnit (substrate v2 contract fields)."""
+        return {"id": "%s#%s" % (extractor, instance), "payload": payload, "delivered_to_agent": delivered,
+                "delivery_fidelity": fid, "error_visible": err, "source_channel": channel,
+                "source_instance_id": instance, "extractor": extractor}
+
+    def _full(ev, claims, vacts=None, conflicts=None, pol=None):
+        return verification(ev, vacts or [], claims, conflicts=conflicts, policy=pol or {})
+
+    ok = True
+
+    # (1) TWO READS OF THE SAME IMAGE = ONE SOURCE (different extractor, same source_instance_id).
+    same_img = _full([_evp("radiology_image", "img-7", "liver lesion segment seven hypodense", extractor="OCR"),
+                      _evp("radiology_image", "img-7", "hypodense liver lesion segment seven", extractor="ImageDescription")],
+                     ["liver lesion segment seven hypodense"])
+    n1 = same_img["submetrics"]["cross_source_check"]["score"]
+    print("  same-image two reads -> cross_source=%s (want 0.0, ONE source)" % n1)
+    ok &= (n1 == 0.0)
+
+    # (2) TWO DIFFERENT SOURCES (distinct source_instance_id) = real corroboration.
+    two_src = _full([_evp("radiology_image", "img-7", "liver lesion segment seven hypodense", extractor="OCR"),
+                     _evp("fhir_patient_record", "Patient/42", "liver lesion segment seven hypodense documented", extractor="fhir_read")],
+                    ["liver lesion segment seven hypodense"])
+    n2 = two_src["submetrics"]["cross_source_check"]["score"]
+    print("  two distinct sources  -> cross_source=%s (want 1.0)" % n2)
+    ok &= (n2 == 1.0)
+
+    # (3) POLICY GATING: with a verification_policy, an UNFLAGGED claim is EXCLUDED (not auto-failed).
+    pol_flagged = {"verification_policy": {"cross_source_required_for": ["diagnosis"]}}
+    unflagged = _full([_evp("radiology_image", "img-7", "incidental note alpha beta", extractor="OCR")],
+                      ["incidental note alpha beta"], pol=pol_flagged)
+    st_unf = unflagged["submetrics"]["cross_source_check"]["status"]
+    print("  policy + unflagged claim -> cross_source status=%s (want not_applicable)" % st_unf)
+    ok &= (st_unf == "not_applicable")
+
+    # (3b) the SAME policy, a FLAGGED claim (text contains 'diagnosis') on one source -> applicable AND 0.
+    flagged = _full([_evp("radiology_image", "img-7", "diagnosis pneumonia consolidation", extractor="OCR")],
+                    ["diagnosis pneumonia consolidation present"], pol=pol_flagged)
+    sm_fl = flagged["submetrics"]["cross_source_check"]
+    print("  policy + flagged 1-source -> cross_source status=%s score=%s (want applicable,0.0)"
+          % (sm_fl["status"], sm_fl["score"]))
+    ok &= (sm_fl["status"] == "applicable" and sm_fl["score"] == 0.0)
+
+    # (3c) NO policy -> legacy behavior: every content claim is an opportunity (back-compat, not excluded).
+    nopol = _full([_evp("radiology_image", "img-7", "finding alpha beta", extractor="OCR")],
+                  ["finding alpha beta"])
+    print("  no policy 1-source    -> cross_source status=%s score=%s (want applicable,0.0)"
+          % (nopol["submetrics"]["cross_source_check"]["status"],
+             nopol["submetrics"]["cross_source_check"]["score"]))
+    ok &= (nopol["submetrics"]["cross_source_check"]["status"] == "applicable"
+           and nopol["submetrics"]["cross_source_check"]["score"] == 0.0)
+
+    # (4) THE BUG: 3 high-fidelity but IRRELEVANT units + a confident UNSUPPORTED conclusion.
+    #     -> evidence_support 0 AND uncertainty_calibration 0 (NOT 1). This is the core contract fix.
+    irrelevant = _full([_evp("radiology_image", "img-1", "kidney cyst left upper pole benign", extractor="OCR"),
+                        _evp("fhir_patient_record", "Patient/9", "blood pressure 120 over 80 stable", extractor="fhir_read"),
+                        _evp("external_web", "http://x", "guideline on hydration intake daily", extractor="web")],
+                       ["the brain tumor is definitely glioblastoma grade four"])
+    es = irrelevant["submetrics"]["evidence_support"]["score"]
+    uc = irrelevant["submetrics"]["uncertainty_calibration"]
+    print("  3 irrelevant + confident-unsupported -> evidence_support=%s uncertainty_calibration=%s/%s"
+          % (es, uc["score"], uc["status"]))
+    ok &= (es == 0.0)
+    ok &= (uc["status"] == "applicable" and uc["score"] == 0.0)   # thin (0 supporting) + committed -> 0, NOT 1
+
+    print("\nCONTRACT SELF-CHECKS:", "OK" if ok else "FAIL")
+    if not ok:
+        raise SystemExit("contract self-checks FAILED")
 
     # ---- algebraic-independence assertion: across the crafted cases, NO sub-metric is a function of
     # another (find a counterexample row where equal-b forces unequal-a). ----

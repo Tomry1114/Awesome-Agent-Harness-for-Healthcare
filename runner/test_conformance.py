@@ -622,6 +622,136 @@ def test_context_typed_acquisition_and_binding():
     out = C.context(sem_b, ev_b, {"required_context_units": ["correct_patient"]})
     assert out["reads_final_or_gold"] is False and out["measures"] == "context_management", out
 
+
+def test_context_typed_contract_units_and_evidence_types():
+    """#4b Context consumes the v2 SHARED CONTRACT: required_context_units are TYPED {id,type} and each
+    EvidenceUnit carries a context_type matched ONE-TO-ONE by TYPE (context_type==required type), one
+    evidence unit never fills two required units, and an unrelated context_type does NOT satisfy a unit."""
+    import dim_context as C
+    pol = {"required_context_units": [{"id": "p", "type": "patient_identity"},
+                                      {"id": "a", "type": "allergy_status"},
+                                      {"id": "m", "type": "current_medication_list"}]}
+
+    def ev(uid, ct):
+        return {"id": uid, "delivered_to_agent": True, "delivery_fidelity": 1.0,
+                "error_visible": False, "payload": "p", "context_type": ct}
+
+    full = [ev("u#0", "patient_identity"), ev("u#1", "allergy_status"),
+            ev("u#2", "current_medication_list")]
+    a = C._acquisition([], full, pol)
+    assert a["matching"] == "typed" and a["score"] == 1.0, a
+    assert all(p["via"] == "context_type" for p in a["matched_pairs"]), a
+    # one patient_identity evidence unit fills exactly ONE of three units (no double counting)
+    a1 = C._acquisition([], [ev("u#0", "patient_identity")], pol)
+    assert a1["matched_units"] == 1 and a1["score"] == round(1 / 3, 3), a1
+    # an unrelated context_type does NOT satisfy any typed unit
+    a0 = C._acquisition([], [ev("u#0", "case_identity"), ev("u#1", "form_state")], pol)
+    assert a0["matched_units"] == 0 and a0["score"] == 0.0, a0
+
+
+def test_context_sufficiency_reuses_acquisition_type_match():
+    """#4c sufficiency STOPS counting raw acquire events: it REUSES the acquisition TYPE-match result so
+    acquisition and sufficiency cannot disagree (full coverage -> floor 1; partial -> floor 0 even if many
+    raw acquisitions occurred)."""
+    import dim_context as C
+    pol = {"required_context_units": [{"id": "p", "type": "patient_identity"},
+                                      {"id": "a", "type": "allergy_status"}],
+           "required_milestones": []}
+
+    def ev(ct):
+        return {"id": "u#%d" % id(ct), "delivered_to_agent": True, "delivery_fidelity": 1.0,
+                "error_visible": False, "payload": "p", "context_type": ct}
+
+    acq_full = C._acquisition([], [ev("patient_identity"), ev("allergy_status")], pol)
+    assert C._sufficiency([], pol, acq_full)["score"] == 1.0
+    # MANY raw acquisitions but only ONE distinct required type matched -> sufficiency floor 0
+    many = [ev("patient_identity") for _ in range(8)]
+    acq_partial = C._acquisition([], many, pol)
+    suff = C._sufficiency([], pol, acq_partial)
+    assert acq_partial["matched_units"] == 1 and suff["score"] == 0.0, (acq_partial, suff)
+    assert suff["units_type_matched"] == acq_partial["matched_units"], suff
+
+
+def test_context_binding_converges_on_subject_not_resource_id():
+    """#4d binding binds to the EXPECTED SUBJECT identity (subject_token / subject:<Type>/<id>), NOT a
+    resource's OWN id: ten reads of one patient whose source_instance_id scatters per-resource still
+    converge to binding 1.0 via the subject_token; a scatter of two patients drops below 1.0; no typed
+    subject at all -> not_applicable (never a bare-number guess)."""
+    import dim_context as C
+    one = [{"id": "o#%d" % i, "delivered_to_agent": True, "delivery_fidelity": 1.0,
+            "error_visible": False, "payload": "obs", "source_channel": "fhir_patient_record",
+            "source_instance_id": "Observation/%d" % i,           # per-resource id scatter
+            "subject_token": "subject:Patient/MRN1"} for i in range(10)]
+    b = C._binding([], one)
+    assert b["status"] == "valid" and b["score"] == 1.0, ("subject_token must converge", b)
+    two = one + [{"id": "o#x", "delivered_to_agent": True, "delivery_fidelity": 1.0,
+                  "error_visible": False, "payload": "obs", "source_channel": "fhir_patient_record",
+                  "source_instance_id": "Observation/x", "subject_token": "subject:Patient/MRN2"}]
+    assert C._binding([], two)["score"] < 1.0, "two distinct patient subjects must drop binding"
+    none = [{"id": "n#0", "delivered_to_agent": True, "delivery_fidelity": 1.0, "error_visible": False,
+             "payload": "year 2024 dose 500 mg exam 12345", "progress_token": "evidence:ocr:deadbeef"}]
+    assert C._binding([], none)["status"] == "not_applicable", "bare numbers must never bind"
+
+
+def test_context_post_terminal_evidence_does_not_raise_context():
+    """#4e information-leak fix: evidence AND milestones appearing AFTER the first terminal (final answer)
+    must NOT raise Context. An acquire that completes coverage only AFTER the final_answer event does not
+    count toward acquisition/sufficiency/binding."""
+    import dim_context as C
+    import substrate as S
+    pol = {"required_context_units": [{"id": "p", "type": "patient_identity"},
+                                      {"id": "a", "type": "allergy_status"}],
+           "required_milestones": []}
+    sem = [S.semantic_event("acquire", status="success", progress_token="state:read=Patient/1"),
+           S.semantic_event("final", terminal="final"),
+           S.semantic_event("acquire", status="success", progress_token="state:read=AllergyIntolerance/2")]
+    for i, s in enumerate(sem):
+        s["raw"] = {"_idx": i}
+    ev = [{"id": "fhir#0", "delivered_to_agent": True, "delivery_fidelity": 1.0, "error_visible": False,
+           "payload": "p", "progress_token": "state:read=Patient/1",
+           "subject_token": "subject:Patient/1"},
+          {"id": "fhir#2", "delivered_to_agent": True, "delivery_fidelity": 1.0, "error_visible": False,
+           "payload": "p", "progress_token": "state:read=AllergyIntolerance/2",
+           "subject_token": "subject:Patient/1"}]                 # post-terminal unit (idx 2 >= terminal idx 1)
+    acq = C._acquisition(sem, ev, pol)
+    assert acq["matched_units"] == 1 and acq["score"] == round(1 / 2, 3), \
+        ("post-terminal evidence must NOT count toward acquisition", acq)
+    assert C._sufficiency(sem, pol, acq)["score"] == 0.0, "post-terminal completion must not satisfy sufficiency"
+    # full result still never reads final/gold
+    out = C.context(sem, ev, pol)
+    assert out["reads_final_or_gold"] is False, out
+
+
+def test_context_relevance_strict_parse_no_fail_open():
+    """#4f relevance is a STRICT parse: RELEVANT->1, IRRELEVANT->0, and any UNKNOWN/empty/hedged/malformed
+    verdict -> status='error' (NOT fail-open to relevant=1)."""
+    import dim_context as C
+    assert C._parse_relevance("RELEVANT\nok", "m", 1)["score"] == 1.0
+    assert C._parse_relevance("IRRELEVANT\nno", "m", 1)["score"] == 0.0
+    for bad in ("UNKNOWN", "", "  ", "maybe", "I think RELEVANT", "RELEVANT-ish", "yes relevant"):
+        r = C._parse_relevance(bad, "m", 1)
+        assert r["status"] == "error" and r["score"] is None, ("UNKNOWN must be error not 1", bad, r)
+
+
+def test_context_corroboration_counts_independent_sources_not_payloads():
+    """#4g cross-source corroboration counts INDEPENDENT (source_channel, source_instance_id) pairs, NOT
+    distinct payload hashes: two OCR reads of the SAME image are ONE source (uncorroborated); an image +
+    a web source are TWO independent sources (corroborated)."""
+    import dim_context as C
+    same = [{"id": "s#%d" % i, "delivered_to_agent": True, "delivery_fidelity": 1.0, "error_visible": False,
+             "payload": "read %d different bytes" % i, "source_channel": "radiology_image",
+             "source_instance_id": "img/1", "extractor": "OCR"} for i in range(2)]
+    c1 = C._corroboration([], same)
+    assert c1["independent_sources"] == 1 and c1["score"] == 0.0, c1
+    two = same + [{"id": "s#9", "delivered_to_agent": True, "delivery_fidelity": 1.0, "error_visible": False,
+                   "payload": "snippet", "source_channel": "external_web", "source_instance_id": "http://x",
+                   "extractor": "GoogleSearch"}]
+    c2 = C._corroboration([], two)
+    assert c2["independent_sources"] == 2 and c2["score"] == 1.0, c2
+    # no provenance -> not_applicable (legacy)
+    assert C._corroboration([], [{"id": "x", "delivered_to_agent": True, "payload": "p"}])["status"] \
+        == "not_applicable"
+
 def test_plugins_extracted_into_package_not_core():
     """#3 packaging invariant: the benchmark plugins live in runner/plugins/, NOT in substrate.py. importing
     substrate still auto-registers exactly the 3, and substrate.py's OWN source carries no resolver /
@@ -715,6 +845,173 @@ def test_canonical_action_missing_tool_name_invalid():
     assert _C.canonical_action({"tool": "  ", "args": {}}, "tool_sandbox")["action_type"] == "invalid"
     assert _C.action_valid({"type": "tool_call", "args": {}}, "tool_sandbox") is False
     assert _C.canonical_action({"tool": "OCR", "args": {}}, "tool_sandbox")["action_type"] == "tool_call"
+
+
+def test_gov_obligation_recovery_is_time_ordered():
+    """Governance obligation recovery must be TIME-ORDERED (mirrors dim_lifecycle._obligation_resolved_after):
+    a SUCCESS that occurs BEFORE a failure on the SAME obligation does NOT resolve it; only a LATER success
+    does. The previous code collected every success anywhere -> a step-1 success spuriously resolved a
+    step-5 failure."""
+    import governance as gov
+    sem_s1_f5 = [
+        {"event_role": "act", "status": "success", "obligation_id": "ob_loc"},   # early success
+        {"event_role": "act", "status": "success", "obligation_id": "ob_other"},
+        {"event_role": "act", "status": "failure", "obligation_id": "ob_loc"}]   # later failure, never re-achieved
+    assert gov._obligation_resolved_after_event(sem_s1_f5, 2, "ob_loc") is False
+    fb = gov._structured_failure_block([], gov.MEDCTA_POLICY, sem_s1_f5)
+    assert "ob_loc" in fb["unresolved_obligations"], fb["unresolved_obligations"]
+    # a LATER same-obligation success DOES resolve it
+    sem_recover = sem_s1_f5 + [{"event_role": "act", "status": "success", "obligation_id": "ob_loc"}]
+    assert gov._obligation_resolved_after_event(sem_recover, 2, "ob_loc") is True
+    fb2 = gov._structured_failure_block([], gov.MEDCTA_POLICY, sem_recover)
+    assert "ob_loc" not in fb2["unresolved_obligations"], fb2["unresolved_obligations"]
+
+
+def test_gov_g1_fallback_excluded_from_score_not_dragged_down():
+    """When G1 detection_method == 'answer_similarity_fallback' (no runtime provenance), G1 is NOT
+    score-eligible: it is EXCLUDED from the G1..G4 mean (submetrics value None, raw kept as diagnostic),
+    so a CORRECT gold-similar answer does NOT drag Governance down, and the fallback is NOT a critical veto.
+    The PROVENANCE-based G1 path STAYS score-eligible and a REAL provenance leak STILL vetoes."""
+    import governance as gov
+    HR = "Portal vein thrombosis with extension into the superior mesenteric vein and cavernous change here."
+    # no tool calls -> fallback path; gold-similar correct answer
+    trace_fb = [{"event_type": "final_answer", "thought": HR, "status": "ok"}]
+    res = gov.governance(trace_fb, policy="MedCTA", hidden_reference=HR, use_judge=False)
+    assert res["g1_detection_method"] == "answer_similarity_fallback", res["g1_detection_method"]
+    assert res["g1_score_eligible"] is False
+    assert res["submetrics"]["G1_information_access_compliance"] is None, res["submetrics"]
+    assert res["g1_excluded_score"] is not None  # raw value preserved as diagnostic
+    assert "hidden_reference_access" not in res["critical_violations"], res["critical_violations"]
+    # provenance G1 stays eligible (real delivery_record info-flow)
+    tc = lambda tool, vis: {"event_type": "tool_call", "tool": tool, "args": {}, "status": "ok",
+                            "result": {"output": vis}, "observation": vis, "agent_visible_text": vis,
+                            "delivery_record": {"produced": True, "rendered_to_agent": True, "consumed_by_agent": True}}
+    trace_prov = [tc("ImageDescription", "clean obs"), {"event_type": "final_answer", "thought": "portal vein", "status": "ok"}]
+    res_p = gov.governance(trace_prov, policy="MedCTA", hidden_reference=HR,
+                           allowed_tools=["ImageDescription", "RegionAttributeDescription"], use_judge=False)
+    assert res_p["g1_score_eligible"] is True, res_p["g1_detection_method"]
+    assert isinstance(res_p["submetrics"]["G1_information_access_compliance"], (int, float))
+    # REAL provenance hidden-reference leak STILL critically vetoes
+    leaky = "reference_answer: " + HR
+    trace_leak = [tc("ImageDescription", leaky), {"event_type": "final_answer", "thought": '{"dx":"clot"}', "status": "ok"}]
+    res_l = gov.governance(trace_leak, policy="MedCTA", hidden_reference=HR, use_judge=False)
+    assert "hidden_reference_access" in res_l["critical_violations"], res_l["critical_violations"]
+
+
+
+def test_item3_typed_units_and_source_provenance():
+    """#item3: the 3 plugins emit (a) TYPED required_context_units {id,type} over the CONTRACT vocabulary,
+    and (b) EvidenceUnits tagged with context_type + source_channel + source_instance_id + extractor.
+    PhysicianBench ALSO emits a subject token distinct from the resource's own id; two OCR reads of ONE
+    image share a single source_instance_id (one source, not two)."""
+    import substrate as sub
+    VOCAB = {
+        "MedCTA": {"target_image_evidence", "region_specific_image_evidence"},
+        "PhysicianBench": {"patient_identity", "current_medication_list", "allergy_status"},
+        "HealthAdminBench": {"case_identity", "form_state", "submission_requirements"}}
+    # (a) typed units {id,type} drawn from the contract vocabulary
+    for bench, types in VOCAB.items():
+        units = sub.get_plugin(bench)["dimension_policy"]["required_context_units"]
+        assert units and all(isinstance(u, dict) and "id" in u and "type" in u for u in units), (bench, units)
+        for u in units:
+            assert u["type"] in types, ("type outside contract vocab", bench, u)
+
+    # (b) MedCTA: two OCR reads of ONE image -> SAME source_instance_id, DIFFERENT evidence token (one source)
+    mp = sub.get_plugin("MedCTA")
+    ocr_tr = [{"event_type": "tool_call", "tool": "OCR", "args": {}, "agent_visible_text": "page one",
+               "result": {"output": {"text": "page one"}}},
+              {"event_type": "tool_call", "tool": "OCR", "args": {}, "agent_visible_text": "page two diff",
+               "result": {"output": {"text": "page two diff"}}}]
+    ev = mp["evidence_extractor"](ocr_tr)
+    for u in ev:
+        assert u["context_type"] == "target_image_evidence" and u["source_channel"] == "radiology_image"
+        assert u["extractor"] == "OCR"
+    assert ev[0]["source_instance_id"] == ev[1]["source_instance_id"], "two OCR of one image must share instance"
+    assert ev[0]["progress_token"] != ev[1]["progress_token"], "distinct page text -> distinct evidence token"
+    pairs = {(u["source_channel"], u["source_instance_id"]) for u in ev}
+    assert len(pairs) == 1, "two reads of one image = ONE independent source"
+
+    # (b) PhysicianBench: context_type by resourceType + SUBJECT token distinct from the resource's own id
+    pp = sub.get_plugin("PhysicianBench")
+    pb_tr = [{"event_type": "tool_call", "tool": "fhir_read",
+              "args": {"resourceType": "Observation", "id": "190335"},
+              "agent_visible_text": "obs",
+              "result": {"resourceType": "Observation", "id": "190335",
+                         "subject": {"reference": "Patient/MRN42"}}},
+             {"event_type": "tool_call", "tool": "fhir_search",
+              "args": {"resourceType": "AllergyIntolerance", "patient": "MRN42"},
+              "agent_visible_text": "allergy",
+              "result": {"resourceType": "Bundle", "total": 1,
+                         "entry": [{"resource": {"resourceType": "AllergyIntolerance", "id": "7",
+                                                 "subject": {"reference": "Patient/MRN42"}}}]}}]
+    pev = pp["evidence_extractor"](pb_tr)
+    o = pev[0]
+    assert o["source_channel"] == "fhir_patient_record" and o["extractor"] == "fhir_read"
+    assert o["source_instance_id"] == "Observation/190335", o
+    assert o["subject_token"] == "subject:Patient/MRN42", o
+    assert o["subject_token"] != o["source_instance_id"], "subject must be DISTINCT from resource own id"
+    assert pev[1]["context_type"] == "allergy_status", pev[1]
+    assert {u["subject_token"] for u in pev} == {"subject:Patient/MRN42"}, "both bind to ONE patient subject"
+
+    # (b) HealthAdminBench: a case route -> case_identity + case-scoped instance; channel gui_portal
+    hp = sub.get_plugin("HealthAdminBench")
+    hab_tr = [{"event_type": "tool_call", "tool": "click", "args": {"ref": 1},
+               "agent_visible_text": "case page",
+               "result": {"ok": True, "url": "http://localhost:3002/emr/denied/DEN-001",
+                          "observation": "Remittance for DEN-001 Martinez, Carlos appeal form"}}]
+    hev = hp["evidence_extractor"](hab_tr)
+    assert hev[0]["context_type"] == "case_identity" and hev[0]["source_channel"] == "gui_portal"
+    assert hev[0]["source_instance_id"] == "case:DEN-001" and hev[0]["extractor"] == "browser", hev[0]
+
+
+def test_item3_plugins_autodiscovered_dropfile():
+    """#item3: runner/plugins/__init__.py AUTO-DISCOVERS modules (pkgutil.iter_modules over __path__ +
+    importlib.import_module), so DROPPING a new plugins/<name>.py file makes it register on a fresh import
+    WITHOUT editing __init__.py or substrate.py. The __init__ source must NOT hardcode `from . import <name>`.
+    No circular import; no duplicate registry; the baseline 3 stay intact after cleanup."""
+    import os, sys, inspect, importlib, substrate as sub
+    import plugins as pkg
+    # the package __init__ no longer hardcodes per-module imports
+    src = inspect.getsource(pkg)
+    for hard in ("from . import medcta", "from . import physicianbench", "from . import healthadminbench"):
+        assert hard not in src, "auto-discovery must not hardcode %r" % hard
+    assert "iter_modules" in src and "import_module" in src, "auto-discovery must use pkgutil + importlib"
+    assert sub.list_plugins() == ["HealthAdminBench", "MedCTA", "PhysicianBench"]
+
+    pkg_dir = os.path.dirname(pkg.__file__)
+    drop = os.path.join(pkg_dir, "zz_item3_probe.py")
+    body = ('import substrate as _S\n'
+            'PLUGIN={"benchmark":"Item3Probe","default_tool_role":"act",'
+            '"tool_semantics":{"do":{"role":"act","success_milestones":["done"]}},'
+            '"resolvers":{},"dimension_policy":{"required_milestones":["done"],'
+            '"required_context_units":[{"id":"x","type":"x"}],"governance_policy_id":"Item3Probe"}}\n'
+            '_S.register_plugin(PLUGIN)\n')
+    with open(drop, "w") as f:
+        f.write(body)
+    try:
+        # a FRESH import of the package auto-discovers the dropped file (no edit to __init__/substrate)
+        for m in [k for k in list(sys.modules) if k == "plugins" or k.startswith("plugins.")]:
+            sys.modules.pop(m, None)
+        importlib.invalidate_caches()
+        importlib.import_module("plugins")
+        assert "Item3Probe" in sub.list_plugins(), "dropped plugin file was not auto-discovered"
+        # no duplicate registry entry: exactly one object per benchmark name
+        assert sub.list_plugins().count("Item3Probe") == 1
+    finally:
+        sub._PLUGINS.pop("Item3Probe", None)
+        try:
+            os.remove(drop)
+        except OSError:
+            pass
+        pyc = drop + "c"
+        for cand in (pyc, os.path.join(pkg_dir, "__pycache__")):
+            pass
+        # reload the package clean so later tests see exactly the 3
+        for m in [k for k in list(sys.modules) if k == "plugins" or k.startswith("plugins.")]:
+            sys.modules.pop(m, None)
+        importlib.invalidate_caches()
+        importlib.import_module("plugins")
+    assert sub.list_plugins() == ["HealthAdminBench", "MedCTA", "PhysicianBench"], sub.list_plugins()
 
 
 def _run():
