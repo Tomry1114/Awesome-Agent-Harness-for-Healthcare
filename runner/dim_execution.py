@@ -68,6 +68,13 @@ def _ok(s):
     return s.get("status") == "success"
 
 
+def _invocation_ok(s):
+    """INVOCATION succeeded = the call ran without a true failure. 'partial' (ran, but the semantic effect is
+    unproven) is a SUCCESSFUL invocation -- effect is judged separately by milestones/completion, so the
+    agent is not penalized in tool_invocation_success for a technically-successful call with no evidence."""
+    return s.get("status") in ("success", "partial")
+
+
 def _attr(s):
     """failure_attribution for a failed action; None for a success."""
     return s.get("failure_attribution") if not _ok(s) else None
@@ -119,7 +126,7 @@ def execution(sem_trace, dimension_policy=None, manifest=None):
     # 'malformed actions' by the agent, so they do not lower action_validity.
     if actions:
         bad = sum(1 for s in actions
-                  if (not _ok(s)) and _eff_attr(s) == "agent" and not s.get("state_changed"))
+                  if s.get("status") == "failure" and _eff_attr(s) == "agent" and not s.get("state_changed"))
         sub["action_validity"] = _sm(round((len(actions) - bad) / len(actions), 3),
                                      opportunities=len(actions), malformed=bad)
     else:
@@ -132,11 +139,11 @@ def execution(sem_trace, dimension_policy=None, manifest=None):
     owned, succ = 0, 0
     excluded = {"environment": 0, "external_service": 0, "harness": 0, "unknown": 0}
     for s in actions:
-        if _ok(s):
+        if _invocation_ok(s):              # success OR partial = the invocation technically worked
             owned += 1
             succ += 1
             continue
-        ea = _eff_attr(s)
+        ea = _eff_attr(s)                  # only TRUE failures reach here
         if ea == "agent":
             owned += 1                     # owned failure: counts against, not toward
         elif ea in _EXCLUDED:

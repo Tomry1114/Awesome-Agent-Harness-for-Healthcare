@@ -292,6 +292,29 @@ def test_delivery_record_drives_observability():
     assert u["delivered_to_agent"] is True and u["delivery_fidelity"] == 0.5   # truncated -> reduced fidelity
 
 
+def test_partial_counts_as_successful_invocation():
+    """#2-deeper: a 'partial' event (call ran, effect unproven) is a SUCCESSFUL invocation -- it must NOT
+    lower tool_invocation_success nor count as a malformed action; it only withholds the milestone."""
+    import substrate as _S, dim_execution as _E
+    partial = _S.semantic_event("acquire", status="partial", capability_id="ImageDescription",
+                                milestones_added=[], state_changed=False)
+    r = _E.execution([partial], {}, {})
+    assert r["submetrics"]["tool_invocation_success"]["score"] == 1.0, r["submetrics"]["tool_invocation_success"]
+    assert r["submetrics"]["action_validity"]["score"] == 1.0
+
+
+def test_circuit_broken_last_call_not_consumed():
+    """#4: a tool event rendered but never consumed by a next decision (consumed_by_agent False) is NOT
+    counted as delivered_to_agent in the EvidenceView."""
+    import substrate as _S
+    pl = _S.get_plugin("MedCTA")
+    ev = [{"event_type": "tool_call", "tool": "OCR", "status": "ok", "result": {"output": "text"},
+           "delivery_record": {"produced": True, "rendered_to_agent": True, "consumed_by_agent": False}}]
+    assert _S.evidence_view(ev, pl)[0]["delivered_to_agent"] is False
+    ev[0]["delivery_record"]["consumed_by_agent"] = True
+    assert _S.evidence_view(ev, pl)[0]["delivered_to_agent"] is True
+
+
 def _run():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     passed = 0

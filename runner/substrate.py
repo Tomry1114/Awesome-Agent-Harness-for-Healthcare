@@ -242,7 +242,12 @@ def _real_delivery(e):
     dr = e.get("delivery_record")
     if isinstance(dr, dict):
         errored = _errored(e)
-        delivered = bool(dr.get("rendered_to_agent")) and bool(dr.get("produced")) and not errored
+        # delivered = the agent's NEXT decision actually consumed it (backfilled by the runner). Falls back
+        # to rendered_to_agent for older traces without the consumed flag. A circuit-broken last call was
+        # rendered but never consumed -> NOT delivered.
+        _consumed = dr.get("consumed_by_agent")
+        _reach = _consumed if _consumed is not None else dr.get("rendered_to_agent")
+        delivered = bool(_reach) and bool(dr.get("produced")) and not errored
         fid = 0.0 if errored else (0.5 if dr.get("truncated") else (1.0 if dr.get("rendered_to_agent") else 0.0))
         return {"delivered": delivered, "fidelity": fid, "error_visible": bool(dr.get("error_state_rendered"))}
     # --- legacy fallback (no delivery_record): derive from canonical_observation ---

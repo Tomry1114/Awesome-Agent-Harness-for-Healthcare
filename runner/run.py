@@ -100,6 +100,7 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
     trajectory, last_obs, last_res, finished = [], None, None, False
     deliv = DeliverableScaffold(task)  # PB deliverable scaffolding (Codex #1: extracted from the generic runner; no-op for non-PB)
     _fail_sig = None; _fail_n = 0; _aborted = False  # circuit breaker: abort on repeated identical failing call
+    _last_tool_ev = None  # for consumed_by_agent backfill (#review: rendered != consumed)
     if hasattr(env, "initial_observation"):
         _io = env.initial_observation()
         if _io is not None:
@@ -107,6 +108,9 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
     for step in range(max_steps):
         _bw = deliv.budget_warning(env, step, max_steps, trajectory)
         if _bw is not None: last_res, last_obs = _bw
+        if _last_tool_ev is not None:          # the previous tool observation is about to be consumed
+            _last_tool_ev["delivery_record"]["consumed_by_agent"] = True
+            _last_tool_ev = None
         action = agent.act({"goal": task.get("goal"), "context": task.get("context"),
                             "tools": env.available_tools(), "last_observation": last_obs, "last_result": last_res})
         if not isinstance(action, dict) or "type" not in action:  # #7 agent contract violation
@@ -150,7 +154,7 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
                "canonical_result": _canon.canonical_result(res),
                "agent_visible_text": obs,  # EXACT string fed into the agent context (Observability truth)
                "canonical_observation": _canon.canonical_observation(res, env_type),  # F2: explicit per-action status + canonical observation (Codex #5: wire the defined-but-unused observation)
-               "delivery_record": {"produced": bool(res), "rendered_to_agent": True,
+               "delivery_record": {"produced": bool(res), "rendered_to_agent": True, "consumed_by_agent": False,
                                    "source_hash": hashlib.sha256(_src_full.encode("utf-8", "replace")).hexdigest()[:12],
                                    "rendered_hash": hashlib.sha256(obs.encode("utf-8", "replace")).hexdigest()[:12],
                                    "truncated": len(_src_full) > len(obs),
@@ -163,6 +167,7 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
                                       if ("HTTP " + c) in _es),
                                      "exception" if any(k in _es for k in ("Error", "Exception", "Traceback")) else "tool_error")
         trajectory.append(_ev)
+        _last_tool_ev = _ev   # mark consumed only if a later agent.act() runs (circuit-break -> stays False)
         if _err:
             _sig = (action["tool"], json.dumps(action.get("args", {}), sort_keys=True), _ev.get("error_type"))
             _fail_n = _fail_n + 1 if _sig == _fail_sig else 1; _fail_sig = _sig
