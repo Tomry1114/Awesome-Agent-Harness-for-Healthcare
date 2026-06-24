@@ -7,6 +7,19 @@ FhirEnv is real (hits the HAPI FHIR server). GuiEnv / ToolSandboxEnv are skeleto
 import os, json, urllib.request, urllib.parse, urllib.error
 
 class EnvironmentAdapter:
+    """BENCHMARK ADAPTER CONTRACT (Codex B). Every benchmark registers ONE env class in ENV_REGISTRY
+    and the runner drives it through this fixed surface — adding a benchmark = register a class, not
+    edit the loop's execution path:
+        reset()                      -> initialize episode (load_task handled by load_task() upstream)
+        available_tools()            -> list[str] tools offered to the agent this task
+        call_tool(name, args)        -> CanonicalResult-shaped dict (execute one action)
+        capabilities()               -> four-state manifest {implemented/available/authorized/healthy}
+        teardown()                   -> release resources
+        initial_observation()        -> optional first CanonicalObservation (envs that have one)
+    Source-metric evaluation (evaluate_source_metric) and artifact collection currently live in the
+    scoring layer (scoring.run_checkpoint dispatch); the contract spans env+scorer and full unification
+    of evaluate_source_metric into the adapter is the staged next step. Conformance is enforced by
+    test_conformance.test_benchmark_adapter_contract over every ENV_REGISTRY class."""
     type = "base"
     def __init__(self, task, **kw): self.task = task; self.cfg = (task.get("environment") or {}).get("config", {})
     def reset(self): ...
@@ -20,17 +33,46 @@ class EnvironmentAdapter:
         DOWN) means a failure is NOT the agent's fault and must not be scored as agent incompetence."""
         return True
 
+    # Tools the runner has executable code for. Subclasses set their real surface; an empty
+    # tuple means "trust available_tools" (back-compat: every offered tool counts as implemented).
+    IMPLEMENTED_TOOLS = ()
+
     def capabilities(self):
         """Four-state capability manifest per tool (Codex #10): implemented (runner has code) /
-        available (offered to this task) / authorized (allowed) / healthy (backing service up)."""
+        available (offered to this task) / authorized (allowed) / healthy (backing service up).
+
+        PURPOSE: a tool that is implemented+available+authorized but NOT healthy means the backing
+        SERVICE is down, so a resulting tool failure is NOT the agent's fault and must not be scored
+        as agent incompetence. Read `healthy` before attributing an EnvironmentError to the agent."""
         deny = set(getattr(self, "_denied_tools", []) or [])
         healthy = self._healthy()
-        return {n: {"implemented": True, "available": True, "authorized": n not in deny, "healthy": healthy}
-                for n in sorted(self.available_tools())}
+        impl = set(self.IMPLEMENTED_TOOLS)
+        avail = set(self.available_tools())
+        names = impl | avail if impl else avail  # empty IMPLEMENTED_TOOLS -> offered == implemented
+        out = {}
+        for n in sorted(names):
+            is_impl = (n in impl) if impl else True
+            out[n] = {
+                "implemented": is_impl,
+                "available": n in avail,
+                "authorized": n not in deny,
+                # only a tool actually backed by THIS env carries the live health signal
+                "healthy": bool(healthy) if is_impl else False,
+            }
+        return out
     def teardown(self): ...
 
 class FhirEnv(EnvironmentAdapter):
     type = "fhir"
+    IMPLEMENTED_TOOLS = (
+        "fhir_search", "fhir_read", "fhir_create", "get_lab_reference_range", "write_file",
+        "fhir_patient_search_demographics", "fhir_condition_search_problems",
+        "fhir_observation_search_labs", "fhir_observation_search_vitals",
+        "fhir_observation_search_social_history", "fhir_medication_request_search_orders",
+        "fhir_procedure_search_orders", "fhir_document_reference_search_clinical_notes",
+        "fhir_service_request_search", "fhir_medication_request_create",
+        "fhir_service_request_create", "fhir_communication_create_message", "fhir_appointment_create",
+    )
     def __init__(self, task, fhir_base=None, workspace=None, aug_dir=None, **kw):
         super().__init__(task)
         self.base = fhir_base or os.environ.get("FHIR_BASE_URL") or self.cfg.get("default") or "http://localhost:38080/fhir"
@@ -140,6 +182,7 @@ class GuiEnvMock(EnvironmentAdapter):
     v1 = drive the real NextJS portal via Playwright (harness/real_obs.py) and capture full_state.
     """
     type = "gui"
+    IMPLEMENTED_TOOLS = ("navigate", "click", "type", "select", "upload", "submit", "snapshot")
     def __init__(self, task, **kw):
         super().__init__(task); self.full_state = None
     def reset(self):
@@ -172,6 +215,7 @@ class ToolSandboxEnv(EnvironmentAdapter):
     The image is resolved from task.context.images[0].path under MH_MEDCTA_IMG_ROOT.
     """
     type = "tool_sandbox"
+    IMPLEMENTED_TOOLS = ("ImageDescription", "RegionAttributeDescription", "OCR", "Calculator", "GoogleSearch")
     def __init__(self, task, **kw):
         super().__init__(task)
         self.mode = os.environ.get("MH_TOOL_MODE", "real")
@@ -210,6 +254,7 @@ class GuiEnvReal(EnvironmentAdapter):
     checkpoints score). Requires the portal at MH_PORTAL_BASE (default http://localhost:3002) and
     chromium. v0 mock = GuiEnvMock (MH_GUI_MODE=mock)."""
     type = "gui"
+    IMPLEMENTED_TOOLS = ("navigate", "click", "type", "select", "submit", "snapshot", "back", "scroll", "done", "download", "upload")
 
     _OBS_JS = r"""() => {
       document.querySelectorAll('[data-mh-ref]').forEach(e => e.removeAttribute('data-mh-ref'));

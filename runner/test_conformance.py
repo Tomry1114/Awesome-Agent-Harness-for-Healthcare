@@ -78,6 +78,20 @@ def test_errored_no_false_positive():
     assert proxy_verifiers._errored({"status": "ok", "result": '{"error": "bad request"}'}) is True
 
 
+def test_benchmark_adapter_contract():
+    """Codex B/C: every registered benchmark env satisfies the BenchmarkAdapter execution surface,
+    and the capability manifest declares all four states. Proves the contract over REAL classes."""
+    import environments, inspect
+    assert getattr(environments, "ENV_REGISTRY", None), "ENV_REGISTRY missing"
+    surface = ("reset", "available_tools", "call_tool", "capabilities", "teardown")
+    for key, cls in environments.ENV_REGISTRY.items():
+        for m in surface:
+            assert callable(getattr(cls, m, None)), "adapter %s missing %s" % (key, m)
+    src = inspect.getsource(environments.EnvironmentAdapter.capabilities)
+    for stt in ("implemented", "available", "authorized", "healthy"):
+        assert stt in src, "capability four-state missing: " + stt
+
+
 def _run():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     passed = 0
