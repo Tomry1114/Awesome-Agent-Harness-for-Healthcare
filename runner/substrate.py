@@ -100,8 +100,8 @@ def _no_payload(e):
     """A degenerate event with NO observable output (no result, no observation, no canonical_observation):
     the resolver has nothing to read, so it cannot prove the semantic goal was UNMET. Real traces always
     carry a payload; only synthetic stubs are empty. In that case the mapper falls back to the static
-    optimistic milestone instead of asserting partial -- so result-conditional grading applies exactly when
-    there IS a result to condition on."""
+    CONSERVATIVE partial (milestone withheld) instead of an unverifiable success -- a missing payload
+    must never fail-open into a granted milestone."""
     if e.get("result") not in (None, "", {}):
         return False
     ob = e.get("observation")
@@ -149,7 +149,7 @@ def map_trace(trace, plugin):
             obligation = _primary_obligation(meta)
             ok = not _errored(e)
             res = resolvers.get(tool)
-            if res and _no_payload(e) and not e.get("semantic_assume_success"):
+            if _no_payload(e) and not e.get("semantic_assume_success"):
                 # P6: a resolver exists (this tool HAS a semantic completion condition) but there is NO output
                 # to prove it was met -> CONSERVATIVE partial, milestone WITHHELD (never optimistic). Test
                 # fixtures that legitimately assume success set semantic_assume_success=True.

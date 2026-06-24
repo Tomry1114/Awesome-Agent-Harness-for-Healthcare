@@ -90,20 +90,6 @@ def execution(sem_trace, dimension_policy=None, manifest=None):
     actions = [s for s in sem_trace if _is_action(s)]
     sub = {}
 
-    # ------------------------------------------------------------------ 1. action_validity
-    # A well-formed action = the agent emitted a syntactically/semantically usable action. We treat an
-    # action as MALFORMED only when it failed, the failure is the AGENT's (failure_attribution=='agent'),
-    # AND it produced no state change (no progress) — i.e. a bad/invalid action, not an action that ran
-    # but returned an unhelpful result for environmental reasons. env/harness/unknown failures are not
-    # 'malformed actions' by the agent, so they do not lower action_validity.
-    if actions:
-        bad = sum(1 for s in actions
-                  if (not _ok(s)) and _attr(s) == "agent" and not s.get("state_changed"))
-        sub["action_validity"] = _sm(round((len(actions) - bad) / len(actions), 3),
-                                     opportunities=len(actions), malformed=bad)
-    else:
-        sub["action_validity"] = _sm(None, "not_applicable", 0)
-
     # ------------------------------------------------------------------ attribution (manifest override)
     def _eff_attr(s):
         """Effective ownership of a FAILED action. CapabilityManifest is authoritative: a failure on a
@@ -124,6 +110,20 @@ def execution(sem_trace, dimension_policy=None, manifest=None):
             if cap.get("implemented") is False:
                 return "harness"
         return s.get("failure_attribution")
+
+    # ------------------------------------------------------------------ 1. action_validity
+    # A well-formed action = the agent emitted a syntactically/semantically usable action. We treat an
+    # action as MALFORMED only when it failed, the failure is the AGENT's (failure_attribution=='agent'),
+    # AND it produced no state change (no progress) — i.e. a bad/invalid action, not an action that ran
+    # but returned an unhelpful result for environmental reasons. env/harness/unknown failures are not
+    # 'malformed actions' by the agent, so they do not lower action_validity.
+    if actions:
+        bad = sum(1 for s in actions
+                  if (not _ok(s)) and _eff_attr(s) == "agent" and not s.get("state_changed"))
+        sub["action_validity"] = _sm(round((len(actions) - bad) / len(actions), 3),
+                                     opportunities=len(actions), malformed=bad)
+    else:
+        sub["action_validity"] = _sm(None, "not_applicable", 0)
 
     # ------------------------------------------------------------------ 2. tool_invocation_success
     # Denominator = invocations the agent OWNS: every success + every failure attributed to the agent.

@@ -236,6 +236,62 @@ def test_execution_uses_capability_id_for_attribution():
     assert r["submetrics"]["tool_invocation_success"].get("agent_failures", 0) == 0
 
 
+def test_action_validity_uses_manifest_attribution():
+    """#2: a failure on an UNHEALTHY capability (text-heuristic would call it 'agent') must NOT count as a
+    malformed action -- action_validity and tool_invocation_success must agree via the manifest."""
+    import substrate as _S, dim_execution as _E
+    ev = _S.semantic_event("act", status="failure", capability_id="fhir_create",
+                           failure_attribution="agent", state_changed=False)
+    man = {"fhir_create": {"implemented": True, "available": True, "authorized": True, "healthy": False}}
+    r = _E.execution([ev], {}, man)
+    assert r["submetrics"]["action_validity"]["score"] == 1.0, r["submetrics"]["action_validity"]
+
+
+def test_ordering_missing_predecessor_fails():
+    """#P2: a successor with NO predecessor is ACTIVATED and UNSATISFIED (score 0), not skipped."""
+    import dim_lifecycle as _L
+    dp = {"ordering_constraints": [{"predecessor": {"milestone": "allergy_checked"},
+                                    "successor": {"milestone": "medication_ordered"}, "weight": 1.0}]}
+    tr = [{"event_role": "act", "status": "success", "milestones_added": ["medication_ordered"]},
+          {"event_role": "final", "status": "success", "terminal": "final"}]
+    assert _L._score_ordering(tr, dp)["score"] == 0.0
+
+
+def test_unjustified_escalation_not_recovery():
+    """#P5: a bare give-up escalation (no degraded capability) does NOT count as recovery."""
+    import dim_lifecycle as _L
+    tr = [{"event_role": "acquire", "status": "failure", "obligation_id": "target_examined", "failure_attribution": "agent"},
+          {"event_role": "escalate", "status": "success", "terminal": "escalate"}]
+    assert _L._score_recovery(tr, {}, None, {})["score"] == 0.0
+    man = {"cap": {"healthy": False}}
+    assert _L._score_recovery(tr, {}, man, {})["score"] == 1.0
+
+
+def test_missing_payload_withholds_milestone():
+    """#3/#P6: a tool_call with NO payload (and no semantic_assume_success) is mapped status=partial with the
+    milestone WITHHELD -- never optimistic -- even for a tool that has no resolver."""
+    import substrate as _S
+    pl = _S.get_plugin("MedCTA")
+    ev = [{"event_type": "tool_call", "tool": "ImageDescription", "status": "ok"}]   # no result/observation
+    sem = _S.map_trace(ev, pl)
+    assert sem[0]["status"] == "partial" and sem[0]["milestones_added"] == [], sem[0]
+    ev2 = [{"event_type": "tool_call", "tool": "ImageDescription", "status": "ok", "semantic_assume_success": True}]
+    assert "image_overview_obtained" in _S.map_trace(ev2, pl)[0]["milestones_added"]
+
+
+def test_delivery_record_drives_observability():
+    """#4: evidence_view consumes the recorded delivery_record / agent_visible_text (real info-flow) rather
+    than inferring from tool status."""
+    import substrate as _S
+    pl = _S.get_plugin("MedCTA")
+    ev = [{"event_type": "tool_call", "tool": "OCR", "status": "ok", "result": {"output": "X" * 5000},
+           "agent_visible_text": "X" * 500,
+           "delivery_record": {"produced": True, "rendered_to_agent": True, "truncated": True,
+                               "error_state_rendered": False}}]
+    u = _S.evidence_view(ev, pl)[0]
+    assert u["delivered_to_agent"] is True and u["delivery_fidelity"] == 0.5   # truncated -> reduced fidelity
+
+
 def _run():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     passed = 0
