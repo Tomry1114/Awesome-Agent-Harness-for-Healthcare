@@ -81,6 +81,10 @@ class FhirEnv(EnvironmentAdapter):
         os.makedirs(self.workspace, exist_ok=True)
         self._lab = None
         self._health_cache = None
+        # state digest (item #2): record the mutable resources THIS agent created in the sandbox,
+        # so fhir_create/order/message changes state_summary() while read/search does not.
+        self._created = []        # list of {resourceType,id,version,status} for created/updated resources
+        self._written = []        # list of {path} for write_file deliverables (also mutable state)
     def _healthy(self):
         if self._health_cache is None:
             try:
@@ -149,7 +153,9 @@ class FhirEnv(EnvironmentAdapter):
             req = urllib.request.Request(f"{self.base}/{rt}", data=data, method="POST",
                                          headers={"Content-Type": "application/fhir+json"})
             try:
-                return json.load(urllib.request.urlopen(req, timeout=30))
+                out = json.load(urllib.request.urlopen(req, timeout=30))
+                self._record_mutation(out, rt)  # mutable-state digest (item #2)
+                return out
             except urllib.error.HTTPError as ex:
                 return {"error": "HTTP %s" % ex.code, "detail": ex.read().decode("utf-8", "ignore")[:300]}
             except Exception as ex:
@@ -173,8 +179,48 @@ class FhirEnv(EnvironmentAdapter):
                     break
             fp = os.path.join(self.workspace, rel)
             os.makedirs(os.path.dirname(fp) or self.workspace, exist_ok=True)
-            open(fp, "w").write(args.get("content", "")); return {"written": fp}
+            content = args.get("content", "")
+            open(fp, "w").write(content)
+            # record deliverable as mutable state (path + content fingerprint) so re-writing the same
+            # file with new content changes the digest, but a re-read of FHIR data does not.
+            import hashlib as _hl
+            self._written = [w for w in self._written if w.get("path") != rel]
+            self._written.append({"path": rel, "sha": _hl.sha256(content.encode("utf-8", "replace")).hexdigest()[:12]})
+            return {"written": fp}
         return {"error": f"unknown tool {name}"}
+
+    def _record_mutation(self, out, rt):
+        """Append/refresh the digest entry for a created/updated FHIR resource. Cheap, JSON-able,
+        order-insensitive (state_summary sorts). Idempotent on (resourceType,id): a later version
+        of the same resource replaces the earlier entry but bumps version -> hash changes."""
+        try:
+            if not isinstance(out, dict) or out.get("error"):
+                return
+            r_rt = out.get("resourceType", rt) or rt
+            r_id = out.get("id")
+            meta = out.get("meta") or {}
+            ver = meta.get("versionId")
+            # key status fields that callers can mutate (order/message lifecycle)
+            status = out.get("status")
+            entry = {"resourceType": r_rt, "id": r_id, "version": ver, "status": status}
+            self._created = [c for c in self._created if not (c.get("resourceType") == r_rt and c.get("id") == r_id and r_id is not None)]
+            self._created.append(entry)
+        except Exception:
+            pass
+
+    def state_summary(self):
+        """Deterministic, JSON-serializable digest of the MUTABLE sandbox state this agent can change
+        (item #2). It reflects resources the agent created/ordered (fhir_*_create) and deliverables it
+        wrote (write_file). A fhir_create / order / message / write_file MUTATES this; a fhir_search /
+        fhir_read / get_lab_reference_range is read-only and leaves it unchanged. run.py._state_hash
+        hashes this for state_record.state_before/after_hash. (Read-side FHIR server contents are NOT
+        included: they are not agent-mutable within a task and reading them must not change the hash.)"""
+        created = sorted(
+            ({"resourceType": c.get("resourceType"), "id": c.get("id"),
+              "version": c.get("version"), "status": c.get("status")} for c in self._created),
+            key=lambda c: (str(c.get("resourceType")), str(c.get("id")), str(c.get("version"))))
+        written = sorted(self._written, key=lambda w: str(w.get("path")))
+        return {"created_resources": created, "deliverables": written}
 
 class GuiEnvMock(EnvironmentAdapter):
     """HealthAdminBench v0: MOCK portal — browser actions mutate an in-memory full_state, which the
@@ -206,6 +252,22 @@ class GuiEnvMock(EnvironmentAdapter):
         else:
             return {"error": f"unknown gui tool {name}"}
         return {"ok": True, "state_keys": list(fs["agentActions"].keys())}
+
+    def state_summary(self):
+        """Deterministic, JSON-able digest of the GUI's mutable page/form state (item #2): current
+        route, form field values, triage notes, and the set of completed actions (click/select/
+        submit/upload). A navigate/type/select/submit MUTATES this; a `snapshot` is read-only and
+        leaves it unchanged. None before reset(). run.py._state_hash hashes this for state_record."""
+        fs = self.full_state
+        if fs is None:
+            return None
+        return {
+            "page": fs.get("_page"),
+            "fields": {k: fs.get("fields", {})[k] for k in sorted(fs.get("fields", {}))},
+            "triageNotes": fs.get("triageNotes", ""),
+            "actions": {k: fs.get("agentActions", {})[k] for k in sorted(fs.get("agentActions", {}))},
+            "signals": {k: fs.get("signals", {})[k] for k in sorted(fs.get("signals", {}))},
+        }
 
 class ToolSandboxEnv(EnvironmentAdapter):
     """MedCTA environment. mode=real (v1, DEFAULT): the 5 tools execute for real
@@ -336,6 +398,22 @@ class GuiEnvReal(EnvironmentAdapter):
         self._prev_hash = h
         return {"ok": True, "url": self.page.url, "title": self.page.title(), "observation": obs,
                 "state_changed": bool(changed), "surface_changed": bool(changed)}
+
+    def state_summary(self):
+        """Deterministic, JSON-able digest of the REAL portal's mutable state (item #2): the current
+        route plus the persisted EMR (localStorage portals_state.emr, the same object the JMESPath
+        checkpoints score). A submit/type/select that writes the EMR or changes the route MUTATES this;
+        a `snapshot`/`scroll`/read-only navigate re-reads but does not change it. None before reset().
+        Canonicalized via json.dumps(sort_keys) in run.py._state_hash, so key order is irrelevant."""
+        if self.page is None and self.full_state is None:
+            return None
+        route = None
+        try:
+            import urllib.parse as _up
+            route = _up.urlparse(self.page.url).path if self.page is not None else None
+        except Exception:
+            route = None
+        return {"route": route, "emr": self.full_state or {}}
 
     def _sel(self, a):
         if a.get("ref") not in (None, ""):

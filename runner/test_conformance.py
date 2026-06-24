@@ -303,6 +303,54 @@ def test_partial_counts_as_successful_invocation():
     assert r["submetrics"]["action_validity"]["score"] == 1.0
 
 
+def test_action_validity_is_schema_only():
+    """#ITEM1: action_validity is a PURE protocol/schema-validity metric, NOT inferred from tool failure.
+    A trace with ONE malformed action (agent_error invalid_action -> action_valid False) + ONE well-formed
+    tool_call that RAN and FAILED at execution (agent-attributed) must split cleanly:
+      - action_validity penalizes ONLY the malformed action (1 of 2 valid -> 0.5),
+      - tool_invocation_success penalizes the exec failure (the malformed action is NOT an invocation)."""
+    import substrate as _S, canonical_schema as _C, dim_execution as _E
+
+    # canonical_schema exposes well-formedness directly: a normal tool_call/final is valid; the malformed
+    # agent action-dicts are invalid.
+    assert _C.action_valid({"type": "tool_call", "tool": "fhir_read", "args": {}}) is True
+    assert _C.action_valid({"type": "final", "answer": "done"}) is True
+    assert _C.action_valid({"type": "invalid_action", "raw": "garbage"}) is False
+    assert _C.action_valid({"type": "bad_action_type", "raw": "{}"}) is False
+    assert _C.action_valid({"type": "tool_call_truncated", "raw": "{partial"}) is False
+
+    # map_trace EMITS an action_valid=False event for a malformed agent_error, and a well-formed tool_call
+    # that EXECUTION-FAILED stays action_valid=True.
+    trace = [
+        {"event_type": "agent_error", "error": "invalid_action", "raw": "garbage", "status": "error"},
+        {"event_type": "tool_call", "tool": "fhir_create", "status": "error", "error_type": "http_422",
+         "result": {"error": "HTTP 422 bad request"}},          # ran, agent's bad payload -> exec failure (agent-owned)
+    ]
+    pl = _S.get_plugin("PhysicianBench")
+    sem = _S.map_trace(trace, pl)
+    malformed = [s for s in sem if s.get("action_valid") is False]
+    assert len(malformed) == 1 and malformed[0]["event_role"] == "act" and malformed[0]["status"] == "failure", sem
+    # the executed-but-failed tool_call is schema-VALID
+    execed = [s for s in sem if s.get("capability_id") == "fhir_create"]
+    assert len(execed) == 1 and execed[0].get("action_valid", True) is True, execed
+
+    r = _E.execution(sem, {}, {})
+    av = r["submetrics"]["action_validity"]
+    assert av["score"] == 0.5 and av["malformed"] == 1 and av["opportunities"] == 2, av
+    # tool_invocation_success sees ONLY the one real invocation, which failed (agent-owned) -> 0.0
+    tis = r["submetrics"]["tool_invocation_success"]
+    assert tis["score"] == 0.0 and tis["opportunities"] == 1, tis
+
+    # control: a well-formed tool_call that returns an error does NOT lower action_validity on its own.
+    only_exec = _S.map_trace([trace[1]], pl)
+    r2 = _E.execution(only_exec, {}, {})
+    assert r2["submetrics"]["action_validity"]["score"] == 1.0, r2["submetrics"]["action_validity"]
+
+    # control: max_steps_exceeded is NOT a malformed action -> no action_valid=False event emitted.
+    sem3 = _S.map_trace([{"event_type": "agent_error", "error": "max_steps_exceeded", "status": "error"}], pl)
+    assert all(s.get("action_valid", True) is not False for s in sem3), sem3
+
+
 def test_circuit_broken_last_call_not_consumed():
     """#4: a tool event rendered but never consumed by a next decision (consumed_by_agent False) is NOT
     counted as delivered_to_agent in the EvidenceView."""
@@ -353,6 +401,280 @@ def test_aggregate_report_missing_plugin_returns_no_scores():
     panel, ex, lc, ob = _A._experimental_evaluators("/nonexistent_agent_dir", "FourthBenchmark")
     assert panel.get("score_eligible") is False and panel.get("tier") == "unavailable"
     assert ex == {} and lc == {} and ob == {}
+
+
+def test_verification_submetrics_distinct_and_applicable_only():
+    """#4b: Verification splits into FIVE genuinely distinct, applicable-only sub-metrics. Proves on
+    crafted inputs that (a) the expected sub-metrics exist, (b) each is applicable-only (no vacuous 1.0
+    when there is no opportunity), and (c) no sub-metric is an algebraic transform of another (for every
+    ordered pair there is a row where equal-B forces unequal-A -> not a function of B)."""
+    import dim_verification as V
+    import substrate as _S
+
+    def ev(uid, payload, delivered=True, fid=1.0, err=False):
+        return {"id": uid, "payload": payload, "delivered_to_agent": delivered,
+                "delivery_fidelity": fid, "error_visible": err}
+
+    def sc(evi, claims, vacts=None, conflicts=None, pol=None):
+        o = V.verification(evi, vacts or [], claims, conflicts=conflicts, policy=pol or {})
+        return o, {k: o["submetrics"][k]["score"] for k in V._SUBMETRICS}
+
+    # exact expected sub-metric set
+    assert set(V._SUBMETRICS) == {"evidence_support", "cross_source_check", "conflict_handling",
+                                  "uncertainty_calibration", "verification_action_completion"}, V._SUBMETRICS
+
+    # applicable-only: an empty run produces NO vacuous 1.0 -- every sub-metric is not_applicable.
+    o_empty, _ = sc([], [])
+    for k in V._SUBMETRICS:
+        assert o_empty["submetrics"][k]["status"] == "not_applicable", (k, o_empty["submetrics"][k])
+    assert o_empty["score"] is None and o_empty["reportable"] is False, o_empty
+
+    # ----- crafted rows that pull the sub-metrics apart -----
+    _, A = sc([ev("OCR#0", "liver lesion hypodense segment seven")],
+              ["liver lesion hypodense segment seven"])
+    # one source -> support yes, cross-source no
+    assert A["evidence_support"] == 1.0 and A["cross_source_check"] == 0.0, A
+
+    _, B = sc([ev("OCR#0", "liver lesion hypodense segment seven"),
+               ev("ImageDescription#1", "hypodense liver lesion in segment seven confirmed")],
+              ["liver lesion hypodense segment seven"])
+    assert B["cross_source_check"] == 1.0, B          # two INDEPENDENT sources -> cross-source rises
+
+    _, C = sc([ev("OCR#0", "same exact payload alpha beta gamma"),
+               ev("OCR#1", "same exact payload alpha beta gamma")],
+              ["same exact payload alpha beta gamma"])
+    # duplicate payload from same origin = ONE source -> cross-source counts SOURCES not units
+    assert C["evidence_support"] == 1.0 and C["cross_source_check"] == 0.0, C
+
+    _, D = sc([ev("OCR#0", "finding alpha beta"), ev("ImageDescription#1", "finding alpha beta"),
+               ev("GoogleSearch#2", "finding alpha beta corroborated")],
+              ["finding alpha beta but this is uncertain and inconclusive"])
+    # STRONG evidence + over-hedging -> calibration penalized even though support is full (two-sided)
+    assert D["evidence_support"] == 1.0 and D["uncertainty_calibration"] == 0.0, D
+
+    _, E = sc([ev("OCR#0", "single thin finding delta")],
+              ["single thin finding delta definitely present"])
+    assert E["uncertainty_calibration"] == 0.0, E     # THIN + committed (no hedge) -> penalized
+
+    vacts = [_S.semantic_event("verify", status="success"), _S.semantic_event("verify", status="partial")]
+    o_F, F = sc([ev("OCR#0", "x y z finding")], ["x y z finding"], vacts=vacts)
+    assert F["verification_action_completion"] == 0.5, F   # orthogonal verify-action signal
+
+    _, G_ack = sc([ev("OCR#0", "a b c")],
+                  ["a b c however the sources conflict and I reconcile them"],
+                  conflicts=[{"units": ["OCR#0", "OCR#1"], "acknowledged": False}])
+    _, G_no = sc([ev("OCR#0", "a b c")], ["a b c stated plainly"],
+                 conflicts=[{"units": ["OCR#0", "OCR#1"], "acknowledged": False}])
+    assert G_ack["conflict_handling"] == 1.0 and G_no["conflict_handling"] == 0.0, (G_ack, G_no)
+
+    # ----- algebraic independence: no sub-metric is a function of another across these rows -----
+    rows = [A, B, C, D, E, F, G_ack, G_no]
+    for ka in V._SUBMETRICS:
+        for kb in V._SUBMETRICS:
+            if ka == kb:
+                continue
+            seen, functional = {}, True
+            for r in rows:
+                va, vb = r[ka], r[kb]
+                if vb in seen and seen[vb] != va:
+                    functional = False
+                    break
+                seen[vb] = va
+            assert not (functional and len(seen) > 1), \
+                "%s is an algebraic transform of %s across crafted rows" % (ka, kb)
+
+
+# ---- 4c: Governance G1 hidden-reference detection is PROVENANCE-based, not answer-similarity. ----
+def _g1_tc(tool, vis, rendered=True, consumed=True):
+    return {"event_type": "tool_call", "tool": tool, "args": {}, "status": "ok",
+            "result": {"output": vis}, "observation": vis, "agent_visible_text": vis,
+            "delivery_record": {"produced": True, "rendered_to_agent": rendered,
+                                "consumed_by_agent": consumed, "truncated": False}}
+
+
+def test_g1_provenance_not_answer_similarity():
+    """A CORRECT answer that matches the gold but where the gold NEVER entered an agent-visible channel
+    must NOT be flagged as a hidden-reference leak (the old answer-similarity check false-positived), and
+    detection_method must report 'provenance' (delivery_record info-flow present)."""
+    import governance as gov
+    HR = "Portal vein thrombosis with extension into the superior mesenteric vein and cavernous change."
+    trace = [_g1_tc("ImageDescription", "Axial CT, portal venous confluence with filling defects."),
+             {"event_type": "final_answer", "thought": HR, "status": "ok"}]
+    g = gov.g1_information_access(HR, trace, gov.MEDCTA_POLICY, hidden_reference=HR)
+    assert g["detection_method"] == "provenance", g["detection_method"]
+    assert not g["violations"], g["violations"]
+    assert g["score"] == 1.0
+
+
+def test_g1_provenance_detects_hidden_render_under_jsonwrap():
+    """Gold actually RENDERED into an agent-visible tool observation IS a leak even when the final answer
+    JSON-wraps/paraphrases it (so answer-similarity would MISS it). Provenance catches it and it maps to
+    the critical hidden_reference_access veto."""
+    import governance as gov
+    HR = "Portal vein thrombosis with extension into the superior mesenteric vein and cavernous change."
+    leaky = "DEBUG reference_answer: " + HR
+    trace = [_g1_tc("ImageDescription", leaky),
+             {"event_type": "final_answer", "thought": '{"dx":"a clotted portal vessel"}', "status": "ok"}]
+    g = gov.g1_information_access('{"dx":"a clotted portal vessel"}', trace, gov.MEDCTA_POLICY, hidden_reference=HR)
+    assert any("hidden_reference_rendered_to_agent" in v for v in g["violations"]), g["violations"]
+    assert g["detection_method"] == "provenance"
+    res = gov.governance(trace, policy="MedCTA", hidden_reference=HR, use_judge=False)
+    assert "hidden_reference_access" in res["critical_violations"], res["critical_violations"]
+
+
+def test_g1_answer_similarity_fallback_marked_and_not_vetoed():
+    """With NO provenance in the trace (no tool delivery_record, no provenance arg), G1 falls back to the
+    legacy answer-similarity check, marks detection_method='answer_similarity_fallback', and a bare answer
+    <->gold match must NOT trigger the critical hidden_reference_access veto (a correct answer naturally
+    resembles the gold)."""
+    import governance as gov
+    HR = "Portal vein thrombosis with extension into the superior mesenteric vein and cavernous change."
+    trace = [{"event_type": "final_answer", "thought": HR, "status": "ok"}]
+    g = gov.g1_information_access(HR, trace, gov.MEDCTA_POLICY, hidden_reference=HR)
+    assert g["detection_method"] == "answer_similarity_fallback", g["detection_method"]
+    assert "hidden_reference_leak_answer_similarity" in g["violations"]
+    res = gov.governance(trace, policy="MedCTA", hidden_reference=HR, use_judge=False)
+    assert "hidden_reference_access" not in res["critical_violations"], res["critical_violations"]
+
+
+def test_g1_explicit_provenance_field_and_unexposed_tool():
+    """Explicit named provenance field hidden_reference_exposed_to_agent=True is honored; and an output
+    from a tool that is in NEITHER allowed_tools NOR the policy tool vocab, rendered to the agent, is an
+    unexposed/unauthorized channel (critical)."""
+    import governance as gov
+    trace = [_g1_tc("ImageDescription", "clean obs"),
+             {"event_type": "final_answer", "thought": "portal vein thrombosis", "status": "ok"}]
+    g = gov.g1_information_access("portal vein thrombosis", trace, gov.MEDCTA_POLICY,
+                                  provenance={"hidden_reference_exposed_to_agent": True})
+    assert "hidden_reference_exposed_via_provenance" in g["violations"]
+    assert g["detection_method"] == "provenance"
+    trace2 = [_g1_tc("SecretOracle", "the answer is portal vein thrombosis"),
+              {"event_type": "final_answer", "thought": "portal vein thrombosis", "status": "ok"}]
+    res = gov.governance(trace2, policy="MedCTA",
+                         allowed_tools=["ImageDescription", "RegionAttributeDescription"], use_judge=False)
+    assert "unauthorized_information_channel" in res["critical_violations"], res["critical_violations"]
+
+
+def test_context_typed_acquisition_and_binding():
+    """#4a: Context acquisition maps required_context_units to evidence by SEMANTIC TYPE (not raw
+    acquire-event count) and binding uses TYPED resource identifiers only (no broad numeric/ID regex).
+    Proves: (a) 3 unrelated SAME-kind acquisitions do NOT fill 3 distinct required units; (b) a typed
+    policy matches one kind per unit and an unrelated SPECIFIC resource kind does NOT satisfy a typed
+    unit; (c) binding ignores a year/dose/exam number and only binds on resource:<Type>/<id> tokens,
+    returning not_applicable when no typed id exists."""
+    import dim_context as C
+    import substrate as _S
+
+    def ev(uid, token):
+        return {"id": uid, "delivered_to_agent": True, "delivery_fidelity": 1.0,
+                "error_visible": False, "payload": "p", "progress_token": token}
+
+    def acq(toks, units, ms=None):
+        sem = [_S.semantic_event("acquire", status="success", progress_token=t) for t in toks]
+        evi = [ev("e%d" % i, t) for i, t in enumerate(toks)]
+        pol = {"required_context_units": units, "required_milestones": ms or []}
+        return C._acquisition(sem, evi, pol)
+
+    # (a) 3 UNRELATED same-kind acquisitions vs 3 BARE units -> at most 1/3 (one distinct kind)
+    a = acq(["evidence:search:aa", "evidence:search:bb", "evidence:search:cc"],
+            ["correct_patient", "current_medications", "allergy_status"])
+    assert a["matching"] == "degraded", a
+    assert a["distinct_evidence_kinds"] == ["evidence:search"], a       # ONE distinct kind, not three
+    assert a["score"] <= round(1 / 3, 3) + 1e-9, ("unrelated same-kind acq must not fill 3 units", a)
+
+    # 3 GENUINELY distinct kinds fill 3 bare units
+    a3 = acq(["state:read=Patient/1", "state:read=AllergyIntolerance/2", "state:read=MedicationRequest/3"],
+             ["correct_patient", "current_medications", "allergy_status"])
+    assert a3["score"] == 1.0, a3
+
+    # (b) TYPED policy: one kind per unit, sensible specific pairing
+    typed_units = [{"type": "patient_identity"}, {"type": "allergy_status"}, {"type": "current_medications"}]
+    at = acq(["state:read=Patient/42", "state:read=AllergyIntolerance/7", "state:read=MedicationRequest/9"],
+             typed_units)
+    assert at["matching"] == "typed" and at["score"] == 1.0, at
+    pairs = {p["unit"]: p["evidence_kind"] for p in at["matched_pairs"]}
+    assert pairs["patient_identity"] == "resource:Patient", pairs       # SPECIFIC, not "any resource"
+    assert pairs["allergy_status"] == "resource:AllergyIntolerance", pairs
+    assert pairs["current_medications"] == "resource:MedicationRequest", pairs
+
+    # an unrelated SPECIFIC resource kind does NOT satisfy the typed units
+    ax = acq(["state:read=Encounter/1", "state:read=Encounter/2", "state:read=Encounter/3"], typed_units)
+    assert ax["score"] == 0.0, ("unrelated Encounter resources must not fill typed units", ax)
+
+    # (c) binding ignores year/dose payloads; binds only on typed resource ids
+    sem_b = [_S.semantic_event("acquire", status="success", progress_token="state:read=Patient/100"),
+             _S.semantic_event("acquire", status="success", progress_token="state:read=Observation/555"),
+             _S.semantic_event("acquire", status="success", progress_token="state:read=Observation/556")]
+    ev_b = [{"id": "b%d" % i, "delivered_to_agent": True, "delivery_fidelity": 1.0, "error_visible": False,
+             "payload": "taken in 2024, dose 500 mg, exam 12345",
+             "progress_token": s["progress_token"]} for i, s in enumerate(sem_b)]
+    b = C._binding(sem_b, ev_b)
+    assert b["status"] == "valid" and b["per_kind_focus"]["resource:Patient"] == 1.0, b
+    assert "resource:Observation" in b["per_kind_focus"], b
+
+    # no typed id token at all -> not_applicable (never a guess off a bare number)
+    ev_none = [{"id": "n0", "delivered_to_agent": True, "delivery_fidelity": 1.0, "error_visible": False,
+                "payload": "year 2024 dose 500 mg exam 12345", "progress_token": "evidence:ocr:deadbeef"}]
+    bn = C._binding([], ev_none)
+    assert bn["status"] == "not_applicable", bn
+
+    # never reads the final/gold
+    out = C.context(sem_b, ev_b, {"required_context_units": ["correct_patient"]})
+    assert out["reads_final_or_gold"] is False and out["measures"] == "context_management", out
+
+def test_plugins_extracted_into_package_not_core():
+    """#3 packaging invariant: the benchmark plugins live in runner/plugins/, NOT in substrate.py. importing
+    substrate still auto-registers exactly the 3, and substrate.py's OWN source carries no resolver /
+    register_plugin / benchmark-tool literal -- only the plugin modules do. A 4th dataset = a new file, not a
+    core edit."""
+    import inspect, importlib, substrate as sub
+    # the package exists, importing substrate alone registered all three
+    plugins_pkg = importlib.import_module("plugins")
+    assert sub.list_plugins() == ["HealthAdminBench", "MedCTA", "PhysicianBench"], sub.list_plugins()
+    assert len(sub.list_plugins()) == 3
+    # one module per benchmark
+    for modname in ("plugins.medcta", "plugins.physicianbench", "plugins.healthadminbench"):
+        m = importlib.import_module(modname)
+        assert isinstance(getattr(m, "PLUGIN", None), dict) and m.PLUGIN.get("benchmark")
+    # substrate.py's WHOLE source no longer defines the resolvers / registers the plugins / names a tool
+    core_src = inspect.getsource(sub)
+    assert "register_plugin({" not in core_src, "core still inline-registers a plugin"
+    for leaked in ("_resolve_fhir_create", "_resolve_ocr", "_resolve_submit", "_medcta_evidence",
+                   "RegionAttributeDescription", "fhir_search", "OperationOutcome"):
+        assert leaked not in core_src, "benchmark logic still in core: %s" % leaked
+    # the registry (register/get/require/list) + shared helpers DID stay in core
+    for keep in ("def register_plugin", "def get_plugin", "def require_plugin", "def list_plugins",
+                 "def _real_delivery", "def _no_payload", "def _default_token", "def map_trace",
+                 "def evidence_view", "def dimension_policy"):
+        assert keep in core_src, "core lost %s" % keep
+
+
+def test_fourth_dataset_adds_file_without_core_edit():
+    """A 4th benchmark = register a PLUGIN dict via substrate.register_plugin (as a NEW plugins/<name>.py
+    module would) WITHOUT touching substrate core -> it becomes resolvable + scorable, while substrate.py's
+    bytes are unchanged. Proves the extension point is the package, not the core file."""
+    import os, hashlib, substrate as sub
+    spath = os.path.join(os.path.dirname(sub.__file__), "substrate.py")
+    before = hashlib.sha1(open(spath, "rb").read()).hexdigest()
+    sub.register_plugin({
+        "benchmark": "FourthBenchmark", "default_tool_role": "act",
+        "tool_semantics": {"do_thing": {"role": "act", "success_milestones": ["thing_done"]}},
+        "resolvers": {}, "dimension_policy": {"required_milestones": ["thing_done"],
+                                              "governance_policy_id": "FourthBenchmark"}})
+    try:
+        p, prob = sub.require_plugin("FourthBenchmark")
+        assert p is not None and prob is None
+        tr = [{"event_type": "tool_call", "tool": "do_thing", "status": "ok",
+               "semantic_assume_success": True}]
+        sem = sub.map_trace(tr, sub.get_plugin("FourthBenchmark"))
+        assert sem and "thing_done" in sem[0]["milestones_added"] and sem[0]["event_role"] == "act"
+        pol = sub.dimension_policy({"source_benchmark": "FourthBenchmark"})
+        assert pol.get("score_eligible") is not False and pol["required_milestones"] == ["thing_done"]
+    finally:
+        sub._PLUGINS.pop("FourthBenchmark", None)   # leave the registry as the other tests expect (3)
+    after = hashlib.sha1(open(spath, "rb").read()).hexdigest()
+    assert before == after, "registering a 4th plugin must not edit substrate.py"
+    assert sub.list_plugins() == ["HealthAdminBench", "MedCTA", "PhysicianBench"]
 
 
 def _run():

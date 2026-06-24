@@ -39,16 +39,24 @@ STATUSES = ("success", "partial", "failure")
 
 def semantic_event(role, status="success", capability_id=None, obligation_id=None, progress_token=None,
                    milestones_added=None, state_changed=False, terminal=None, failure_attribution=None,
-                   raw=None):
+                   raw=None, action_valid=True):
     """v2 SemanticEvent. capability_id/obligation_id default None for non-tool events (final/escalate);
     map_trace sets them on every tool_call. Consumers read every field via .get(), so unset fields are
-    simply absent-valued, never schema-breaking."""
+    simply absent-valued, never schema-breaking.
+
+    action_valid : PURE protocol/schema validity of the action that produced this event — True when the
+    agent emitted a WELL-FORMED action (a usable tool_call/final/control/etc.), False ONLY for a
+    MALFORMED/unparseable action (run.py's agent_error markers: invalid_action / bad_action_type /
+    truncated_tool_call). It is INDEPENDENT of execution outcome: a well-formed tool_call that RAN and
+    failed is still action_valid=True (the failure is tool_invocation_success's concern, not validity).
+    Defaults True so legacy/hand-built events (no malformed marker) are well-formed unless set otherwise."""
     assert role in ROLES, "unknown role %r" % role
     assert status in STATUSES, "unknown status %r" % status
     return {"event_role": role, "status": status, "capability_id": capability_id,
             "obligation_id": obligation_id, "progress_token": progress_token,
             "milestones_added": list(milestones_added or []), "state_changed": bool(state_changed),
-            "terminal": terminal, "failure_attribution": failure_attribution, "raw": raw}
+            "terminal": terminal, "failure_attribution": failure_attribution, "raw": raw,
+            "action_valid": bool(action_valid)}
 
 # ----------------------------------------------------------------------------- BenchmarkPlugin registry
 _PLUGINS = {}
@@ -123,6 +131,11 @@ def _primary_obligation(meta):
     return ms[0] if ms else None
 
 # ----------------------------------------------------------------------------- SemanticEventMapper
+# run.py agent_error markers that denote a MALFORMED/unparseable AGENT ACTION (the only ones action_validity
+# penalizes). Other agent_error values (max_steps_exceeded) are lifecycle/run-management, not malformed
+# actions, and are NOT mapped to an action_valid=False event.
+_MALFORMED_ACTION_ERRORS = ("invalid_action", "bad_action_type", "truncated_tool_call")
+
 def map_trace(trace, plugin):
     """SemanticEventMapper: raw canonical trace -> [SemanticEvent] under the v2 contract. A tool's meaning
     comes from the plugin: a RESULT-CONDITIONAL resolver(event, prev_state) if declared (reads the actual
@@ -186,9 +199,18 @@ def map_trace(trace, plugin):
                 changed = (status == "success") and (bool(new_ms) or new_pt)
             out.append(semantic_event(role, status=status, capability_id=cap_id, obligation_id=obligation,
                        progress_token=pt, milestones_added=ms, state_changed=changed,
-                       failure_attribution=attr, raw=e))
+                       failure_attribution=attr, raw=e))      # a tool_call that ran is WELL-FORMED -> action_valid default True
             seen_ms.update(ms)
             if pt is not None: seen_pt.add(pt)
+        elif et == "agent_error" and e.get("error") in _MALFORMED_ACTION_ERRORS:
+            # A MALFORMED / unparseable agent action (invalid_action / bad_action_type / truncated_tool_call):
+            # run.py logged it instead of dispatching a tool. Emit a counted action event with
+            # action_valid=False so action_validity (schema-validity only) sees the bad action. It is an
+            # 'act' that FAILED to even be a well-formed action; attributed to the agent (it is the agent's
+            # protocol violation), produced no state change. Other agent_error markers (max_steps_exceeded,
+            # repeated_failing_call) are NOT malformed actions and are intentionally not emitted here.
+            out.append(semantic_event("act", status="failure", failure_attribution="agent",
+                       state_changed=False, action_valid=False, raw=e))
         elif et == "final_answer":
             out.append(semantic_event("final", terminal="final", raw=e))
         elif et and ("escalat" in str(et).lower() or et == "deliverable_budget_warning"):
@@ -333,270 +355,12 @@ def dimension_policy(task, plugin=None):
     base.setdefault("governance_policy_id", task.get("source_benchmark"))
     return base
 
-# ============================================================================= RESOLVERS
-# Each resolver reads the REAL output to decide success/partial and which milestones are truly earned.
-# success -> milestone(s) granted; partial -> ran without error but goal unmet, milestone WITHHELD;
-# failure -> errored. Resolvers may return obligation_id to override the static primary milestone.
-
-# ---- MedCTA ----------------------------------------------------------------
-def _resolve_region(event, prev_state):
-    """RegionAttributeDescription: a successful HTTP call that FELL BACK to the whole image (resolved=False)
-    did NOT examine the targeted region -> it must NOT be credited target_region_examined. Reads the real
-    localization status from result.output.localization."""
-    out = _result_output(event)
-    loc = out.get("localization") if isinstance(out, dict) else None
-    if _errored(event):
-        return {"role": "acquire", "status": "failure", "milestones_added": [], "state_changed": False,
-                "obligation_id": "target_region_examined"}
-    if isinstance(loc, dict) and loc.get("resolved") is True:
-        return {"role": "acquire", "status": "success", "state_changed": True,
-                "milestones_added": ["target_region_examined", "relevant_image_evidence_obtained"],
-                "obligation_id": "target_region_examined",
-                "progress_token": "region:%s:resolved" % _hash8(str(loc.get("requested") or "region"))}
-    # fell back to the full image: general image evidence only, the targeted region was NOT examined
-    return {"role": "acquire", "status": "partial", "state_changed": False,
-            "milestones_added": ["image_overview_obtained"], "obligation_id": "target_region_examined",
-            "progress_token": None}
-
-def _resolve_ocr(event, prev_state):
-    """MedCTA OCR: empty/blank rendered text -> partial, NO text_evidence_obtained, progress_token=None
-    (the page carried no readable text -> no evidence). Non-empty text -> success with a CONTENT-hashed
-    evidence token so OCR(page1) and OCR(page2) earn DIFFERENT tokens (new evidence) while a repeated
-    identical OCR repeats its token (no progress)."""
-    if _errored(event):
-        return {"role": "acquire", "status": "failure", "milestones_added": [],
-                "obligation_id": "text_evidence_obtained", "state_changed": False, "progress_token": None}
-    out = _result_output(event)
-    text = out if isinstance(out, str) else (out.get("text") if isinstance(out, dict) else "")
-    text = (text or "").strip()
-    if not text:
-        return {"role": "acquire", "status": "partial", "milestones_added": [],
-                "obligation_id": "text_evidence_obtained", "state_changed": False, "progress_token": None}
-    return {"role": "acquire", "status": "success", "milestones_added": ["text_evidence_obtained"],
-            "obligation_id": "text_evidence_obtained",
-            "progress_token": "evidence:ocr:%s" % _hash8(text)}
-
-_GS_EMPTY = ("[no offline result", "no result", "no results found", "[no result")
-def _resolve_googlesearch(event, prev_state):
-    """MedCTA GoogleSearch: a '[no offline result]' / empty / irrelevant snippet -> partial, no
-    external_reference_obtained milestone (the search returned nothing usable). A real snippet -> success
-    with a content-hashed external-reference token."""
-    if _errored(event):
-        return {"role": "acquire", "status": "failure", "milestones_added": [],
-                "obligation_id": "external_reference_obtained", "state_changed": False, "progress_token": None}
-    out = _result_output(event)
-    snippet = out if isinstance(out, str) else (out.get("text") if isinstance(out, dict) else "")
-    snippet = (snippet or "").strip()
-    low = snippet.lower()
-    if (not snippet) or any(low.startswith(m) or m in low for m in _GS_EMPTY):
-        return {"role": "acquire", "status": "partial", "milestones_added": [],
-                "obligation_id": "external_reference_obtained", "state_changed": False, "progress_token": None}
-    return {"role": "acquire", "status": "success", "milestones_added": ["external_reference_obtained"],
-            "obligation_id": "external_reference_obtained",
-            "progress_token": "evidence:search:%s" % _hash8(snippet)}
-
-# ---- PhysicianBench (FHIR) -------------------------------------------------
-def _is_operation_outcome_error(obj):
-    if not isinstance(obj, dict):
-        return False
-    if obj.get("resourceType") == "OperationOutcome":
-        for iss in (obj.get("issue") or []):
-            if str(iss.get("severity", "")).lower() in ("error", "fatal"):
-                return True
-        return True   # an OperationOutcome with no graded issue is still not a created resource
-    return False
-
-def _resolve_fhir_create(event, prev_state):
-    """PB fhir_create: an HTTP-success that returned an OperationOutcome error OR a body with NO created
-    resource id is NOT a real creation -> partial, no resource_created. A body with a server-assigned id
-    (and a real resourceType) -> success with a resource:<type>/<id>:created token."""
-    if _errored(event):
-        return {"role": "commit", "status": "failure", "milestones_added": [],
-                "obligation_id": "resource_created", "state_changed": False, "progress_token": None}
-    out = _result_output(event)
-    if _is_operation_outcome_error(out):
-        return {"role": "commit", "status": "partial", "milestones_added": [],
-                "obligation_id": "resource_created", "state_changed": False, "progress_token": None}
-    rid = out.get("id") if isinstance(out, dict) else None
-    rtype = out.get("resourceType") if isinstance(out, dict) else None
-    if rid and rtype and rtype != "OperationOutcome":
-        return {"role": "commit", "status": "success", "milestones_added": ["resource_created"],
-                "obligation_id": "resource_created",
-                "progress_token": "resource:%s/%s:created" % (rtype, rid)}
-    # accepted call but no created id surfaced -> not a real creation
-    return {"role": "commit", "status": "partial", "milestones_added": [],
-            "obligation_id": "resource_created", "state_changed": False, "progress_token": None}
-
-def _bundle_count(out):
-    """Number of matched resources in a FHIR search result (Bundle.total or len(entry)); None if not a
-    bundle."""
-    if not isinstance(out, dict):
-        return None
-    if out.get("resourceType") != "Bundle":
-        return None
-    if isinstance(out.get("total"), int):
-        return out["total"]
-    return len(out.get("entry") or [])
-
-def _resolve_fhir_search(event, prev_state):
-    """PB fhir_search: an empty result set (Bundle total 0 / no entry) -> partial, no patient_record_loaded
-    (nothing was actually loaded). A non-empty Bundle -> success with a state token keyed by the matched-id
-    set so a re-run of the SAME search repeats its token (no progress) but a search hitting new records
-    advances state."""
-    if _errored(event):
-        return {"role": "acquire", "status": "failure", "milestones_added": [],
-                "obligation_id": "patient_record_loaded", "state_changed": False, "progress_token": None}
-    out = _result_output(event)
-    n = _bundle_count(out)
-    if n is None:
-        # not a recognizable bundle but no error: treat as a delivered single resource if it has an id
-        rid = out.get("id") if isinstance(out, dict) else None
-        if rid:
-            return {"role": "acquire", "status": "success", "milestones_added": ["patient_record_loaded"],
-                    "obligation_id": "patient_record_loaded",
-                    "progress_token": "state:search=%s" % _hash8(str(rid))}
-        return {"role": "acquire", "status": "partial", "milestones_added": [],
-                "obligation_id": "patient_record_loaded", "state_changed": False, "progress_token": None}
-    if n <= 0:
-        return {"role": "acquire", "status": "partial", "milestones_added": [],
-                "obligation_id": "patient_record_loaded", "state_changed": False, "progress_token": None}
-    ids = ",".join(sorted(str((en.get("resource") or {}).get("id") or "")
-                          for en in (out.get("entry") or []))[:50])
-    return {"role": "acquire", "status": "success", "milestones_added": ["patient_record_loaded"],
-            "obligation_id": "patient_record_loaded",
-            "progress_token": "state:search=%s" % _hash8(ids or str(n))}
-
-def _resolve_fhir_read(event, prev_state):
-    """PB fhir_read: an empty / OperationOutcome / id-less body -> partial, no record_detail_loaded. A real
-    resource body -> success with a resource:<type>/<id>:read state token (re-reading the SAME id repeats
-    the token; a new id advances state)."""
-    if _errored(event):
-        return {"role": "acquire", "status": "failure", "milestones_added": [],
-                "obligation_id": "record_detail_loaded", "state_changed": False, "progress_token": None}
-    out = _result_output(event)
-    if _is_operation_outcome_error(out):
-        return {"role": "acquire", "status": "partial", "milestones_added": [],
-                "obligation_id": "record_detail_loaded", "state_changed": False, "progress_token": None}
-    rid = out.get("id") if isinstance(out, dict) else None
-    rtype = out.get("resourceType") if isinstance(out, dict) else None
-    if rid and rtype:
-        return {"role": "acquire", "status": "success", "milestones_added": ["record_detail_loaded"],
-                "obligation_id": "record_detail_loaded",
-                "progress_token": "state:read=%s/%s" % (rtype, rid)}
-    return {"role": "acquire", "status": "partial", "milestones_added": [],
-            "obligation_id": "record_detail_loaded", "state_changed": False, "progress_token": None}
-
-# ---- HealthAdminBench (browser) --------------------------------------------
-def _hab_page(event):
-    """The rendered page surface for a HAB action: prefer the recorded agent-visible text, else the tool
-    result's embedded 'observation' page text. Returns (url, page_text)."""
-    out = _result_output(event)
-    url = out.get("url") if isinstance(out, dict) else None
-    page = ""
-    if isinstance(out, dict):
-        page = out.get("observation") or ""
-    if not page:
-        page = _rendered_text(event)
-    return url, str(page or "")
-
-_SUBMIT_CONFIRM = ("submitted", "success", "confirmation", "thank you", "has been submitted",
-                   "received", "your appeal", "appeal submitted", "saved", "confirmed",
-                   "submission complete", "successfully")
-def _resolve_submit(event, prev_state):
-    """HAB submit: accepted but NO confirmation in the RENDERED observation -> partial, no form_submitted
-    (a button press with no confirmation surface is not a completed submission). A rendered confirmation ->
-    success with a state:submitted token keyed by the confirming page."""
-    if _errored(event):
-        return {"role": "commit", "status": "failure", "milestones_added": [],
-                "obligation_id": "form_submitted", "state_changed": False, "progress_token": None}
-    url, page = _hab_page(event)
-    low = page.lower()
-    if any(k in low for k in _SUBMIT_CONFIRM):
-        return {"role": "commit", "status": "success", "milestones_added": ["form_submitted"],
-                "obligation_id": "form_submitted",
-                "progress_token": "state:submitted=%s" % _hash8((url or "") + "|" + page)}
-    return {"role": "commit", "status": "partial", "milestones_added": [],
-            "obligation_id": "form_submitted", "state_changed": False, "progress_token": None}
-
-def _resolve_dom_action(event, prev_state):
-    """HAB click/type: state_changed ONLY if the rendered page state actually DIFFERS from the last page the
-    agent saw (a click/type that left the page unchanged made no progress -> partial, no token). The page
-    surface is content-hashed into a state:page token so a real navigation/expansion advances state while a
-    no-op repeats the prior page token."""
-    if _errored(event):
-        return {"role": "act", "status": "failure", "milestones_added": [], "state_changed": False,
-                "progress_token": None}
-    url, page = _hab_page(event)
-    surface = (url or "") + "|" + page.strip()
-    if not page.strip():
-        return {"role": "act", "status": "partial", "milestones_added": [], "state_changed": False,
-                "progress_token": None}
-    token = "state:page=%s" % _hash8(surface)
-    seen = prev_state.get("tokens") or set()
-    if token in seen:
-        # the page is identical to one already seen -> the action produced no new state
-        return {"role": "act", "status": "partial", "milestones_added": [], "state_changed": False,
-                "progress_token": token}
-    return {"role": "act", "status": "success", "milestones_added": [], "state_changed": True,
-            "progress_token": token}
-
-# ----------------------------------------------------------------------------- evidence extractor (MedCTA)
-def _medcta_evidence(trace):
-    """MedCTA EvidenceView: real delivery (canonical_observation) refined by localization — a delivered region
-    result that FELL BACK to the whole image is delivered but low-fidelity (targeted region not localized)."""
-    units = []
-    for i, e in enumerate(trace):
-        if e.get("event_type") != "tool_call": continue
-        d = _real_delivery(e)
-        out = _result_output(e)
-        loc = out.get("localization") if isinstance(out, dict) else None
-        fid = d["fidelity"]
-        if d["delivered"] and isinstance(loc, dict) and loc.get("resolved") is False:
-            fid = min(fid, 0.5)
-        txt = out.get("text") if isinstance(out, dict) else _source_text(e)
-        units.append({"id": "%s#%d" % (e.get("tool"), i), "delivered_to_agent": d["delivered"],
-                      "delivery_fidelity": fid, "error_visible": d["error_visible"], "payload": str(txt)[:300]})
-    return units
-
-# ----------------------------------------------------------------------------- plugin registrations
-register_plugin({
-    "benchmark": "MedCTA", "default_tool_role": "acquire",
-    "tool_semantics": {
-        "ImageDescription": {"role": "acquire", "success_milestones": ["image_overview_obtained", "relevant_image_evidence_obtained"]},
-        "RegionAttributeDescription": {"role": "acquire", "success_milestones": ["target_region_examined", "relevant_image_evidence_obtained"]},
-        "OCR": {"role": "acquire", "success_milestones": ["text_evidence_obtained"]},
-        "GoogleSearch": {"role": "acquire", "success_milestones": ["external_reference_obtained"]},
-        "Calculator": {"role": "act", "success_milestones": []}},
-    "evidence_extractor": _medcta_evidence,
-    "resolvers": {"RegionAttributeDescription": _resolve_region,
-                  "OCR": _resolve_ocr,
-                  "GoogleSearch": _resolve_googlesearch},
-    "dimension_policy": {"required_milestones": ["relevant_image_evidence_obtained"],
-                         "required_context_units": ["target_image_evidence"],
-                         "governance_policy_id": "MedCTA"}})
-register_plugin({
-    "benchmark": "PhysicianBench", "default_tool_role": "act",
-    "tool_semantics": {
-        "fhir_search": {"role": "acquire", "success_milestones": ["patient_record_loaded"]},
-        "fhir_read": {"role": "acquire", "success_milestones": ["record_detail_loaded"]},
-        "fhir_create": {"role": "commit", "success_milestones": ["resource_created"]}},
-    "resolvers": {"fhir_create": _resolve_fhir_create,
-                  "fhir_search": _resolve_fhir_search,
-                  "fhir_read": _resolve_fhir_read},
-    "dimension_policy": {"required_milestones": ["patient_record_loaded"],
-                         "required_context_units": ["correct_patient", "current_medications", "allergy_status"],
-                         "governance_policy_id": "PhysicianBench"}})
-register_plugin({
-    "benchmark": "HealthAdminBench", "default_tool_role": "act",
-    "tool_semantics": {
-        "snapshot": {"role": "verify", "success_milestones": ["page_state_observed"]},
-        "navigate": {"role": "acquire", "success_milestones": ["target_page_reached"]},
-        "click": {"role": "act", "success_milestones": []},
-        "type": {"role": "act", "success_milestones": []},
-        "submit": {"role": "commit", "success_milestones": ["form_submitted"]}},
-    "resolvers": {"submit": _resolve_submit,
-                  "click": _resolve_dom_action,
-                  "type": _resolve_dom_action},
-    "dimension_policy": {"required_milestones": ["form_submitted"],
-                         "required_context_units": ["correct_case", "current_form_state", "submission_requirements"],
-                         "governance_policy_id": "HealthAdminBench"}})
+# ============================================================================= PLUGIN REGISTRATION
+# The benchmark-specific knowledge (tool->role/milestone semantics, RESULT-CONDITIONAL resolvers, EvidenceView
+# extractors, dimension policy) lives in the runner/plugins/ package -- NOT here. Importing that package
+# auto-registers all three plugins (each module calls register_plugin at import time). This import is LAST in
+# the module body so register_plugin + every shared helper (_errored/_result_output/_hash8/_real_delivery/
+# _no_payload/_default_token/_rendered_text/_source_text/...) already exist when the plugins import substrate
+# back. The dependency is strictly one-directional (plugins -> substrate); the core above names no benchmark.
+# A 4TH DATASET = drop runner/plugins/<name>.py + a spec/registry.json entry. No edit to this file.
+import plugins as _plugins  # noqa: E402,F401  (import side effect: registers MedCTA/PhysicianBench/HealthAdminBench)

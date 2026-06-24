@@ -55,6 +55,25 @@ def canonical_action(raw, env_type):
     return {"action_type": "tool_call", "name": tool, "arguments": args}
 
 
+# Action shapes that represent a SYNTACTICALLY/SEMANTICALLY USABLE action the harness can dispatch. A
+# 'final_answer' is a well-formed terminal action; a control_action / gui_action / file_action / tool_call
+# all parse into a usable shape. Only 'invalid' (the malformed bucket above) is NOT well-formed.
+WELL_FORMED_ACTION_TYPES = ("tool_call", "final_answer", "control_action",
+                            "gui_action", "file_action")
+
+
+def action_valid(raw, env_type="tool_sandbox"):
+    """PURE protocol/schema validity: is this parsed action WELL-FORMED (a usable tool_call/final/etc.)?
+    True for any action that classifies into a dispatchable canonical shape; False ONLY for the 'invalid'
+    bucket — i.e. a non-dict action, a truncated tool call, a bad/unknown action type, or a tool_call with
+    no tool name. This is INDEPENDENT of whether a well-formed action later FAILED at execution: a tool
+    that ran and returned an error is still a valid (well-formed) action.
+
+    Note the malformed agent_error markers run.py emits (invalid_action / bad_action_type /
+    truncated_tool_call) classify here as action_type=='invalid' -> action_valid == False."""
+    return canonical_action(raw, env_type).get("action_type") != "invalid"
+
+
 def classify_error(err):
     e = str(err).lower()
     if "unknown" in e or "invalid" in e:

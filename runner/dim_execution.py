@@ -16,8 +16,12 @@ name, no tool name, no image/DOM/FHIR literal appears below.
 
 Sub-metrics (applicable-only — a sub-metric with no opportunity is status=not_applicable and EXCLUDED from
 the mean, so a clean run never gets a vacuous 1.0):
-  action_validity            - fraction of the agent's actions that were WELL-FORMED (an agent-attributed
-                               failure that produced no progress/state change is a malformed action).
+  action_validity            - PURE protocol/schema validity: fraction of the agent's action attempts that
+                               were WELL-FORMED (a usable tool_call/final/etc.), read from
+                               SemanticEvent.action_valid. A tool that RAN but failed at execution is still
+                               action_valid=True (schema-valid); only a MALFORMED/unparseable action
+                               (invalid_action / bad_action_type / truncated_tool_call) is penalized. It no
+                               longer inspects tool execution success — that is tool_invocation_success.
   tool_invocation_success    - among invocations the agent OWNS (success or failure_attribution=='agent'),
                                the fraction that succeeded. env / external_service / harness / unknown
                                failures are NOT blamed on the agent: excluded from the denominator and
@@ -118,15 +122,16 @@ def execution(sem_trace, dimension_policy=None, manifest=None):
                 return "harness"
         return s.get("failure_attribution")
 
-    # ------------------------------------------------------------------ 1. action_validity
-    # A well-formed action = the agent emitted a syntactically/semantically usable action. We treat an
-    # action as MALFORMED only when it failed, the failure is the AGENT's (failure_attribution=='agent'),
-    # AND it produced no state change (no progress) — i.e. a bad/invalid action, not an action that ran
-    # but returned an unhelpful result for environmental reasons. env/harness/unknown failures are not
-    # 'malformed actions' by the agent, so they do not lower action_validity.
+    # ------------------------------------------------------------------ 1. action_validity (SCHEMA-ONLY)
+    # PURE protocol/schema validity: fraction of the agent's action attempts that were WELL-FORMED (a
+    # usable tool_call/final/control/etc.), reading ONLY SemanticEvent.action_valid. This NO LONGER looks
+    # at tool execution success / failure_attribution / state_changed (that is solely
+    # tool_invocation_success's job): a well-formed tool_call that RAN and returned an error is still a
+    # VALID action and does not lower this score. Only a MALFORMED/unparseable action (action_valid=False:
+    # the mapper's invalid_action / bad_action_type / truncated_tool_call agent_error events) is penalized.
+    # action_valid defaults True (.get(..., True)) so a tool event that simply omits the field is well-formed.
     if actions:
-        bad = sum(1 for s in actions
-                  if s.get("status") == "failure" and _eff_attr(s) == "agent" and not s.get("state_changed"))
+        bad = sum(1 for s in actions if s.get("action_valid", True) is False)
         sub["action_validity"] = _sm(round((len(actions) - bad) / len(actions), 3),
                                      opportunities=len(actions), malformed=bad)
     else:
@@ -135,10 +140,14 @@ def execution(sem_trace, dimension_policy=None, manifest=None):
     # ------------------------------------------------------------------ 2. tool_invocation_success
     # Denominator = invocations the agent OWNS: every success + every failure attributed to the agent.
     # Failures owned by environment/external_service/harness are excluded (not the agent's fault);
-    # 'unknown' is evidence_insufficient and also excluded (never auto-blamed).
+    # 'unknown' is evidence_insufficient and also excluded (never auto-blamed). A MALFORMED action
+    # (action_valid=False) is NOT a tool invocation at all (no tool ran) -> excluded here so it is scored
+    # by action_validity ONLY, never double-counted as an execution failure.
     owned, succ = 0, 0
     excluded = {"environment": 0, "external_service": 0, "harness": 0, "unknown": 0}
     for s in actions:
+        if s.get("action_valid", True) is False:
+            continue                       # malformed action: not an invocation -> action_validity's concern
         if _invocation_ok(s):              # success OR partial = the invocation technically worked
             owned += 1
             succ += 1

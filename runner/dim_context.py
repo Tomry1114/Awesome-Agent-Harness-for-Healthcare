@@ -17,13 +17,16 @@ Hard 诚信门 invariants (enforced by construction):
     EXCLUDED from the mean (never a vacuous 1.0). Every sub-metric carries a `reportable` flag.
 
 Sub-metrics (applicable-only):
-  acquisition  — were the dimension_policy.required_context_units obtained (delivered acquire-role
-                 evidence units + reached required_milestones mapped to the count of required units).
+  acquisition  — were the dimension_policy.required_context_units obtained, mapped to evidence by
+                 SEMANTIC TYPE (not raw acquire-event count). A required unit is satisfied only by an
+                 evidence unit whose semantic KIND matches it; one evidence unit is never counted for
+                 two distinct required units, and unrelated acquisitions cannot auto-fill distinct units.
   sufficiency  — enough context units present to PROCEED (boolean floor: delivered units & required
                  milestones met before the terminal commit/final).
   relevance    — delivered evidence pertains to the task (gateway judge over OBSERVATIONS only).
-  binding      — evidence bound to a single consistent subject/case (generic identifier-consistency
-                 check over delivered evidence payloads; no patient/image/case literal).
+  binding      — evidence bound to a single consistent subject/case, using only TYPED identifier
+                 tokens (resource <Type>/<id> in the progress tokens), never a broad numeric regex that
+                 could mistake a year / exam number / dose for a subject id.
 
 tier = experimental.
 """
@@ -53,52 +56,212 @@ except Exception:                                       # pragma: no cover
         return {"score": score, "submetrics": subs, "applicable_submetrics": sorted(valid),
                 "n_applicable": len(valid), "zero_variance": (len(set(vals)) == 1) if vals else None}
 
-CONTEXT_VERSION = "context-1.0-experimental"
+CONTEXT_VERSION = "context-1.1-experimental"
 
-# A generic identifier token: an alnum string carrying a digit (MRNs, DEN-001, asset ids, refs ...).
-# Deliberately NOT any benchmark-specific prefix — just "looks like an id that names a subject/case".
-_ID_RE = re.compile(r"\b([A-Za-z][A-Za-z0-9]*-?\d[A-Za-z0-9\-]*|\d{3,})\b")
-_STOP_ID = {"http", "https", "2023", "2024", "2025", "2026"}   # dates/urls are not subjects
+# ---------------------------------------------------------------------------- semantic typing
+# A required_context_unit may be declared either as a bare string ("correct_patient") OR as a typed
+# entry {"type": "patient_identity"|"allergy_status"|"target_image_region"|...}. The acquisition
+# sub-metric maps each required unit to evidence by SEMANTIC TYPE so three IRRELEVANT acquisitions can
+# NOT fill three distinct required units. When the policy only carries bare strings we degrade
+# gracefully (see _acquisition) but still cap obtained by the number of DISTINCT evidence kinds and
+# never double-count one evidence unit across many required units.
+#
+# An evidence unit's SEMANTIC KIND is derived ONLY from the SEMANTIC progress_token the substrate
+# emits (token families are content-/type-keyed, never tool names) — so the logic stays
+# benchmark-agnostic. Token families produced by substrate.py:
+#   evidence:<source>:<hash8>      -> kind "evidence:<source>"     (OCR text, search snippet, image desc)
+#   region:<hash8>:resolved        -> kind "image_region"
+#   resource:<Type>/<id>:created   -> kind "resource:<Type>"        (carries a typed subject id)
+#   state:read=<Type>/<id>         -> kind "resource:<Type>"        (carries a typed subject id)
+#   state:search=<hash8>           -> kind "search"
+#   state:page=<hash8>             -> kind "page_state"
+#   state:submitted=<hash8>        -> kind "submission"
+#   state:<k>=<...>                -> kind "state:<k>"
+_TYPED_RES_RE = re.compile(r"^(?:resource:|state:read=)([A-Za-z][A-Za-z0-9_]*)/(.+?)(?::created)?$")
+
+
+def evidence_semantic_kind(progress_token):
+    """Benchmark-agnostic SEMANTIC kind of an acquire/commit evidence unit, read from its progress
+    token's structural family. None when the token carries no semantic content. Never a tool name."""
+    t = str(progress_token or "")
+    if not t:
+        return None
+    m = _TYPED_RES_RE.match(t)
+    if m:
+        return "resource:%s" % m.group(1)          # typed subject (FHIR resourceType / record kind)
+    if t.startswith("evidence:"):
+        parts = t.split(":")
+        return "evidence:%s" % (parts[1] if len(parts) > 1 else "generic")
+    if t.startswith("region:"):
+        return "image_region"
+    if t.startswith("state:search="):
+        return "search"
+    if t.startswith("state:page="):
+        return "page_state"
+    if t.startswith("state:submitted="):
+        return "submission"
+    if t.startswith("state:"):
+        k = t[len("state:"):].split("=", 1)[0]
+        return "state:%s" % k if k else "state"
+    return None
+
+
+def _typed_subject_id(progress_token):
+    """A subject/case identifier carried by a TYPED resource token (resource:<Type>/<id> or
+    state:read=<Type>/<id>) — the only place an identifier is GUARANTEED to name a subject/case rather
+    than being an arbitrary number (year/dose/exam #). Returns (kind, id) or None. No broad regex."""
+    m = _TYPED_RES_RE.match(str(progress_token or ""))
+    if not m:
+        return None
+    rtype, rid = m.group(1), m.group(2).strip()
+    if not rid:
+        return None
+    return ("resource:%s" % rtype, rid)
+
+
+def _unit_type(unit):
+    """The declared SEMANTIC type of a required_context_unit. Supports {"type": ...} / {"unit_type": ...}
+    typed entries; a bare string has NO declared type (returns None -> graceful-degrade path)."""
+    if isinstance(unit, dict):
+        return unit.get("type") or unit.get("unit_type") or unit.get("kind")
+    return None
 
 
 def _delivered(evidence):
     return [u for u in (evidence or []) if u.get("delivered_to_agent")]
 
 
-def _subject_ids(text):
-    """Generic candidate subject identifiers in a string (no domain knowledge)."""
-    out = []
-    for m in _ID_RE.findall(str(text or "")):
-        t = m.strip().strip("-")
-        if len(t) >= 3 and t.lower() not in _STOP_ID and any(c.isdigit() for c in t):
-            out.append(t)
-    return out
+# Generic type-aliasing so a structural evidence kind can satisfy a domain-named required type WITHOUT
+# any benchmark literal: we only ever match on token-family words, never on a tool/resource name.
+#
+# A typed unit is satisfied ONLY by an evidence kind in its SPECIFIC alias set. The aliases are
+# token-family words (resource:<rtype> / evidence:<src> / image_region / search / page_state), NOT a
+# benchmark/tool literal. We deliberately do NOT give a medical type the blanket "resource:" alias —
+# otherwise a Patient-identity unit would be auto-filled by an unrelated Observation/Encounter resource,
+# which is exactly the "3 unrelated acquisitions fill 3 distinct units" bug this module fixes.
+_TYPE_ALIASES = {
+    "patient_identity": ("resource:patient", "search"),
+    "patient_record": ("resource:patient", "search"),
+    "correct_patient": ("resource:patient", "search"),
+    "allergy_status": ("resource:allergyintolerance",),
+    "current_medications": ("resource:medicationrequest", "resource:medicationstatement",
+                            "resource:medication"),
+    "current_medication": ("resource:medicationrequest", "resource:medicationstatement",
+                           "resource:medication"),
+    "target_image_region": ("image_region",),
+    "image_region": ("image_region",),
+    "target_image_evidence": ("image_region", "evidence:imagedescription", "evidence:ocr"),
+    "text_evidence": ("evidence:ocr",),
+    "external_reference": ("evidence:search", "search"),
+    "current_form_state": ("page_state",),
+    "page_state": ("page_state",),
+    "submission_requirements": ("page_state", "submission"),
+    "correct_case": ("page_state", "resource:case"),
+}
+
+
+def _kind_matches_type(kind, unit_type):
+    """Does a structural evidence KIND satisfy a declared required-unit TYPE? Benchmark-agnostic:
+    matches ONLY against the SPECIFIC alias set for that type (token-family words, never a tool/resource
+    literal). No broad "any resource" fallback — an unrelated resource kind must NOT satisfy a typed unit
+    (that is the very bug this module fixes). For a type with no alias entry, we degrade to an exact
+    family-prefix equality so it still fails closed against unrelated kinds."""
+    if not kind or not unit_type:
+        return False
+    k = str(kind).lower()
+    ut = str(unit_type).lower()
+    aliases = _TYPE_ALIASES.get(ut)
+    if aliases is not None:
+        for fam in aliases:
+            if k == fam or (fam.endswith(":") and k.startswith(fam)):
+                return True
+        return False
+    # unknown type: accept only when the type word IS the kind family (e.g. type "search" -> kind
+    # "search", type "resource:patient" -> kind "resource:patient"). No loose substring auto-match.
+    return k == ut or k.startswith(ut + ":") or ("/" not in k and ut.startswith(k))
 
 
 # ---------------------------------------------------------------- acquisition
 def _acquisition(sem_trace, evidence, policy):
-    """Coverage ratio: distinct delivered acquire-role evidence + reached required milestones vs the
-    number of declared required_context_units. No opportunity (no required units) -> not_applicable."""
+    """Map required_context_units to evidence by SEMANTIC TYPE, not raw acquire-event count.
+
+    TYPED policy  ({type: ...} entries): a required unit is satisfied ONLY by a delivered/earned
+       evidence unit whose semantic kind matches its declared type (via _kind_matches_type). Each
+       evidence kind satisfies at most ONE required unit (no double-counting one evidence unit across
+       many required units).
+    BARE policy   (plain strings): no per-unit type to match against, so we degrade gracefully — but we
+       refuse to let unrelated acquisitions auto-satisfy distinct units. obtained is capped by the count
+       of DISTINCT evidence SEMANTIC KINDS actually backed by delivered evidence (three OCR tokens are
+       one kind; three IRRELEVANT acquire tokens of the same kind fill ONE unit, not three). Required
+       milestones, when declared, contribute their reached-count as an alternative coverage floor.
+    No required units -> not_applicable (no opportunity, never a vacuous 1.0)."""
     req_units = list(policy.get("required_context_units") or [])
     req_ms = set(policy.get("required_milestones") or [])
     if not req_units:
         return _sm(None, "not_applicable", 0, reportable=False, reason="policy declares no required_context_units")
 
     deliv = _delivered(evidence)
-    # acquire-role events carry distinct progress tokens (one per *kind* of context obtained)
-    acquire_tokens = {s.get("progress_token") for s in sem_trace
-                      if s.get("event_role") == "acquire" and s.get("status") == "success"
-                      and s.get("progress_token")}
+    deliv_kinds = {evidence_semantic_kind(u.get("progress_token")) for u in deliv}
+    deliv_kinds.discard(None)
+
+    # acquire/commit-role evidence kinds actually earned in the trace (success only), then used as a
+    # fallback when the evidence view carries no per-unit progress_token (older/default extractor).
+    earned_kinds = {evidence_semantic_kind(s.get("progress_token")) for s in sem_trace
+                    if s.get("event_role") in ("acquire", "commit") and s.get("status") == "success"
+                    and s.get("progress_token")}
+    earned_kinds.discard(None)
+    kinds = deliv_kinds or earned_kinds
+
+    typed = [u for u in req_units if _unit_type(u)]
     reached = _sub.milestones_reached(sem_trace)
     ms_hit = req_ms & reached
-    # "obtained context kinds" = distinct acquire tokens, capped by what delivered evidence backs.
-    obtained = len(acquire_tokens) if acquire_tokens else len(deliv)
+
+    if typed and len(typed) == len(req_units):
+        # fully-typed policy: one-to-one match (each evidence kind used for at most ONE unit). Process
+        # the MOST CONSTRAINED units first (fewest candidate kinds) and, within a unit, prefer a
+        # SPECIFIC resource-family kind over a generic one (search/page) so a scarce specific kind is
+        # not consumed by a looser unit -- a deterministic, order-independent assignment.
+        remaining = set(kinds)
+        cand = {}
+        for u in req_units:
+            ut = _unit_type(u)
+            cand[id(u)] = (ut, [k for k in kinds if _kind_matches_type(k, ut)])
+        order = sorted(req_units, key=lambda u: len(cand[id(u)][1]))
+        matched = 0
+        matched_pairs = []
+        for u in order:
+            ut, options = cand[id(u)]
+            avail = [k for k in options if k in remaining]
+            if not avail:
+                continue
+            # prefer a specific resource/evidence-family kind over a generic search/page_state one
+            avail.sort(key=lambda k: (k in ("search", "page_state", "submission"), k))
+            hit = avail[0]
+            remaining.discard(hit)
+            matched += 1
+            matched_pairs.append({"unit": ut, "evidence_kind": hit})
+        score = round(min(1.0, matched / max(1, len(req_units))), 3)
+        return _sm(score, "valid", len(req_units), reportable=True,
+                   matching="typed", required_units=[_unit_type(u) for u in req_units],
+                   distinct_evidence_kinds=sorted(kinds), matched_units=matched,
+                   matched_pairs=matched_pairs,
+                   required_milestones=sorted(req_ms), milestones_reached=sorted(ms_hit))
+
+    # ----- graceful degrade (bare-string units, or mixed): cap by DISTINCT evidence kinds -----
+    # distinct evidence kinds is the number of genuinely different context kinds obtained. This is the
+    # anti-double-counting floor: N tokens of the SAME kind cannot fill N distinct required units.
+    obtained = min(len(kinds), len(req_units))
+    note = "bare_units_distinct_kind_cap"
     if req_ms:
-        # if the policy names required milestones, prefer the milestone-coverage signal
-        obtained = max(obtained, len(ms_hit))
+        # a milestone-coverage signal is an alternative floor (still capped by #required_units).
+        ms_cover = min(len(ms_hit), len(req_units))
+        if ms_cover > obtained:
+            obtained = ms_cover
+            note = "bare_units_milestone_cover"
     score = round(min(1.0, obtained / max(1, len(req_units))), 3)
     return _sm(score, "valid", len(req_units), reportable=True,
-               required_units=req_units, obtained_context_kinds=obtained,
+               matching="degraded", required_units=[(_unit_type(u) or u) for u in req_units],
+               distinct_evidence_kinds=sorted(kinds), obtained_context_kinds=obtained, note=note,
                required_milestones=sorted(req_ms), milestones_reached=sorted(ms_hit))
 
 
@@ -133,31 +296,50 @@ def _sufficiency(sem_trace, evidence, policy):
 
 
 # ---------------------------------------------------------------- binding
-def _binding(evidence):
-    """Generic subject-consistency check: identifier-like tokens that recur across delivered evidence
-    payloads should point at ONE dominant subject/case (not a scatter of unrelated ids). Applicable
-    only when delivered evidence actually carries identifier-like tokens. No patient/image/case literal."""
-    deliv = _delivered(evidence)
-    # subject ids that appear in MORE THAN ONE delivered unit (a one-off id is not a binding signal)
-    per_unit = [set(_subject_ids(u.get("payload"))) for u in deliv]
-    from collections import Counter
-    cross = Counter()
-    for s in per_unit:
-        for i in s:
-            cross[i] += 1
-    recurring = {i: c for i, c in cross.items() if c >= 2}
-    if not recurring:
+def _binding(sem_trace, evidence):
+    """Subject-consistency check using ONLY TYPED identifier tokens (resource:<Type>/<id> /
+    state:read=<Type>/<id>) carried by the SEMANTIC progress tokens — NOT a broad numeric/ID regex over
+    free-text payloads (which could bind on a year / dose / exam number). A subject is the (kind, id)
+    pair from a typed resource token; binding asks whether the typed subjects converge on ONE dominant
+    subject within each resource KIND (a scatter of unrelated patient ids is bad; many Observations of
+    the same patient is fine). Applicable only when typed identifier tokens exist; otherwise
+    not_applicable (never a vacuous score, never a guess from a bare number)."""
+    from collections import Counter, defaultdict
+    # collect typed (kind, id) subjects from delivered evidence tokens first; fall back to the
+    # acquire/commit trace tokens when the evidence view carries no per-unit token.
+    typed = []
+    for u in _delivered(evidence):
+        s = _typed_subject_id(u.get("progress_token"))
+        if s:
+            typed.append(s)
+    if not typed:
+        for s in sem_trace:
+            if s.get("event_role") in ("acquire", "commit") and s.get("status") == "success":
+                t = _typed_subject_id(s.get("progress_token"))
+                if t:
+                    typed.append(t)
+    if not typed:
         return _sm(None, "not_applicable", 0, reportable=False,
-                   reason="no identifier-like tokens recur across delivered evidence")
+                   reason="no typed identifier tokens (resource:<Type>/<id>) in delivered evidence")
 
-    units_with_id = [s for s in per_unit if s]
-    dominant, dom_n = max(recurring.items(), key=lambda kv: kv[1])
-    # fraction of id-bearing delivered units that reference the dominant subject (single-subject focus)
-    bound = sum(1 for s in units_with_id if dominant in s)
-    score = round(bound / max(1, len(units_with_id)), 3)
-    return _sm(score, "valid", len(units_with_id), reportable=True,
-               dominant_subject=dominant, units_referencing_dominant=bound,
-               id_bearing_units=len(units_with_id), distinct_recurring_ids=len(recurring))
+    # group ids by resource KIND; within each kind, is there a dominant single subject id? Average the
+    # per-kind single-subject focus so a high-cardinality detail kind (many Observation ids) does not
+    # drown a low-cardinality identity kind (one Patient id).
+    by_kind = defaultdict(Counter)
+    for kind, rid in typed:
+        by_kind[kind][rid] += 1
+    kind_scores = {}
+    details = {}
+    for kind, ctr in by_kind.items():
+        total = sum(ctr.values())
+        dom_id, dom_n = ctr.most_common(1)[0]
+        kind_scores[kind] = round(dom_n / max(1, total), 3)
+        details[kind] = {"dominant_id": dom_id, "dominant_n": dom_n, "total": total,
+                         "distinct_ids": len(ctr)}
+    score = round(sum(kind_scores.values()) / max(1, len(kind_scores)), 3)
+    return _sm(score, "valid", len(typed), reportable=True,
+               method="typed_resource_tokens", per_kind_focus=kind_scores,
+               typed_subjects=len(typed), resource_kinds=sorted(by_kind), details=details)
 
 
 # ---------------------------------------------------------------- relevance (judge over OBSERVATIONS)
@@ -221,7 +403,7 @@ def context(sem_trace, evidence, dimension_policy, task_instruction=None, judge_
     subs = {
         "acquisition": _acquisition(sem_trace, evidence, policy),
         "sufficiency": _sufficiency(sem_trace, evidence, policy),
-        "binding": _binding(evidence),
+        "binding": _binding(sem_trace, evidence),
         "relevance": _relevance(sem_trace, evidence, task_instruction, judge_model),
     }
     out = _aggregate(subs)
@@ -269,6 +451,84 @@ def _selfcheck():
             print("   %-12s %-15s score=%s  %s" % (
                 k, v.get("status"), v.get("score"),
                 {kk: vv for kk, vv in v.items() if kk not in ("score", "status")}))
+
+    # ---- synthetic invariant 1: 3 UNRELATED same-kind acquisitions must NOT fill 3 required units ----
+    print("\n==== SYNTHETIC 1: 3 unrelated same-kind acquisitions vs 3 required units ====")
+    sem3 = [_sub.semantic_event("acquire", status="success", capability_id="t",
+                                progress_token="evidence:search:%s" % h)
+            for h in ("aaaaaaaa", "bbbbbbbb", "cccccccc")]            # 3 distinct tokens, SAME kind
+    ev3 = [{"id": "e%d" % i, "delivered_to_agent": True, "delivery_fidelity": 1.0,
+            "error_visible": False, "payload": "snippet %d" % i,
+            "progress_token": s["progress_token"]} for i, s in enumerate(sem3)]
+    pol3 = {"required_context_units": ["correct_patient", "current_medications", "allergy_status"],
+            "required_milestones": []}
+    acq = _acquisition(sem3, ev3, pol3)
+    print("   acquisition:", acq.get("score"), "distinct_kinds=", acq.get("distinct_evidence_kinds"),
+          "obtained=", acq.get("obtained_context_kinds"))
+    assert acq["score"] <= round(1 / 3, 3) + 1e-9, ("3 unrelated same-kind acq must NOT fill 3 units", acq)
+    print("   PASS: 3 unrelated same-kind acquisitions do NOT fill 3 distinct units (score=%s)" % acq["score"])
+
+    # ---- synthetic invariant 2: typed policy maps one kind per unit; 3 DIFFERENT kinds -> all matched
+    print("\n==== SYNTHETIC 2: typed policy, 3 distinct kinds ====")
+    sem_t = [
+        _sub.semantic_event("acquire", status="success", progress_token="state:read=Patient/42"),
+        _sub.semantic_event("acquire", status="success", progress_token="state:read=AllergyIntolerance/7"),
+        _sub.semantic_event("acquire", status="success", progress_token="state:read=MedicationRequest/9"),
+    ]
+    ev_t = [{"id": "u%d" % i, "delivered_to_agent": True, "delivery_fidelity": 1.0, "error_visible": False,
+             "payload": "p", "progress_token": s["progress_token"]} for i, s in enumerate(sem_t)]
+    pol_t = {"required_context_units": [{"type": "patient_identity"}, {"type": "allergy_status"},
+                                        {"type": "current_medications"}]}
+    acqt = _acquisition(sem_t, ev_t, pol_t)
+    print("   typed acquisition:", acqt.get("score"), acqt.get("matched_pairs"))
+    assert acqt["matching"] == "typed" and acqt["score"] == 1.0, acqt
+    _pairs = {p["unit"]: p["evidence_kind"] for p in acqt["matched_pairs"]}
+    assert _pairs["patient_identity"] == "resource:Patient", _pairs       # SPECIFIC, not any resource
+    assert _pairs["allergy_status"] == "resource:AllergyIntolerance", _pairs
+    assert _pairs["current_medications"] == "resource:MedicationRequest", _pairs
+
+    # a typed unit is NOT satisfied by an unrelated SPECIFIC resource kind (Encounter != Patient)
+    sem_x = [_sub.semantic_event("acquire", status="success", progress_token="state:read=Encounter/1"),
+             _sub.semantic_event("acquire", status="success", progress_token="state:read=Encounter/2"),
+             _sub.semantic_event("acquire", status="success", progress_token="state:read=Encounter/3")]
+    ev_x = [{"id": "x%d" % i, "delivered_to_agent": True, "delivery_fidelity": 1.0, "error_visible": False,
+             "payload": "p", "progress_token": s["progress_token"]} for i, s in enumerate(sem_x)]
+    acqx = _acquisition(sem_x, ev_x, pol_t)
+    print("   typed acquisition (3 unrelated Encounters):", acqx.get("score"), acqx.get("matched_pairs"))
+    assert acqx["score"] == 0.0, ("3 unrelated Encounter resources must NOT fill 3 typed units", acqx)
+
+    # ---- synthetic invariant 3: typed policy NOT satisfied by 3 acquisitions of ONE wrong kind ----
+    sem_w = [_sub.semantic_event("acquire", status="success", progress_token="evidence:search:%s" % h)
+             for h in ("a", "b", "c")]
+    ev_w = [{"id": "w%d" % i, "delivered_to_agent": True, "delivery_fidelity": 1.0, "error_visible": False,
+             "payload": "p", "progress_token": s["progress_token"]} for i, s in enumerate(sem_w)]
+    acqw = _acquisition(sem_w, ev_w, pol_t)
+    print("   typed acquisition (wrong kinds):", acqw.get("score"), acqw.get("matched_pairs"))
+    assert acqw["score"] < 1.0, ("3 unrelated acquisitions must NOT fill 3 typed units", acqw)
+    print("   PASS: typed matching maps by kind; unrelated kinds do not auto-satisfy")
+
+    # ---- synthetic invariant 4: binding ignores year/dose, uses typed resource ids ----
+    print("\n==== SYNTHETIC 4: binding ignores year/dose, uses typed resource id ====")
+    sem_b = [
+        _sub.semantic_event("acquire", status="success", progress_token="state:read=Patient/100"),
+        _sub.semantic_event("acquire", status="success", progress_token="state:read=Observation/555"),
+        _sub.semantic_event("acquire", status="success", progress_token="state:read=Observation/556"),
+    ]
+    ev_b = [{"id": "b%d" % i, "delivered_to_agent": True, "delivery_fidelity": 1.0, "error_visible": False,
+             # payload carries a YEAR (2024) and a DOSE (500 mg) the OLD regex would have mis-bound;
+             # the new binding ignores payload free-text entirely.
+             "payload": "taken in 2024, dose 500 mg",
+             "progress_token": s["progress_token"]} for i, s in enumerate(sem_b)]
+    b = _binding(sem_b, ev_b)
+    print("   binding:", b.get("score"), b.get("per_kind_focus"))
+    assert b["status"] == "valid" and "resource:Observation" in b["per_kind_focus"], b
+    # a binding with NO typed tokens -> not_applicable (never a vacuous score, never a bare-number guess)
+    ev_none = [{"id": "n0", "delivered_to_agent": True, "delivery_fidelity": 1.0, "error_visible": False,
+                "payload": "year 2024 dose 500 mg exam 12345", "progress_token": "evidence:ocr:deadbeef"}]
+    bn = _binding([], ev_none)
+    print("   binding (no typed ids):", bn.get("status"), bn.get("reason"))
+    assert bn["status"] == "not_applicable", bn
+    print("   PASS: binding uses typed resource ids only; bare year/dose/exam numbers never bind")
 
 
 if __name__ == "__main__":
