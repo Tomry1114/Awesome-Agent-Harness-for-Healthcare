@@ -13,7 +13,7 @@ name, image, FHIR resource, or DOM selector:
 A BenchmarkPlugin supplies the ONLY benchmark-specific knowledge: how a tool maps to a semantic role and
 which milestones it produces, how to extract evidence units, the dimension policy, and the source outcome
 evaluator. A 4th dataset registers a plugin; the dimension evaluators never change."""
-import re
+import re, json
 
 # ----------------------------------------------------------------------------- SemanticEvent
 ROLES = ("acquire", "act", "verify", "commit", "final", "escalate", "other")
@@ -103,19 +103,54 @@ def milestones_reached(sem_trace):
     return m
 
 # ----------------------------------------------------------------------------- EvidenceView
+def _rendered_text(e):
+    """What the agent ACTUALLY saw for this step (recorded agent-visible surface), not the raw tool result."""
+    co = e.get("canonical_observation")
+    if isinstance(co, dict):
+        t = (co.get("modalities") or {}).get("text")
+        if t: return str(t)
+    ob = e.get("observation")
+    if isinstance(ob, str): return ob
+    if isinstance(ob, dict): return json.dumps(ob, ensure_ascii=False)
+    return ""
+
+def _source_text(e):
+    r = e.get("result")
+    out = r.get("output") if isinstance(r, dict) else r
+    if isinstance(out, dict): out = out.get("text") or json.dumps(out, ensure_ascii=False)
+    return str(out or "")
+
+def _real_delivery(e):
+    """REAL info-flow from the RECORDED rendering, NOT inferred from tool status. delivered = content was
+    actually rendered into the agent context; fidelity = how much of the source survived (truncation/drop);
+    error_visible = the failure actually appears in the agent-visible surface."""
+    errored = _errored(e)
+    rendered = _rendered_text(e); src = _source_text(e)
+    if errored:
+        ev = any(k in rendered.lower() for k in ("error", "fail", "exception", "operationoutcome"))
+        return {"delivered": False, "fidelity": 0.0, "error_visible": ev}
+    if not rendered.strip():
+        return {"delivered": False, "fidelity": 0.0, "error_visible": False}   # renderer dropped the result
+    if src.strip():
+        sl = src.strip().lower(); rl = rendered.lower()
+        fid = 1.0 if (sl[:200] in rl or len(rl) >= 0.8 * len(sl)) else round(min(1.0, len(rl) / max(1, len(sl))), 3)
+    else:
+        fid = 1.0
+    return {"delivered": True, "fidelity": fid, "error_visible": False}
+
 def evidence_view(trace, plugin):
-    """EvidenceUnit = {id, delivered_to_agent, delivery_fidelity, error_visible, acknowledged?}. The plugin
-    extracts units; default = each successful tool output is one delivered unit."""
+    """EvidenceUnit = {id, delivered_to_agent, delivery_fidelity, error_visible, payload}. Delivery is read
+    from the RECORDED agent-visible rendering (canonical_observation/observation), NOT inferred from status.
+    A plugin extractor may refine fidelity with modality-specific signals (e.g. localization)."""
     ext = (plugin or {}).get("evidence_extractor")
     if ext: return ext(trace)
     units = []
     for i, e in enumerate(trace):
         if e.get("event_type") != "tool_call": continue
-        ok = not _errored(e)
-        out = (e.get("result") or {}).get("output") if isinstance(e.get("result"), dict) else e.get("result")
-        units.append({"id": "%s#%d" % (e.get("tool"), i), "delivered_to_agent": ok,
-                      "delivery_fidelity": 1.0 if ok else 0.0, "error_visible": (not ok),
-                      "payload": str(out)[:300]})
+        d = _real_delivery(e)
+        units.append({"id": "%s#%d" % (e.get("tool"), i), "delivered_to_agent": d["delivered"],
+                      "delivery_fidelity": d["fidelity"], "error_visible": d["error_visible"],
+                      "payload": _source_text(e)[:300]})
     return units
 
 # ----------------------------------------------------------------------------- CapabilityManifest accessor
@@ -171,17 +206,20 @@ def _resolve_region(event, prev_state):
 
 
 def _medcta_evidence(trace):
-    """measurements + finding terms actually delivered to the agent (reuses Observability evidence units)."""
+    """MedCTA EvidenceView: real delivery (canonical_observation) refined by localization — a delivered region
+    result that FELL BACK to the whole image is delivered but low-fidelity (targeted region not localized)."""
     units = []
     for i, e in enumerate(trace):
         if e.get("event_type") != "tool_call": continue
-        ok = not _errored(e)
-        out = (e.get("result") or {}).get("output") if isinstance(e.get("result"), dict) else e.get("result")
-        txt = out.get("text") if isinstance(out, dict) else str(out or "")
+        d = _real_delivery(e)
+        out = (e.get("result") or {}).get("output") if isinstance(e.get("result"), dict) else None
         loc = out.get("localization") if isinstance(out, dict) else None
-        units.append({"id": "%s#%d" % (e.get("tool"), i), "delivered_to_agent": ok,
-                      "delivery_fidelity": (1.0 if (loc or {}).get("resolved", True) else 0.5) if ok else 0.0,
-                      "error_visible": (not ok), "payload": str(txt)[:300]})
+        fid = d["fidelity"]
+        if d["delivered"] and isinstance(loc, dict) and loc.get("resolved") is False:
+            fid = min(fid, 0.5)
+        txt = out.get("text") if isinstance(out, dict) else _source_text(e)
+        units.append({"id": "%s#%d" % (e.get("tool"), i), "delivered_to_agent": d["delivered"],
+                      "delivery_fidelity": fid, "error_visible": d["error_visible"], "payload": str(txt)[:300]})
     return units
 
 register_plugin({

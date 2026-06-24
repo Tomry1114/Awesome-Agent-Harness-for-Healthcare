@@ -171,10 +171,13 @@ def verification(evidence_items, verification_actions=None, final_claims=None, c
     # ----- no_unsupported_claim : penalize claims with NO backing delivered unit -----
     if cc_vals:
         unsupported = sum(1 for v in cc_vals if v is False)
+        # WORST-CASE hallucination VETO (binary min), NOT the corroboration RATE (= cross_check). A high
+        # average cross_check can hide a single fabricated claim; this is 0 if ANY substantive claim has no
+        # delivered support. Distinct aggregation of the per-claim support, not a re-average of cc_vals.
         subs["no_unsupported_claim"] = {
-            "score": round(1.0 - unsupported / len(cc_vals), 4), "status": "applicable",
+            "score": 0.0 if unsupported > 0 else 1.0, "status": "applicable",
             "opportunities": len(cc_vals),
-            "basis": "%d/%d claims lack any delivered evidence support" % (unsupported, len(cc_vals))}
+            "basis": "%d/%d claims lack ANY delivered evidence support (binary veto)" % (unsupported, len(cc_vals))}
     else:
         subs["no_unsupported_claim"] = {"score": None, "status": "not_applicable", "opportunities": 0,
                                         "basis": "no substantive claim to check for support"}
