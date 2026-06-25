@@ -408,9 +408,23 @@ def _outcome_metric(results):
                 ntot += 1; npass += 1 if c.get("checkpoint_status") == "passed" else 0
     gacc = [c.get("score") for r in results for c in (r.get("checkpoints") or [])
             if c.get("evaluator_kind") == "gacc_judge" and isinstance(c.get("score"), (int, float))]
-    return {"score": round(npass / ntot, 3) if ntot else (round(sum(gacc) / len(gacc), 3) if gacc else None),
-            "metric": "source_native_pass_rate", "n_outcome_checkpoints": ntot,
-            "gacc_mean": round(sum(gacc) / len(gacc), 3) if gacc else None}
+    if ntot:
+        return {"score": round(npass / ntot, 3), "metric": "outcome_checkpoint_pass_rate",
+                "n_outcome_checkpoints": ntot, "gacc_mean": round(sum(gacc) / len(gacc), 3) if gacc else None}
+    if gacc:
+        return {"score": round(sum(gacc) / len(gacc), 3), "metric": "gold_answer_accuracy",
+                "n_outcome_checkpoints": 0, "gacc_mean": round(sum(gacc) / len(gacc), 3)}
+    # FALLBACK: no Outcome-tagged checkpoint / no GAcc (adapter has not declared a Source Outcome line) ->
+    # use the dataset native checkpoint pass rate so Outcome is never blank for a real run.
+    np2 = nt2 = 0
+    for r in results:
+        for c in (r.get("checkpoints") or []):
+            if c.get("score_eligible") and c.get("checkpoint_status") in ("passed", "failed"):
+                nt2 += 1; np2 += 1 if c.get("checkpoint_status") == "passed" else 0
+    return {"score": round(np2 / nt2, 3) if nt2 else None,
+            "metric": "native_checkpoint_pass_rate_fallback", "n_outcome_checkpoints": 0,
+            "note": "no Outcome-tagged checkpoint nor GAcc in this dataset's assets; using native pass rate",
+            "gacc_mean": None}
 
 
 def build(agent_dir, bench):
