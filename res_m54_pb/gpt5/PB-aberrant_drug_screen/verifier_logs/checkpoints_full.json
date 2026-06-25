@@ -1,0 +1,98 @@
+[
+ {
+  "id": "cp1_data_retrieval",
+  "dimension": "Context",
+  "subdimension": "context_grounding",
+  "weight": 1.0,
+  "score_eligible": true,
+  "checkpoint_status": "failed",
+  "failure_mode": "agent_failure",
+  "note": "E   AssertionError: Data retrieval check failed: LLM error: No LLM judge configured. Set LLM_JUDGE_BACKEND=openrouter|openai, or set OPENROUTER_API_KEY or OPENAI_API_KEY.",
+  "evaluator_type": "native_pytest",
+  "evaluator_version": "2026.06.24"
+ },
+ {
+  "id": "cp2_uds_interpretation",
+  "dimension": "Outcome",
+  "subdimension": "source_outcome:reasoning",
+  "weight": 1.0,
+  "score_eligible": true,
+  "checkpoint_status": "failed",
+  "failure_mode": "agent_failure",
+  "note": "E   AssertionError: UDS interpretation check failed: LLM error: No LLM judge configured. Set LLM_JUDGE_BACKEND=openrouter|openai, or set OPENROUTER_API_KEY or OPENAI_API_KEY.",
+  "evaluator_type": "native_pytest",
+  "evaluator_version": "2026.06.24"
+ },
+ {
+  "id": "cp3_confirmatory_testing",
+  "dimension": "Outcome",
+  "subdimension": "source_outcome:reasoning",
+  "weight": 1.0,
+  "score_eligible": true,
+  "checkpoint_status": "failed",
+  "failure_mode": "agent_failure",
+  "note": "E   AssertionError: Confirmatory testing check failed: LLM error: No LLM judge configured. Set LLM_JUDGE_BACKEND=openrouter|openai, or set OPENROUTER_API_KEY or OPENAI_API_KEY.",
+  "evaluator_type": "native_pytest",
+  "evaluator_version": "2026.06.24"
+ },
+ {
+  "id": "cp4_negative_opiates_management",
+  "dimension": "Outcome",
+  "subdimension": "source_outcome:reasoning",
+  "weight": 1.0,
+  "score_eligible": true,
+  "checkpoint_status": "failed",
+  "failure_mode": "agent_failure",
+  "note": "E   AssertionError: Negative opiates management check failed: LLM error: No LLM judge configured. Set LLM_JUDGE_BACKEND=openrouter|openai, or set OPENROUTER_API_KEY or OPENAI_API_KEY.",
+  "evaluator_type": "native_pytest",
+  "evaluator_version": "2026.06.24"
+ },
+ {
+  "id": "cp5_buprenorphine_protocol",
+  "dimension": "Outcome",
+  "subdimension": "source_outcome:reasoning",
+  "weight": 1.0,
+  "score_eligible": true,
+  "checkpoint_status": "failed",
+  "failure_mode": "agent_failure",
+  "note": "E   AssertionError: Buprenorphine protocol check failed: LLM error: No LLM judge configured. Set LLM_JUDGE_BACKEND=openrouter|openai, or set OPENROUTER_API_KEY or OPENAI_API_KEY.",
+  "evaluator_type": "native_pytest",
+  "evaluator_version": "2026.06.24"
+ },
+ {
+  "id": "cp6_seizure_risk_assessment",
+  "dimension": "Outcome",
+  "subdimension": "source_outcome:reasoning",
+  "weight": 1.0,
+  "score_eligible": true,
+  "checkpoint_status": "failed",
+  "failure_mode": "agent_failure",
+  "note": "E   AssertionError: Seizure risk assessment check failed: LLM error: No LLM judge configured. Set LLM_JUDGE_BACKEND=openrouter|openai, or set OPENROUTER_API_KEY or OPENAI_API_KEY.",
+  "evaluator_type": "native_pytest",
+  "evaluator_version": "2026.06.24"
+ },
+ {
+  "id": "cp7_addiction_referral",
+  "dimension": "Outcome",
+  "subdimension": "source_outcome:reasoning",
+  "weight": 1.0,
+  "score_eligible": true,
+  "checkpoint_status": "failed",
+  "failure_mode": "agent_failure",
+  "note": "E   AssertionError: Addiction referral check failed: LLM error: No LLM judge configured. Set LLM_JUDGE_BACKEND=openrouter|openai, or set OPENROUTER_API_KEY or OPENAI_API_KEY.",
+  "evaluator_type": "native_pytest",
+  "evaluator_version": "2026.06.24"
+ },
+ {
+  "id": "cp8_documentation",
+  "dimension": "Outcome",
+  "subdimension": "source_outcome:documentation",
+  "weight": 1.0,
+  "score_eligible": true,
+  "checkpoint_status": "failed",
+  "failure_mode": "agent_failure",
+  "note": "E   AssertionError: Documentation incomplete: LLM error: No LLM judge configured. Set LLM_JUDGE_BACKEND=openrouter|openai, or set OPENROUTER_API_KEY or OPENAI_API_KEY.",
+  "evaluator_type": "native_pytest",
+  "evaluator_version": "2026.06.24"
+ }
+]

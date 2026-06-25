@@ -1,0 +1,85 @@
+[
+ {
+  "id": "cp1_data_retrieval",
+  "dimension": "Context",
+  "subdimension": "context_grounding",
+  "weight": 1.0,
+  "score_eligible": true,
+  "checkpoint_status": "failed",
+  "failure_mode": "agent_failure",
+  "note": "E   AssertionError: Agent did not query required FHIR resources: patient demographics (fhir_patient_search_demographics), lab results (fhir_observation_search_labs)",
+  "evaluator_type": "native_pytest",
+  "evaluator_version": "2026.06.24"
+ },
+ {
+  "id": "cp2_clinical_reasoning",
+  "dimension": "Outcome",
+  "subdimension": "source_outcome:reasoning",
+  "weight": 1.0,
+  "score_eligible": true,
+  "checkpoint_status": "failed",
+  "failure_mode": "agent_failure",
+  "note": "E   AssertionError: Clinical reasoning check failed: LLM error: No LLM judge configured. Set LLM_JUDGE_BACKEND=openrouter|openai, or set OPENROUTER_API_KEY or OPENAI_API_KEY.",
+  "evaluator_type": "native_pytest",
+  "evaluator_version": "2026.06.24"
+ },
+ {
+  "id": "cp3_pelvic_ultrasound_order",
+  "dimension": "Execution",
+  "subdimension": "clinical_task_success",
+  "weight": 1.0,
+  "score_eligible": true,
+  "checkpoint_status": "passed",
+  "failure_mode": null,
+  "evaluator_type": "native_pytest",
+  "evaluator_version": "2026.06.24"
+ },
+ {
+  "id": "cp4_pregnancy_decision",
+  "dimension": "Outcome",
+  "subdimension": "source_outcome:reasoning",
+  "weight": 1.0,
+  "score_eligible": true,
+  "checkpoint_status": "failed",
+  "failure_mode": "agent_failure",
+  "note": "E   AssertionError: Pregnancy test decision check failed: LLM error: No LLM judge configured. Set LLM_JUDGE_BACKEND=openrouter|openai, or set OPENROUTER_API_KEY or OPENAI_API_KEY.",
+  "evaluator_type": "native_pytest",
+  "evaluator_version": "2026.06.24"
+ },
+ {
+  "id": "cp5_followup_plan",
+  "dimension": "Outcome",
+  "subdimension": "source_outcome:documentation",
+  "weight": 1.0,
+  "score_eligible": true,
+  "checkpoint_status": "failed",
+  "failure_mode": "agent_failure",
+  "note": "E   AssertionError: Follow-up plan check failed: LLM error: No LLM judge configured. Set LLM_JUDGE_BACKEND=openrouter|openai, or set OPENROUTER_API_KEY or OPENAI_API_KEY.",
+  "evaluator_type": "native_pytest",
+  "evaluator_version": "2026.06.24"
+ },
+ {
+  "id": "cp6_hormonal_therapy_discussion",
+  "dimension": "Outcome",
+  "subdimension": "source_outcome:reasoning",
+  "weight": 1.0,
+  "score_eligible": true,
+  "checkpoint_status": "failed",
+  "failure_mode": "agent_failure",
+  "note": "E   AssertionError: Hormonal therapy discussion check failed: LLM error: No LLM judge configured. Set LLM_JUDGE_BACKEND=openrouter|openai, or set OPENROUTER_API_KEY or OPENAI_API_KEY.",
+  "evaluator_type": "native_pytest",
+  "evaluator_version": "2026.06.24"
+ },
+ {
+  "id": "cp7_documentation",
+  "dimension": "Outcome",
+  "subdimension": "source_outcome:documentation",
+  "weight": 1.0,
+  "score_eligible": true,
+  "checkpoint_status": "failed",
+  "failure_mode": "agent_failure",
+  "note": "E   AssertionError: Documentation check failed: LLM error: No LLM judge configured. Set LLM_JUDGE_BACKEND=openrouter|openai, or set OPENROUTER_API_KEY or OPENAI_API_KEY.",
+  "evaluator_type": "native_pytest",
+  "evaluator_version": "2026.06.24"
+ }
+]

@@ -1,0 +1,105 @@
+Abnormal Uterine Bleeding (AUB) Evaluation Note
+Date/Time: 2022-02-06T23:17:00+00:00
+Clinician: Teresa Hayes, MD (Obstetrics-Gynecology)
+Patient: MRN2970753705
+Reason for review: Primary care referral/flag for persistent intermenstrual spotting.
+
+Important limitation
+- I was unable to complete the required EHR review because the prior FHIR/API retrieval attempt timed out before demographics, problem list, labs, medications, procedures, service requests, and clinical notes could be reviewed.
+- Therefore, the patient-specific findings below are necessarily limited to the referral concern provided: persistent intermenstrual spotting.
+- No patient-specific age, pregnancy status, last menstrual period, contraception use, obstetric history, medication exposure, cervical cancer screening results, thyroid/prolactin results, pelvic exam findings, or prior imaging/procedure results were available for confirmation at the time this note was written.
+- Recommendations below should be reconciled against the actual EHR before orders are finalized or treatment is initiated.
+
+Clinical assessment
+- Presenting bleeding pattern: Persistent intermenstrual spotting, which qualifies as abnormal uterine bleeding (AUB) if occurring outside expected cyclic menses.
+- Key characterization still needed from chart review or patient interview:
+  - Age and menopausal status.
+  - Date of last menstrual period and cycle regularity.
+  - Duration of spotting, frequency, volume, and association with intercourse, ovulation, exercise, or medications.
+  - Pregnancy possibility and contraception use.
+  - Associated symptoms: pelvic pain, dysmenorrhea, dyspareunia, vaginal discharge, postcoital bleeding, systemic symptoms, galactorrhea, headaches/visual symptoms, weight change, acne/hirsutism, easy bruising.
+  - Risk factors for endometrial hyperplasia/malignancy: age >=45 years, obesity, chronic anovulation/PCOS, diabetes, hypertension, tamoxifen use, Lynch syndrome/family history, nulliparity, prolonged unopposed estrogen exposure.
+
+Potential etiologies
+- Structural causes, per PALM-COEIN framework:
+  - Endometrial or cervical polyp.
+  - Adenomyosis.
+  - Leiomyoma, especially submucosal fibroid.
+  - Endometrial hyperplasia or malignancy, risk dependent on age and clinical risk factors.
+- Nonstructural causes:
+  - Ovulatory dysfunction, including thyroid disease, hyperprolactinemia, PCOS, hypothalamic dysfunction, perimenopause.
+  - Endometrial/hemostatic disorders.
+  - Iatrogenic bleeding from hormonal contraception, anticoagulants, antiplatelet agents, or other medications.
+  - Pregnancy-related bleeding, which must be excluded in reproductive-age patients.
+  - Cervicitis/STIs, cervical dysplasia, or cervical malignancy, especially with postcoital bleeding or abnormal screening history.
+
+Initial workup completeness
+- Unable to verify because EHR data could not be retrieved.
+- For a complete initial evaluation of persistent intermenstrual spotting, confirm/document:
+  - Urine or serum hCG for all reproductive-age patients unless pregnancy is impossible.
+  - CBC if bleeding is persistent/heavy or anemia symptoms are present.
+  - TSH and prolactin if cycles are irregular, ovulatory dysfunction is suspected, or symptoms suggest thyroid/prolactin disorder. The referral specifically requested review of thyroid function and prolactin, but actual results were not accessible.
+  - Cervical cancer screening status and results; perform Pap/HPV if due.
+  - STI testing if risk factors, cervicitis symptoms, postcoital bleeding, or new partner exposure.
+  - Pelvic examination to assess vaginal/cervical lesions, cervicitis, cervical polyp, uterine enlargement/tenderness, adnexal mass/tenderness.
+  - Medication review, including hormonal contraception, emergency contraception, anticoagulants, antipsychotics, and tamoxifen.
+
+Recommended diagnostic plan
+1. Imaging to evaluate structural causes
+- Order transvaginal pelvic ultrasound as first-line imaging for persistent intermenstrual bleeding.
+  - Include transabdominal component if needed for global pelvic assessment or if transvaginal approach is not feasible.
+  - Evaluate endometrial thickness/appearance, focal endometrial lesions, intracavitary/submucosal fibroids, adenomyosis features, myometrial lesions, adnexa, and free fluid.
+- If transvaginal ultrasound is unrevealing but bleeding persists, or if ultrasound suggests focal intracavitary pathology:
+  - Proceed with saline infusion sonohysterography and/or diagnostic hysteroscopy for improved evaluation of endometrial polyps and submucosal fibroids.
+  - Hysteroscopy allows direct visualization and potential directed biopsy or polypectomy.
+
+2. Endometrial sampling
+- Recommend endometrial biopsy if any of the following apply after chart review:
+  - Age >=45 years with AUB.
+  - Age <45 years with risk factors for unopposed estrogen/endometrial cancer, persistent bleeding, failed medical management, or concerning ultrasound findings.
+  - Intermenstrual bleeding with significant risk factors or persistent unexplained course.
+- If postmenopausal bleeding is identified, evaluate urgently with transvaginal ultrasound and/or endometrial sampling according to postmenopausal bleeding protocols.
+
+3. Laboratory evaluation
+- Confirm recent results for:
+  - Pregnancy test if reproductive age.
+  - CBC.
+  - TSH.
+  - Prolactin.
+- Consider additional labs based on history:
+  - Ferritin/iron studies if prolonged or heavy bleeding or anemia.
+  - Coagulation evaluation if lifelong heavy bleeding, easy bruising, postpartum/surgical bleeding history, or family history of bleeding disorder.
+  - Androgen/PCOS evaluation if oligomenorrhea with hyperandrogenic features.
+  - STI testing for chlamydia/gonorrhea/trichomonas if clinically indicated.
+
+Symptom management options while workup proceeds
+- If pregnancy is excluded and there are no contraindications, hormonal therapy may be offered for symptom control:
+  - Combined hormonal contraceptive pill/patch/ring for cycle regulation and reduction of unscheduled bleeding.
+  - Progestin-only therapy if estrogen contraindicated.
+  - Levonorgestrel intrauterine system if patient desires longer-term management and structural/endometrial pathology has been appropriately evaluated.
+- Nonhormonal options:
+  - NSAIDs may reduce menstrual bleeding and dysmenorrhea if no contraindications.
+  - Tranexamic acid is generally used for heavy cyclic bleeding rather than isolated spotting and should be used cautiously based on thrombotic risk.
+- Treat identified cause if found:
+  - Cervicitis/STI: antimicrobial therapy per results.
+  - Cervical polyp: removal if symptomatic or concerning.
+  - Endometrial polyp/submucosal fibroid: hysteroscopic management if symptomatic or persistent.
+  - Thyroid or prolactin abnormality: manage or refer appropriately.
+
+Contingency plan
+- If ultrasound, labs, pelvic exam, and indicated endometrial sampling are unrevealing but intermenstrual spotting persists:
+  - Reassess medication/contraceptive causes and adherence patterns.
+  - Consider saline infusion sonohysterography or hysteroscopy if not already performed, as small focal lesions may be missed on routine ultrasound.
+  - Consider empiric hormonal cycle regulation if no contraindications and malignancy/pregnancy/infection have been excluded.
+  - Follow up within 6-12 weeks to review bleeding diary, imaging, labs, and response to therapy.
+- Escalate evaluation sooner for heavy bleeding, symptomatic anemia, postcoital bleeding with abnormal cervical findings, pelvic mass, severe pain, pregnancy, postmenopausal bleeding, or any concern for malignancy.
+
+Orders recommended after EHR reconciliation
+- Pelvic ultrasound: transvaginal ultrasound with transabdominal pelvic ultrasound as needed for AUB/intermenstrual spotting.
+- Additional orders to place only if not already completed or if results are outdated/incomplete: urine/serum hCG, CBC, TSH, prolactin, STI testing as indicated, Pap/HPV if due, and endometrial biopsy if age/risk criteria are met.
+
+Summary
+- Persistent intermenstrual spotting warrants evaluation for pregnancy, cervical/vaginal causes, endocrine/ovulatory dysfunction, medication effects, and structural uterine pathology.
+- First-line structural evaluation is transvaginal pelvic ultrasound, followed by sonohysterography or hysteroscopy if focal intracavitary pathology is suspected or symptoms persist despite unrevealing initial testing.
+- Endometrial biopsy should be performed based on age, risk factors, persistence, failed treatment, or concerning imaging findings.
+- This note must be updated after successful EHR review to incorporate actual demographics, thyroid/prolactin results, prior screening/procedures, medications, and documented bleeding timeline.
