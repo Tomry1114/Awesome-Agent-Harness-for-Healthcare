@@ -278,7 +278,8 @@ def _experimental_evaluators(agent_dir, bench):
     plugin, _plugin_problem = _sub.require_plugin(bench)
     if _plugin_problem:                                  # unknown benchmark -> fail-closed, NO vacuous scores
         return {"tier": "unavailable", "score_eligible": False, "problem": _plugin_problem}, {}, {}, {}
-    ex_t, lc_t, ob_t = {}, {}, {}
+    ex_t, lc_t, ob_t, ctx_t, ver_t, tool_t, gov_t = {}, {}, {}, {}, {}, {}, {}
+    _cov_low = {}
     ctx_t, ver_t, tool_t = {}, {}, {}
     _lc_cov, _lc_unreportable = {}, []
     for tp in sorted(glob.glob(os.path.join(agent_dir, "*", "trajectory.jsonl"))):
@@ -306,35 +307,43 @@ def _experimental_evaluators(agent_dir, bench):
             continue        # fail-closed: missing/invalid dimension policy -> no score for this task
         manifest = _sub.capability_manifest(prov)
         ev = _sub.evidence_view(evs, plugin)
+        # SYSTEM RULE 1: a qualified run outputs ALL 7 ETCLOVG scores. We store every dimension score
+        # UNCONDITIONALLY; "reportable"/opportunity only feeds coverage/confidence, never deletes the score.
         e = _dex.execution(sem, dp, manifest)
         l = _dlc.lifecycle(sem, dp, manifest)
         o = _dob.observability(ev, sem)
         if isinstance(e.get("score"), (int, float)): ex_t[tid] = e["score"]
-        if isinstance(l.get("score"), (int, float)) and l.get("reportable_score"): lc_t[tid] = l["score"]
-        if isinstance(o.get("score"), (int, float)) and o.get("reportable"): ob_t[tid] = o["score"]
-        # ---- experimental cross-check panel (not wired into strict gate; offline, no answer/gold) ----
+        if isinstance(l.get("score"), (int, float)): lc_t[tid] = l["score"]
+        if isinstance(o.get("score"), (int, float)): ob_t[tid] = o["score"]
+        if not l.get("reportable_score"): _cov_low.setdefault("Lifecycle", []).append(tid)
+        if not o.get("reportable"): _cov_low.setdefault("Observability", []).append(tid)
         if _dctx is not None:
             try:
                 instr = (task.get("context") or {}).get("text") or task.get("goal")
                 cx = _dctx.context(sem, ev, dp, task_instruction=instr, judge_model=None)
-                if isinstance(cx.get("score"), (int, float)) and cx.get("reportable"): ctx_t[tid] = cx["score"]
-            except Exception:
-                pass
+                if isinstance(cx.get("score"), (int, float)): ctx_t[tid] = cx["score"]
+                if not cx.get("reportable"): _cov_low.setdefault("Context", []).append(tid)
+            except Exception: pass
         if _dver is not None:
             try:
                 vfa = [s for s in sem if s.get("event_role") == "verify"]
-                vclaims = _dver.extract_claims(sem)
-                vr = _dver.verification(ev, vfa, vclaims, conflicts=None, policy=dp, judge_fn=None)
-                if isinstance(vr.get("score"), (int, float)) and vr.get("reportable"): ver_t[tid] = vr["score"]
-            except Exception:
-                pass
+                vr = _dver.verification(ev, vfa, _dver.extract_claims(sem), conflicts=None, policy=dp, judge_fn=None)
+                if isinstance(vr.get("score"), (int, float)): ver_t[tid] = vr["score"]
+                if not vr.get("reportable"): _cov_low.setdefault("Verification", []).append(tid)
+            except Exception: pass
         if _dtool is not None:
             try:
-                tr = _dtool.tooling(sem, dp, manifest, available_tools=task.get("available_tools"),
-                                    task=task, plugin=plugin)
-                if isinstance(tr.get("score"), (int, float)) and tr.get("reportable"): tool_t[tid] = tr["score"]
-            except Exception:
-                pass
+                tr = _dtool.tooling(sem, dp, manifest, available_tools=task.get("available_tools"), task=task, plugin=plugin)
+                if isinstance(tr.get("score"), (int, float)): tool_t[tid] = tr["score"]
+                if not tr.get("reportable"): _cov_low.setdefault("Tooling", []).append(tid)
+            except Exception: pass
+        try:
+            import governance as _gov
+            gr = _gov.governance(evs, policy=task.get("source_benchmark"), question=instr if "_dctx" in dir() else "",
+                                 provenance=prov.get("prompt_provenance"),
+                                 dimension_policy=dp, manifest=manifest, use_judge=False)
+            if isinstance(gr.get("score"), (int, float)): gov_t[tid] = gr["score"]
+        except Exception: pass
         for k, st in (l.get("submetric_status") or {}).items():
             _lc_cov.setdefault(k, {"valid": 0, "total": 0})
             _lc_cov[k]["total"] += 1; _lc_cov[k]["valid"] += 1 if st == "valid" else 0
@@ -365,7 +374,43 @@ def _experimental_evaluators(agent_dir, bench):
         "Context_xc": _agg(ctx_t, tier="experimental_substrate_context_mgmt"),
         "Verification_xc": _agg(ver_t, tier="experimental_substrate_verification"),
         "Tooling_xc": _agg(tool_t, tier="experimental_substrate_tooling")}
+    # SYSTEM RULE 1+2: a fixed, always-present 7-dim Harness profile from the UNIFIED substrate scorers
+    # (never from dataset checkpoint tags). Each dim ALWAYS has a [0,1] score; evidence strength only sets
+    # coverage. A dim with NO score across the whole dataset is an ADAPTER-ADMISSION gap (flagged), NOT 0/1.
+    _DIM_T = {"Execution": ex_t, "Tooling": tool_t, "Context": ctx_t, "Lifecycle": lc_t,
+              "Observability": ob_t, "Verification": ver_t, "Governance": gov_t}
+    _ntask = len({tid for tp in sorted(glob.glob(os.path.join(agent_dir, "*", "trajectory.jsonl")))
+                  for tid in [os.path.basename(os.path.dirname(tp))]}) or 1
+    formal = {}
+    for _dim, _d in _DIM_T.items():
+        _v = list(_d.values())
+        formal[_dim] = {
+            "score": round(sum(_v) / len(_v), 3) if _v else None,
+            "coverage": round(len(_d) / _ntask, 3),
+            "n_scored": len(_v),
+            "std": round(_st.pstdev(_v), 3) if len(_v) > 1 else (0.0 if _v else None),
+            "informativeness": ("saturated" if (_v and len(set(_v)) == 1) else ("discriminating" if _v else "none")),
+            "low_confidence_tasks": len(_cov_low.get(_dim, [])),
+            "evidence_tier": "substrate_universal",
+            "adapter_admission": ("ok" if _v else "INCOMPLETE: dataset produced no %s evidence" % _dim)}
+    panel["harness_seven"] = formal
+    panel["seven_source"] = "unified substrate evaluators (dim_execution/tooling/context/lifecycle/observability/verification + governance); checkpoint tags do NOT determine these"
     return panel, ex_t, lc_t, ob_t
+
+
+def _outcome_metric(results):
+    """Source Outcome = did the agent get the dataset-native task/clinical result right -- the SEPARATE line
+    from ETCLOVG (does not occupy any of the 7 dims). Pass rate of dimension==Outcome checkpoints + GAcc."""
+    npass = ntot = 0
+    for r in results:
+        for c in (r.get("checkpoints") or []):
+            if c.get("dimension") == "Outcome" and c.get("checkpoint_status") in ("passed", "failed"):
+                ntot += 1; npass += 1 if c.get("checkpoint_status") == "passed" else 0
+    gacc = [c.get("score") for r in results for c in (r.get("checkpoints") or [])
+            if c.get("evaluator_kind") == "gacc_judge" and isinstance(c.get("score"), (int, float))]
+    return {"score": round(npass / ntot, 3) if ntot else (round(sum(gacc) / len(gacc), 3) if gacc else None),
+            "metric": "source_native_pass_rate", "n_outcome_checkpoints": ntot,
+            "gacc_mean": round(sum(gacc) / len(gacc), 3) if gacc else None}
 
 
 def build(agent_dir, bench):
@@ -406,7 +451,9 @@ def build(agent_dir, bench):
         "coverage_summary": coverage_summary,
         "native_metrics": _native_metrics(bench, results),
         "tool_use_quality": _tool_use_quality(results),
-        "harness_dimensions": hd,
+        "harness_dimensions": (_exp_panel.get("harness_seven") if isinstance(_exp_panel, dict) else None),
+        "outcome": _outcome_metric(results),
+        "checkpoint_diagnostics": hd,
         "proxy_dimensions": proxy,
         "experimental_evaluators": _exp_panel,
         "integrity": _integ,
