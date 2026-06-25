@@ -404,10 +404,13 @@ def test_aggregate_report_missing_plugin_returns_no_scores():
 
 
 def test_verification_submetrics_distinct_and_applicable_only():
-    """#4b: Verification splits into FIVE genuinely distinct, applicable-only sub-metrics. Proves on
-    crafted inputs that (a) the expected sub-metrics exist, (b) each is applicable-only (no vacuous 1.0
-    when there is no opportunity), and (c) no sub-metric is an algebraic transform of another (for every
-    ordered pair there is a row where equal-B forces unequal-A -> not a function of B)."""
+    """#4b: Verification splits into SIX genuinely distinct sub-metrics: four CLAIM-BASED applicable-only ones
+    (no vacuous 1.0 when there is no opportunity) PLUS two ALWAYS-APPLICABLE process cores
+    (verification_action_completion + decision_grounding) that become applicable the moment the agent took
+    any action. Proves on crafted inputs that (a) the expected sub-metric set exists, (b) the claim-based ones
+    are applicable-only (an empty run with NO actions -> ALL not_applicable, no vacuous 1.0), and (c) no
+    sub-metric is an algebraic transform of another (for every ordered pair there is a row where equal-B
+    forces unequal-A -> not a function of B)."""
     import dim_verification as V
     import substrate as _S
 
@@ -417,15 +420,18 @@ def test_verification_submetrics_distinct_and_applicable_only():
 
     _POL = {"verification_policy": {"cross_source_required_for": [{"type": "test",
             "patterns": ["finding", "lesion", "payload", "present", "delta", "x y z", "a b c"]}]}}
-    def sc(evi, claims, vacts=None, conflicts=None, pol=None):
-        o = V.verification(evi, vacts or [], claims, conflicts=conflicts, policy=pol or _POL)
+    def sc(evi, claims, vacts=None, conflicts=None, pol=None, sem=None):
+        o = V.verification(evi, vacts or [], claims, conflicts=conflicts, policy=pol or _POL, sem_trace=sem)
         return o, {k: o["submetrics"][k]["score"] for k in V._SUBMETRICS}
 
-    # exact expected sub-metric set
+    # exact expected sub-metric set (4 claim-based + 2 always-applicable process cores)
     assert set(V._SUBMETRICS) == {"evidence_support", "cross_source_check", "conflict_handling",
-                                  "uncertainty_calibration", "verification_action_completion"}, V._SUBMETRICS
+                                  "uncertainty_calibration", "verification_action_completion",
+                                  "decision_grounding"}, V._SUBMETRICS
+    assert set(V._CORE_SUBMETRICS) == {"verification_action_completion", "decision_grounding"}, V._CORE_SUBMETRICS
 
-    # applicable-only: an empty run produces NO vacuous 1.0 -- every sub-metric is not_applicable.
+    # applicable-only: an empty run (NO actions, NO claims) produces NO vacuous 1.0 -- every sub-metric is
+    # not_applicable, INCLUDING the always-applicable cores (they only activate once the agent ACTED).
     o_empty, _ = sc([], [])
     for k in V._SUBMETRICS:
         assert o_empty["submetrics"][k]["status"] == "not_applicable", (k, o_empty["submetrics"][k])
@@ -469,8 +475,30 @@ def test_verification_submetrics_distinct_and_applicable_only():
                  conflicts=[{"units": ["OCR#0", "OCR#1"], "acknowledged": False}])
     assert G_ack["conflict_handling"] == 1.0 and G_no["conflict_handling"] == 0.0, (G_ack, G_no)
 
+    # ----- rows that pull the TWO always-applicable cores apart (in OPPOSITE directions) so neither core is
+    # an algebraic transform of the other, nor of the claim-based metrics -----
+    # H: agent verified (action_completion HIGH) but reached NO terminal decision (decision_grounding 0).
+    sem_H = [_S.semantic_event("acquire", status="success", state_changed=True, raw={}),
+             _S.semantic_event("verify", status="success", state_changed=False, raw={})]
+    o_H, H = sc([], [], sem=sem_H)
+    assert H["verification_action_completion"] > 0.0 and H["decision_grounding"] == 0.0, H
+    # I: agent did NOT verify (action_completion 0) but reached a GROUNDED terminal commit (decision_grounding
+    #    1). Cores diverge the OPPOSITE way from H.
+    sem_I = [_S.semantic_event("acquire", status="success", state_changed=True, raw={}),
+             _S.semantic_event("commit", status="success", raw={})]
+    o_I, I = sc([ev("read#0", "patient record alpha beta")], [], sem=sem_I)
+    assert I["verification_action_completion"] == 0.0 and I["decision_grounding"] == 1.0, I
+    # J: agent BOTH verified AND reached a grounded commit -> action_completion == 0.5 (1 verify step over 2
+    #    actions) WITH decision_grounding == 1.0. This is the row that breaks the function in BOTH directions:
+    #    same action_completion (0.5) as H but DIFFERENT decision_grounding (0.0 vs 1.0) -> not vac->dg; same
+    #    decision_grounding (1.0) as I but DIFFERENT action_completion (0.0 vs 0.5) -> not dg->vac.
+    sem_J = [_S.semantic_event("verify", status="success", state_changed=False, raw={}),
+             _S.semantic_event("commit", status="success", raw={})]
+    o_J, J = sc([ev("read#0", "patient record alpha beta")], [], sem=sem_J)
+    assert J["verification_action_completion"] == 0.5 and J["decision_grounding"] == 1.0, J
+
     # ----- algebraic independence: no sub-metric is a function of another across these rows -----
-    rows = [A, B, C, D, E, F, G_ack, G_no]
+    rows = [A, B, C, D, E, F, G_ack, G_no, H, I, J]
     for ka in V._SUBMETRICS:
         for kb in V._SUBMETRICS:
             if ka == kb:
@@ -484,6 +512,54 @@ def test_verification_submetrics_distinct_and_applicable_only():
                 seen[vb] = va
             assert not (functional and len(seen) > 1), \
                 "%s is an algebraic transform of %s across crafted rows" % (ka, kb)
+
+
+def test_verification_action_based_core_discriminates_no_claim_no_verify():
+    """ALWAYS-APPLICABLE process cores: an action-based agent (HAB/GUI) that emits NO medical claim must still
+    get a REAL Verification number from process evidence -- never None, never a vacuous 1.0.
+
+    The failing HAB agent (navigate x N, never verifies, never submits) must score LOW and REPORTABLE:
+      - verification_action_completion: acted but ZERO verification steps -> 0 (applicable, not N/A, not 1.0).
+      - decision_grounding: reached NO terminal decision -> 0 (a decision it never made cannot be grounded).
+    A GOOD action-based agent (re-checks state + reaches a grounded terminal commit) must score STRICTLY
+    HIGHER -> the cores DISCRIMINATE."""
+    import dim_verification as V
+    import substrate as _S
+
+    # --- failing HAB-like agent: 12 'acquire' actions, no verify, no terminal decision, no claim ---
+    hab_sem = [_S.semantic_event("acquire", status="success", state_changed=True, raw={}) for _ in range(12)]
+    hab = V.verification([{"id": "navigate#%d" % i, "payload": "", "delivered_to_agent": False,
+                           "delivery_fidelity": 0.0, "error_visible": False} for i in range(12)],
+                         verification_actions=[], final_claims=[], judge_model=False, sem_trace=hab_sem)
+    vac = hab["submetrics"]["verification_action_completion"]
+    dg = hab["submetrics"]["decision_grounding"]
+    # REAL low number, reportable, never vacuous-N/A, never a vacuous 1.0
+    assert hab["score"] is not None and hab["reportable"] is True, hab
+    assert hab["score"] < 1.0 and hab["score"] == 0.0, hab
+    assert vac["status"] == "applicable" and vac["score"] == 0.0, vac      # acted, zero verification -> 0
+    assert dg["status"] == "applicable" and dg["score"] == 0.0, dg         # no terminal decision -> 0
+    # reportable is driven by an ALWAYS-APPLICABLE core, even with zero claims
+    assert any(hab["submetrics"][k]["status"] == "applicable" for k in V._CORE_SUBMETRICS), hab
+
+    # --- good action-based agent: re-checks state + reaches a grounded terminal commit ---
+    good_sem = ([_S.semantic_event("acquire", status="success", state_changed=True, raw={}) for _ in range(3)]
+                + [_S.semantic_event("verify", status="success", state_changed=False, raw={})]
+                + [_S.semantic_event("commit", status="success", raw={})])
+    good = V.verification([{"id": "read#%d" % i, "payload": "patient record alpha beta",
+                            "delivered_to_agent": True, "delivery_fidelity": 1.0, "error_visible": False}
+                           for i in range(3)],
+                          verification_actions=[s for s in good_sem if s.get("event_role") == "verify"],
+                          final_claims=[], judge_model=False, sem_trace=good_sem)
+    assert good["submetrics"]["verification_action_completion"]["score"] > 0.0, good
+    assert good["submetrics"]["decision_grounding"]["score"] == 1.0, good   # grounded commit
+    assert good["score"] > hab["score"], (good["score"], hab["score"])      # cores DISCRIMINATE
+
+    # --- ungrounded commit: terminal decision reached but NO evidence acquired -> grounding 0 ---
+    ung = V.verification([], verification_actions=[], final_claims=[], judge_model=False,
+                         sem_trace=[_S.semantic_event("act", status="success", state_changed=True, raw={}),
+                                    _S.semantic_event("commit", status="success", raw={})])
+    udg = ung["submetrics"]["decision_grounding"]
+    assert udg["status"] == "applicable" and udg["score"] == 0.0, udg
 
 
 def test_verification_v7_per_claim_calibration():

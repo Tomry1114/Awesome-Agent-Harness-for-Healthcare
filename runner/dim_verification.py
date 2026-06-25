@@ -48,11 +48,26 @@ applicable ones, so a run with no opportunity for a sub-metric does NOT get a va
                                  OR wishy-washy-when-strong) scores 0. Vector = {correct_calibration} over
                                  the single applicable regime. It can PENALIZE excessive hedging on strong
                                  SUPPORTING evidence, so it is not a monotone slice of any support vector.
-  verification_action_completion: of the VERIFY-role actions the agent had the chance to complete, the
-                                 fraction that actually CONFIRMED (status==success / produced a real verify
-                                 result) rather than firing-and-not-confirming (partial/failure). Vector =
-                                 per-verify-event {confirmed}. Entirely independent of the claim/evidence
-                                 vectors above (it scores the agent's self-checking ACTIONS, not its claims).
+  verification_action_completion: ALWAYS-APPLICABLE whenever the trace has ANY actions. Did the agent take
+                                 verification / confirmation steps (verify-role events, re-reads, re-observing
+                                 already-seen state) relative to the KEY actions it took? An agent that acted
+                                 but ran ZERO verification steps -> LOW (0), NOT N/A and NOT 1.0. When the
+                                 agent DID run verify-role actions, the score additionally rewards those that
+                                 actually CONFIRMED (status==success) over fire-and-don't-confirm. So a HAB
+                                 agent that navigated 12 times and never re-checked anything scores 0 here.
+  decision_grounding           : ALWAYS-APPLICABLE whenever the trace has ANY actions (NEW). Treat the agent's
+                                 TERMINAL decision (a commit-role event, or the final-answer) as the "claim"
+                                 and ask: was it GROUNDED in evidence the agent actually acquired (>=1 relevant
+                                 EvidenceUnit delivered BEFORE the decision)? An agent that committed/decided
+                                 without first acquiring evidence -> low. An agent that reached NO terminal
+                                 decision at all (HAB: never submits) -> the decision is absent/ungrounded ->
+                                 low (it cannot have grounded a decision it never made). This guarantees
+                                 Verification DISCRIMINATES the failing HAB agent instead of going vacuous-N/A.
+
+The DIMENSION is the applicable-only weighted aggregate, but with the two CORE sub-metrics
+(verification_action_completion + decision_grounding) ALWAYS in the pool once the agent took any action, so
+Verification is never vacuous-all-N/A and never a vacuous 1.0 for an agent that acted. reportable=True
+whenever at least one ALWAYS-APPLICABLE core contributed.
 
 Tier: experimental (heuristic corroboration + optional LLM aux signal; not yet human-audited).
 """
@@ -62,8 +77,13 @@ import hashlib
 
 TIER = "experimental"
 DIMENSION = "Verification"
+# ALWAYS-APPLICABLE core sub-metrics: whenever the trace has any actions these two MUST produce a real number
+# (never not_applicable, never a vacuous 1.0). They are what makes Verification a real PROCESS score for an
+# action-based agent (HAB/GUI) that emits no medical "claim". The other three are claim-based and stay
+# not_applicable when there are no claims.
+_CORE_SUBMETRICS = ("verification_action_completion", "decision_grounding")
 _SUBMETRICS = ("evidence_support", "cross_source_check", "conflict_handling",
-               "uncertainty_calibration", "verification_action_completion")
+               "uncertainty_calibration", "verification_action_completion", "decision_grounding")
 
 # Lexical cues used ONLY on the agent's own final-claim/verify text (never on benchmark data) to detect
 # epistemic hedging and explicit contradiction-acknowledgement. These are language cues, not tool/bench
@@ -314,7 +334,7 @@ def _resolve_judge_fn(judge_fn, judge_model):
 
 # --------------------------------------------------------------------------- entry point
 def verification(evidence_items, verification_actions=None, final_claims=None, conflicts=None,
-                 policy=None, judge_fn=None, judge_model=None):
+                 policy=None, judge_fn=None, judge_model=None, sem_trace=None):
     """Generic Verification scorer.
 
     Args (all substrate-derived; no benchmark specifics):
@@ -337,6 +357,12 @@ def verification(evidence_items, verification_actions=None, final_claims=None, c
                             (offline; no gateway call, no MH_JUDGE_MODEL read). None = unspecified (MAY read
                             MH_JUDGE_MODEL). A str = build a gateway judge for that model. The offline
                             cross-check must pass judge_model=False to stay offline.
+      sem_trace           : optional FULL list[SemanticEvent] (substrate.map_trace output). Drives the two
+                            ALWAYS-APPLICABLE core sub-metrics (verification_action_completion +
+                            decision_grounding): they need to see EVERY action (not just verify-role events)
+                            and the terminal commit/final event. When sem_trace is None we fall back to
+                            verification_actions for the action signal and final_claims for the terminal
+                            signal, so the core sub-metrics still report (slightly coarser).
 
     Returns {dimension, tier, score, reportable, coverage, submetrics:{name:{score,status,opportunities,
              basis}}, applicable_submetrics}."""
@@ -495,20 +521,102 @@ def verification(evidence_items, verification_actions=None, final_claims=None, c
             "basis": ("no scorable claim" if not claim_supp1 else
                       "no statement is clearly thin or clearly strong (calibration indeterminate)")}
 
-    # ----- verification_action_completion : did the agent finish the verify steps it ran? -----
-    # Opportunity = each verify-role action. Completion = it CONFIRMED (status success) rather than firing
-    # without a confirming result (partial/failure). Independent of claim/evidence vectors above.
-    if verification_actions:
-        confirmed = sum(1 for s in verification_actions if str(s.get("status")) == "success")
+    # ===== ALWAYS-APPLICABLE CORE (process evidence; benchmark-agnostic) =====
+    # The two sub-metrics below make Verification a REAL process score for an action-based agent (HAB/GUI)
+    # that emits no medical claim. They become APPLICABLE the moment the agent took ANY action -- so a
+    # failing HAB agent (navigates, never verifies, never submits) gets a real LOW Verification, not N/A and
+    # not a vacuous 1.0. They are computed from the FULL semantic trace when available (every action + the
+    # terminal commit/final), with a coarser fallback to verification_actions / final_claims when sem_trace
+    # is None.
+    sem = sem_trace or []
+    # ACTIONS the agent took (state-affecting / acquisition / commit roles). 'final' & 'escalate' are
+    # terminal markers, not "actions" for self-check purposes; everything else that the agent emitted counts.
+    _ACTION_ROLES = ("acquire", "act", "verify", "commit")
+    if sem:
+        action_events = [s for s in sem if s.get("event_role") in _ACTION_ROLES]
+        verify_events = [s for s in sem if s.get("event_role") == "verify"]
+    else:
+        # fallback: we only have the verify-role subset + a notion of whether claims/actions exist.
+        verify_events = list(verification_actions or [])
+        # treat the verify events as the only visible actions; if there are claims but no sem_trace we still
+        # know the agent acted to produce them.
+        action_events = list(verify_events)
+    has_actions = bool(action_events) or bool(verify_events) or bool(verification_actions)
+
+    # ----- verification_action_completion : did the agent self-check relative to the actions it took? -----
+    # ALWAYS-APPLICABLE once the agent took any action. A "verification step" is a DELIBERATE self-check: an
+    # explicit verify-role event (the plugin classifies a re-read/confirm tool as role=='verify'). A repeated
+    # action that merely fails to make progress (state_changed==False) is STAGNATION, NOT verification, and is
+    # deliberately NOT counted -- otherwise a thrashing agent would be rewarded for re-firing the same step.
+    #   score = min(1, n_confirmed_verify / n_committed-or-key actions), where confirmed = verify events that
+    #           produced a success result (fire-and-don't-confirm is discounted).
+    # An agent that took actions but ran ZERO verify-role steps -> 0 (NOT N/A, NOT 1.0). This is exactly the
+    # failing HAB agent: 12 navigates (role=='acquire'), no verify -> 0.
+    if has_actions:
+        n_actions = max(1, len(action_events))
+        if not verify_events:
+            vac_score = 0.0
+            vac_basis = ("agent took %d action(s) but ZERO verify-role self-checks -> unverified"
+                         % len(action_events))
+        else:
+            confirmed = sum(1 for s in verify_events if str(s.get("status")) == "success")
+            # coverage of the agent's actions by CONFIRMED verification, capped at 1.0.
+            vac_score = round(min(1.0, confirmed / float(n_actions)), 4)
+            vac_basis = ("%d/%d verify-role action(s) confirmed (status=success) over %d action(s)"
+                         % (confirmed, len(verify_events), len(action_events)))
         subs["verification_action_completion"] = {
-            "score": round(confirmed / len(verification_actions), 4), "status": "applicable",
-            "opportunities": len(verification_actions),
-            "basis": "%d/%d verify-role actions actually confirmed (status=success)"
-                     % (confirmed, len(verification_actions))}
+            "score": vac_score, "status": "applicable",
+            "opportunities": len(action_events), "basis": vac_basis}
     else:
         subs["verification_action_completion"] = {
             "score": None, "status": "not_applicable", "opportunities": 0,
-            "basis": "agent ran no verify-role action (no self-check opportunity exercised)"}
+            "basis": "agent took no action (no self-check opportunity)"}
+
+    # ----- decision_grounding : was the agent's TERMINAL decision grounded in acquired evidence? -----
+    # ALWAYS-APPLICABLE once the agent took any action. The TERMINAL decision = a commit-role event OR the
+    # final-answer (whichever the agent reached). Grounded iff the agent had DELIVERED >=1 relevant evidence
+    # unit BEFORE that decision. Cases:
+    #   * NO terminal decision reached (HAB never submits): the decision is ABSENT/ungrounded -> 0. An agent
+    #     cannot have grounded a decision it never made.
+    #   * terminal decision reached but with ZERO delivered evidence behind it -> 0 (ungrounded commit).
+    #   * terminal decision reached with delivered, relevant evidence behind it -> grounded (1, scaled by how
+    #     well its content is actually backed when it has scorable content).
+    if has_actions:
+        # locate the terminal decision event (commit preferred, else final).
+        commit_events = [s for s in sem if s.get("event_role") == "commit"]
+        final_events = [s for s in sem if s.get("event_role") == "final" or s.get("terminal") == "final"]
+        reached_decision = bool(commit_events) or bool(final_events) or bool(final_claims)
+        if not reached_decision:
+            subs["decision_grounding"] = {
+                "score": 0.0, "status": "applicable", "opportunities": 1,
+                "basis": "agent reached NO terminal decision (no commit, no final answer) -> "
+                         "decision absent/ungrounded"}
+        else:
+            # was any evidence DELIVERED before the decision? With sem_trace we can order it; without, we use
+            # the global delivered set (best available).
+            grounded_by_acquisition = n_deliv > 0
+            # when the decision has scorable CONTENT (a final answer the agent wrote), reward grounding by how
+            # well that content is backed by delivered evidence -- reuse the per-claim support already computed.
+            if claim_supp1:
+                n_sup = sum(1 for v in claim_supp1.values() if v)
+                dg_score = round(n_sup / len(claim_supp1), 4)
+                dg_basis = ("terminal decision present; %d/%d of its assertions backed by delivered evidence"
+                            % (n_sup, len(claim_supp1)))
+            elif grounded_by_acquisition:
+                # a terminal commit with no scorable text (e.g. a structured GUI submit) but evidence WAS
+                # delivered before it -> grounded.
+                dg_score = 1.0
+                dg_basis = ("terminal decision present and %d evidence unit(s) were delivered to ground it"
+                            % n_deliv)
+            else:
+                dg_score = 0.0
+                dg_basis = "terminal decision present but NO evidence was delivered to ground it"
+            subs["decision_grounding"] = {
+                "score": dg_score, "status": "applicable", "opportunities": 1, "basis": dg_basis}
+    else:
+        subs["decision_grounding"] = {
+            "score": None, "status": "not_applicable", "opportunities": 0,
+            "basis": "agent took no action (no decision to ground)"}
 
     # ----- applicable-only aggregation -----
     # informational stat: distinct independent sources that support ANY scorable claim (de-duped union).
@@ -520,9 +628,12 @@ def verification(evidence_items, verification_actions=None, final_claims=None, c
 
     applicable = [k for k in _SUBMETRICS if subs[k]["status"] == "applicable"]
     score = round(sum(subs[k]["score"] for k in applicable) / len(applicable), 4) if applicable else None
+    # reportable iff at least one ALWAYS-APPLICABLE CORE contributed (action_completion / decision_grounding).
+    # This guarantees an agent that ACTED yields a reportable Verification number even with zero claims.
+    core_contributed = any(subs[k]["status"] == "applicable" for k in _CORE_SUBMETRICS)
     return {
         "dimension": DIMENSION, "tier": TIER, "score": score,
-        "reportable": bool(applicable),
+        "reportable": bool(core_contributed or applicable),
         "coverage": round(len(applicable) / len(_SUBMETRICS), 4),
         "applicable_submetrics": applicable,
         "submetrics": subs,
@@ -567,7 +678,7 @@ def score_bundle(trace, plugin, task=None, judge_fn=None, judge_model=False):
     final_claims = extract_claims(sem)
     policy = S.dimension_policy(task or {"source_benchmark": (plugin or {}).get("benchmark")}, plugin)
     return verification(evidence_items, verification_actions, final_claims, conflicts=None,
-                        policy=policy, judge_fn=judge_fn, judge_model=judge_model)
+                        policy=policy, judge_fn=judge_fn, judge_model=judge_model, sem_trace=sem)
 
 
 # --------------------------------------------------------------------------- self-verification
@@ -776,6 +887,51 @@ if __name__ == "__main__":
     print("  V12 injected judge_fn (forces unsupported) -> judge_used=%s evidence_support=%s (want True,0.0)"
           % (inj["stats"]["judge_used"], inj["submetrics"]["evidence_support"]["score"]))
     ok &= (inj["stats"]["judge_used"] is True and inj["submetrics"]["evidence_support"]["score"] == 0.0)
+
+    # (V13) ACTION-BASED CORE: an agent that ACTED but never verified and never reached a terminal decision
+    #       (the failing HAB agent: navigate x N, no submit, no verify) must yield a REAL LOW Verification --
+    #       NOT None, NOT a vacuous 1.0 -- with reportable True, driven by the two always-applicable cores.
+    hab_sem = [S.semantic_event("acquire", status="success", state_changed=True, raw={}) for _ in range(12)]
+    hab = verification([{"id": "navigate#%d" % i, "payload": "", "delivered_to_agent": False,
+                         "delivery_fidelity": 0.0, "error_visible": False} for i in range(12)],
+                       verification_actions=[], final_claims=[], judge_model=False, sem_trace=hab_sem)
+    vac = hab["submetrics"]["verification_action_completion"]
+    dg = hab["submetrics"]["decision_grounding"]
+    print("  V13 HAB-like (12 acts, no verify, no submit) -> score=%s reportable=%s "
+          "action_completion=%s/%s decision_grounding=%s/%s"
+          % (hab["score"], hab["reportable"], vac["score"], vac["status"], dg["score"], dg["status"]))
+    ok &= (hab["score"] is not None and hab["reportable"] is True)
+    ok &= (vac["status"] == "applicable" and vac["score"] == 0.0)         # acted, zero verification -> 0
+    ok &= (dg["status"] == "applicable" and dg["score"] == 0.0)          # no terminal decision -> 0
+    ok &= (hab["score"] < 1.0)                                            # never a vacuous 1.0
+    ok &= (hab["score"] == 0.0)                                           # both cores 0 -> dimension 0
+
+    # (V13b) DISCRIMINATION: a GOOD action-based agent that re-checked state AND reached a grounded terminal
+    #        commit scores HIGHER than the failing one -> the cores DISCRIMINATE.
+    good_sem = ([S.semantic_event("acquire", status="success", state_changed=True, raw={}) for _ in range(3)]
+                + [S.semantic_event("verify", status="success", state_changed=False, raw={})]
+                + [S.semantic_event("commit", status="success", terminal=None, raw={})])
+    good = verification([{"id": "read#%d" % i, "payload": "patient record alpha beta",
+                          "delivered_to_agent": True, "delivery_fidelity": 1.0, "error_visible": False}
+                         for i in range(3)],
+                        verification_actions=[s for s in good_sem if s.get("event_role") == "verify"],
+                        final_claims=[], judge_model=False, sem_trace=good_sem)
+    gvac = good["submetrics"]["verification_action_completion"]
+    gdg = good["submetrics"]["decision_grounding"]
+    print("  V13b good agent (verify + grounded commit) -> score=%s action_completion=%s decision_grounding=%s"
+          % (good["score"], gvac["score"], gdg["score"]))
+    ok &= (gvac["score"] > 0.0 and gdg["score"] == 1.0)                  # verified + grounded commit
+    ok &= (good["score"] > hab["score"])                                 # strictly discriminates the failure
+
+    # (V13c) UNGROUNDED COMMIT: agent reaches a terminal decision but acquired NO evidence -> grounding 0.
+    ungrounded = verification([], verification_actions=[], final_claims=[],
+                              judge_model=False,
+                              sem_trace=[S.semantic_event("act", status="success", state_changed=True, raw={}),
+                                         S.semantic_event("commit", status="success", raw={})])
+    udg = ungrounded["submetrics"]["decision_grounding"]
+    print("  V13c committed with NO evidence -> decision_grounding=%s/%s (want applicable,0.0)"
+          % (udg["score"], udg["status"]))
+    ok &= (udg["status"] == "applicable" and udg["score"] == 0.0)
 
     print("\nCONTRACT SELF-CHECKS:", "OK" if ok else "FAIL")
     if not ok:

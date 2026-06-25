@@ -79,13 +79,34 @@ UNIVERSAL_POLICY = MEDCTA_POLICY                                     # back-comp
 def _resolve_policy(policy):
     """policy may be: a registry id (str), a full PolicyInstance (has prohibited_channel_claims), a
     PolicyInstance tagged with a known benchmark, or a LEGACY embedded dict (the current 107 tasks) which
-    has none of the new keys -> treat as MedCTA for back-compat."""
+    has none of the new keys -> treat as MedCTA for back-compat.
+
+    BINDING DISCIPLINE (review): every benchmark must bind ITS OWN PolicyInstance. The MedCTA default is the
+    fallback ONLY for (a) policy=None (the MedCTA counterfactual default) and (b) a legacy embedded dict with
+    none of the new keys. A string id naming a KNOWN benchmark binds that benchmark's policy -- it must NEVER
+    silently fall through to MedCTA. (`resolve_policy_strict` raises on an unknown named benchmark.)"""
     if isinstance(policy, str):
-        return POLICY_REGISTRY.get(policy, MEDCTA_POLICY)
+        if policy in POLICY_REGISTRY:
+            return POLICY_REGISTRY[policy]          # known benchmark -> its OWN policy, never MedCTA
+        return MEDCTA_POLICY                         # unknown id (back-compat lenient default)
     if isinstance(policy, dict):
-        if "prohibited_channel_claims" in policy: return policy
         if policy.get("benchmark") in POLICY_REGISTRY: return POLICY_REGISTRY[policy["benchmark"]]
+        if "prohibited_channel_claims" in policy: return policy
     return MEDCTA_POLICY
+
+
+def resolve_policy_strict(policy):
+    """STRICT binding: a string id or a benchmark-tagged dict naming a benchmark NOT in POLICY_REGISTRY
+    raises (fail-closed) instead of silently scoring it against MedCTA. Used by the per-benchmark binding
+    guard so a new dataset that forgot to register its PolicyInstance is caught loudly, not run under the
+    wrong governance vocabulary. policy=None / a legacy embedded dict still resolve leniently to MedCTA."""
+    if isinstance(policy, str) and policy not in POLICY_REGISTRY:
+        raise ValueError("no Governance PolicyInstance bound for benchmark %r (silent MedCTA fallback refused)" % policy)
+    if isinstance(policy, dict):
+        bm = policy.get("benchmark")
+        if bm is not None and bm not in POLICY_REGISTRY:
+            raise ValueError("no Governance PolicyInstance bound for benchmark %r (silent MedCTA fallback refused)" % bm)
+    return _resolve_policy(policy)
 
 # A "provenance claim sentence" is a span that asserts tool usage. 5.1: 'after running OCR and
 # ImageDescription' must be parsed as a CLAIM about {OCR, ImageDescription} -- BOTH tools -- not one
@@ -785,11 +806,36 @@ def test_governance_recovery_consistent_with_lifecycle():
         assert gov_unresolved == set(), gov_unresolved
 
 
+def test_governance_per_benchmark_policy_binding_no_silent_medcta():
+    """BINDING DISCIPLINE: every benchmark binds ITS OWN PolicyInstance. A known benchmark id (HAB/PB) must
+    resolve to that benchmark's policy, NEVER silently to MedCTA; resolve_policy_strict raises on an unknown
+    named benchmark instead of scoring it under MedCTA's vocabulary. policy=None / a legacy embedded dict
+    still resolve leniently to MedCTA (the counterfactual default + the 107 legacy tasks)."""
+    assert _resolve_policy("HealthAdminBench")["benchmark"] == "HealthAdminBench"
+    assert _resolve_policy("PhysicianBench")["benchmark"] == "PhysicianBench"
+    assert _resolve_policy("MedCTA")["benchmark"] == "MedCTA"
+    # a benchmark-tagged dict binds its own policy, not MedCTA
+    assert _resolve_policy({"benchmark": "HealthAdminBench"})["benchmark"] == "HealthAdminBench"
+    # lenient defaults preserved
+    assert _resolve_policy(None) is MEDCTA_POLICY
+    assert _resolve_policy({"forbidden_actions": ["x"]}) is MEDCTA_POLICY      # legacy embedded dict
+    # STRICT: an unknown named benchmark fails closed (no silent MedCTA)
+    raised = False
+    try:
+        resolve_policy_strict("FourthBenchmark")
+    except ValueError:
+        raised = True
+    assert raised, "resolve_policy_strict must refuse a silent MedCTA fallback for an unknown benchmark"
+    assert resolve_policy_strict("HealthAdminBench")["benchmark"] == "HealthAdminBench"
+    assert resolve_policy_strict(None) is MEDCTA_POLICY                        # None stays lenient
+
+
 if __name__ == "__main__":
     import sys as _sys
     _sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     _t = [test_governance_alt_tool_recovery, test_governance_justified_escalation_resolves,
-          test_governance_recovery_consistent_with_lifecycle]
+          test_governance_recovery_consistent_with_lifecycle,
+          test_governance_per_benchmark_policy_binding_no_silent_medcta]
     _p = 0
     for _fn in _t:
         try:

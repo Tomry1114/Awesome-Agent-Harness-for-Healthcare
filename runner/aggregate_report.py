@@ -280,6 +280,7 @@ def _experimental_evaluators(agent_dir, bench):
         return {"tier": "unavailable", "score_eligible": False, "problem": _plugin_problem}, {}, {}, {}
     ex_t, lc_t, ob_t, ctx_t, ver_t, tool_t, gov_t = {}, {}, {}, {}, {}, {}, {}
     _cov_low = {}
+    _rep = {d: {} for d in MODULES}   # per-dim per-task: True if score rests on REAL (reportable) evidence
     ctx_t, ver_t, tool_t = {}, {}, {}
     _lc_cov, _lc_unreportable = {}, []
     for tp in sorted(glob.glob(os.path.join(agent_dir, "*", "trajectory.jsonl"))):
@@ -312,37 +313,74 @@ def _experimental_evaluators(agent_dir, bench):
         e = _dex.execution(sem, dp, manifest)
         l = _dlc.lifecycle(sem, dp, manifest)
         o = _dob.observability(ev, sem)
-        if isinstance(e.get("score"), (int, float)): ex_t[tid] = e["score"]
-        if isinstance(l.get("score"), (int, float)): lc_t[tid] = l["score"]
-        if isinstance(o.get("score"), (int, float)): ob_t[tid] = o["score"]
+        if isinstance(e.get("score"), (int, float)): ex_t[tid] = e["score"]; _rep["Execution"][tid] = True
+        if isinstance(l.get("score"), (int, float)): lc_t[tid] = l["score"]; _rep["Lifecycle"][tid] = bool(l.get("reportable_score"))
+        if isinstance(o.get("score"), (int, float)): ob_t[tid] = o["score"]; _rep["Observability"][tid] = bool(o.get("reportable"))
         if not l.get("reportable_score"): _cov_low.setdefault("Lifecycle", []).append(tid)
         if not o.get("reportable"): _cov_low.setdefault("Observability", []).append(tid)
         if _dctx is not None:
             try:
                 instr = (task.get("context") or {}).get("text") or task.get("goal")
                 cx = _dctx.context(sem, ev, dp, task_instruction=instr, judge_model=None)
-                if isinstance(cx.get("score"), (int, float)): ctx_t[tid] = cx["score"]
+                if isinstance(cx.get("score"), (int, float)): ctx_t[tid] = cx["score"]; _rep["Context"][tid] = bool(cx.get("reportable"))
                 if not cx.get("reportable"): _cov_low.setdefault("Context", []).append(tid)
             except Exception: pass
         if _dver is not None:
             try:
                 vfa = [s for s in sem if s.get("event_role") == "verify"]
-                vr = _dver.verification(ev, vfa, _dver.extract_claims(sem), conflicts=None, policy=dp, judge_fn=None)
-                if isinstance(vr.get("score"), (int, float)): ver_t[tid] = vr["score"]
+                vr = _dver.verification(ev, vfa, _dver.extract_claims(sem), conflicts=None, policy=dp, judge_fn=None, sem_trace=sem)
+                if isinstance(vr.get("score"), (int, float)): ver_t[tid] = vr["score"]; _rep["Verification"][tid] = bool(vr.get("reportable"))
                 if not vr.get("reportable"): _cov_low.setdefault("Verification", []).append(tid)
             except Exception: pass
         if _dtool is not None:
             try:
                 tr = _dtool.tooling(sem, dp, manifest, available_tools=task.get("available_tools"), task=task, plugin=plugin)
-                if isinstance(tr.get("score"), (int, float)): tool_t[tid] = tr["score"]
+                if isinstance(tr.get("score"), (int, float)): tool_t[tid] = tr["score"]; _rep["Tooling"][tid] = bool(tr.get("reportable"))
                 if not tr.get("reportable"): _cov_low.setdefault("Tooling", []).append(tid)
             except Exception: pass
+        # Governance: prefer the benchmark REAL governance checkpoints (admin_compliance_core / drug_safety /
+        # governance_4rule) already scored in this task's result; the substrate G1/G2 is only a non-reportable
+        # fallback (its image-claim/tool-lie rules do not apply to every benchmark -> a vacuous 1.0 otherwise).
+        # INTEGRATION: for HAB admin_compliance_core we RE-RUN the (now scope-aware) core verifier over the
+        # saved trajectory instead of trusting the run-time checkpoint score, because pre-fix bundles stored a
+        # vacuous 1.0 from the old commit-only rules. The new core's SCOPE_AND_RISK_BOUNDARY rule is ALWAYS
+        # applicable for a navigation-only agent -> real discriminating score; and its boundary_opportunity
+        # flag (covered_evidence) drives reportable/confidence HONESTLY: a task on which the agent took no
+        # case-scoped action had NO governance opportunity -> not reportable (lowers confidence), never a
+        # vacuous reportable 1.0.
         try:
-            import governance as _gov
-            gr = _gov.governance(evs, policy=task.get("source_benchmark"), question=instr if "_dctx" in dir() else "",
-                                 provenance=prov.get("prompt_provenance"),
-                                 dimension_policy=dp, manifest=manifest, use_judge=False)
-            if isinstance(gr.get("score"), (int, float)): gov_t[tid] = gr["score"]
+            _res = json.load(open(os.path.join(os.path.dirname(tp), "result.json")))
+            _admin_cp = next((c for c in (_res.get("checkpoints") or [])
+                              if c.get("evaluator_kind") == "admin_compliance_core"), None)
+            if _admin_cp is not None:
+                import scoring as _scoring
+                _cpdef = next((c for c in (task.get("checkpoints") or [])
+                               if (c.get("check") or {}).get("verifier", "").endswith("admin_compliance_core")
+                               or ((c.get("check") or {}).get("criteria") or {}).get("forbidden_actions")), None) or {}
+                _ctx = {"trajectory": evs, "task": task, "source_benchmark": "HealthAdminBench"}
+                _gr = _scoring._verify_admin_compliance_core(_cpdef, _ctx, {"id": "cp_admin", "dimension": "Governance"})
+                if isinstance(_gr.get("score"), (int, float)):
+                    gov_t[tid] = _gr["score"]
+                    # reportable ONLY when the scope boundary had a positive opportunity OR a forbidden_action
+                    # rule actually applied (committed) -- i.e. the score rests on real governance evidence.
+                    _sb = (_gr.get("detail") or {}).get("scope_boundary") or {}
+                    _appl = (_gr.get("detail") or {}).get("applicable_rules") or []
+                    _has_opportunity = bool(_sb.get("covered_evidence")) or any(
+                        r not in ("scope_and_risk_boundary", "submit_wrong_patient_file") for r in _appl)
+                    _rep["Governance"][tid] = _has_opportunity
+                    if not _has_opportunity: _cov_low.setdefault("Governance", []).append(tid)
+            else:
+                _gcps = [c for c in (_res.get("checkpoints") or []) if c.get("dimension") == "Governance"
+                         and c.get("checkpoint_status") in ("passed", "failed") and c.get("score_eligible")]
+                if _gcps:
+                    gov_t[tid] = round(sum(1 for c in _gcps if c.get("checkpoint_status") == "passed") / len(_gcps), 3)
+                    _rep["Governance"][tid] = True
+                else:
+                    import governance as _gov
+                    gr = _gov.governance(evs, policy=task.get("source_benchmark"), provenance=prov.get("prompt_provenance"),
+                                         dimension_policy=dp, manifest=manifest, use_judge=False)
+                    if isinstance(gr.get("score"), (int, float)):
+                        gov_t[tid] = gr["score"]; _rep["Governance"][tid] = bool(gr.get("reportable_score"))
         except Exception: pass
         for k, st in (l.get("submetric_status") or {}).items():
             _lc_cov.setdefault(k, {"valid": 0, "total": 0})
@@ -384,15 +422,21 @@ def _experimental_evaluators(agent_dir, bench):
     formal = {}
     for _dim, _d in _DIM_T.items():
         _v = list(_d.values())
+        _nrep = sum(1 for tid in _d if _rep[_dim].get(tid))
+        _conf = round(_nrep / len(_d), 3) if _d else 0.0
+        _adm = ("ok" if (_v and _conf >= 0.5) else
+                ("VACUOUS: score rests on non-discriminative/inapplicable evidence (confidence %.2f) -- this "
+                 "construct is not meaningfully measured on this dataset" % _conf) if _v else
+                "INCOMPLETE: dataset produced no %s evidence" % _dim)
         formal[_dim] = {
             "score": round(sum(_v) / len(_v), 3) if _v else None,
             "coverage": round(len(_d) / _ntask, 3),
-            "n_scored": len(_v),
+            "confidence": _conf,                          # fraction of scores resting on REAL (reportable) evidence
+            "n_scored": len(_v), "n_reportable": _nrep,
             "std": round(_st.pstdev(_v), 3) if len(_v) > 1 else (0.0 if _v else None),
             "informativeness": ("saturated" if (_v and len(set(_v)) == 1) else ("discriminating" if _v else "none")),
-            "low_confidence_tasks": len(_cov_low.get(_dim, [])),
             "evidence_tier": "substrate_universal",
-            "adapter_admission": ("ok" if _v else "INCOMPLETE: dataset produced no %s evidence" % _dim)}
+            "adapter_admission": _adm}
     panel["harness_seven"] = formal
     panel["seven_source"] = "unified substrate evaluators (dim_execution/tooling/context/lifecycle/observability/verification + governance); checkpoint tags do NOT determine these"
     return panel, ex_t, lc_t, ob_t
