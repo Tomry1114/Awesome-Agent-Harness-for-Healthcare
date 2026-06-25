@@ -652,16 +652,32 @@ _LEGACY_LLM_NOVERIFIER_OK = {"context_grounding", "safety_governance", "evidence
 
 
 def measurement_audit(tasks):
-    """Measurement-audit guard (review ruling): a checkpoint that MEASURES outcome/correctness must NOT be
-    tagged as an ETCLOVG construct. native_pytest upstream tests = Source Outcome -> dimension must be
-    'Outcome'. Returns the list of mis-classified checkpoints (empty == name matches what is measured)."""
+    """Measurement audit (refined per review): Outcome vs ETCLOVG is decided by the EVALUATIVE CLAIM +
+    DISCRIMINATIVE power, NOT the evaluator type. Each audited checkpoint carries measurement_family in
+    {source_outcome, harness_process, harness_state, proxy}. Rules:
+      - source_outcome (only final answer/artifact correctness) MUST be dimension=Outcome.
+      - a STRICT ETCLOVG score MUST rest on discriminative evidence (harness_process or harness_state) --
+        a checkpoint that only reads the final artifact cannot be a strict ETCLOVG process score.
+      - proxy evidence may inform an ETCLOVG dimension but only at evidence_tier=proxy.
+    Returns the mis-classified checkpoints (empty == name+tier match what is actually measured)."""
     issues = []
     for t in tasks or []:
         for cp in t.get("checkpoints") or []:
-            if cp.get("type") == "native_pytest" and cp.get("dimension") != "Outcome":
+            fam = cp.get("measurement_family")
+            dim = cp.get("dimension"); tier = cp.get("evidence_tier")
+            if fam == "source_outcome" and dim != "Outcome":
                 issues.append({"task_id": t.get("task_id"), "checkpoint_id": cp.get("id"),
-                               "problem": "native_correctness_tagged_as_etclovg", "dimension": cp.get("dimension")})
+                               "problem": "source_outcome_not_tagged_Outcome", "dimension": dim})
+            if dim in MODULES and tier == "strict" and fam not in ("harness_process", "harness_state"):
+                issues.append({"task_id": t.get("task_id"), "checkpoint_id": cp.get("id"),
+                               "problem": "strict_etclovg_without_discriminative_evidence",
+                               "dimension": dim, "measurement_family": fam})
+            if fam == "proxy" and dim in MODULES and tier != "proxy":
+                issues.append({"task_id": t.get("task_id"), "checkpoint_id": cp.get("id"),
+                               "problem": "proxy_evidence_claimed_strict", "dimension": dim})
     return issues
+
+
 
 def audit_checkpoint_routes(tasks):
     """Every llm_judge / policy checkpoint must resolve to a REAL evaluator. Returns the list of unrouted
