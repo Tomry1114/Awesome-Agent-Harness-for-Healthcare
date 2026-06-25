@@ -279,7 +279,8 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
            "mm_judge": _mm_fn, "medcta_img": getattr(env, "image_path", None),
            "medcta_question": (task.get("context") or {}).get("text"), "gacc": _gacc_fn,
            "available_tools": [t.get("name") for t in (task.get("available_tools") or []) if t.get("name")],
-           "prompt_provenance": _prompt_prov}
+           "prompt_provenance": _prompt_prov,
+           "task": task, "source_benchmark": task.get("source_benchmark")}
     results = [scoring.run_checkpoint(cp, ctx) for cp in task.get("checkpoints", [])]
     env_type = (task.get("environment") or {}).get("type")
     env_cls = type(env).__name__

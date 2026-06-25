@@ -1469,6 +1469,23 @@ def test_medcta_googlesearch_instance_from_result_identity_V5():
     assert not nores["source_instance_id"].startswith("web:url:"), nores
 
 
+def test_checkpoint_routes_fully_resolvable():
+    """Architecture fix: EVERY llm_judge/policy checkpoint in EVERY benchmark must resolve to a real
+    evaluator (explicit verifier in a registry, or a documented legacy-implicit MedCTA subdimension). A
+    missing route is the bug that silently skipped HAB Verification/Governance -- CI must keep it at 0."""
+    import json, os, glob, scoring
+    base = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "benchmark_dataprocess")
+    if not os.path.isdir(base):
+        base = "benchmark_dataprocess"
+    total = 0
+    for f in glob.glob(os.path.join(base, "*", "tasks_unified.jsonl")):
+        tasks = [json.loads(l) for l in open(f) if l.strip()]
+        iss = scoring.audit_checkpoint_routes(tasks)
+        total += len(iss)
+        assert not iss, (os.path.basename(os.path.dirname(f)), iss[:5])
+    assert total == 0
+
+
 def _run():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     passed = 0
