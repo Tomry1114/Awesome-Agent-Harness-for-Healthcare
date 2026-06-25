@@ -52,6 +52,30 @@ _RTYPE_CONTEXT = {
     "allergyintolerance": "allergy_status",
 }
 
+# The REAL PhysicianBench environment (runner/environments.py _FHIR_GRANULAR) does NOT expose the generic
+# fhir_search/read/create to the agent; it exposes a GRANULAR tool per FHIR domain. Each granular SEARCH
+# routes to fhir_search(resourceType[, category]) and returns the upstream {"entries":[...], "total", ...}
+# shape; each granular CREATE routes to fhir_create(resource) and returns the raw created resource. This
+# table is the PB-specific knowledge that lets the plugin map those real tool names to the right role /
+# milestone / resource type. (Benchmark-agnostic core names none of it; mirrors environments._FHIR_GRANULAR.)
+_GRANULAR_SEARCH = {
+    "fhir_patient_search_demographics": "Patient",
+    "fhir_condition_search_problems": "Condition",
+    "fhir_observation_search_labs": "Observation",
+    "fhir_observation_search_vitals": "Observation",
+    "fhir_observation_search_social_history": "Observation",
+    "fhir_medication_request_search_orders": "MedicationRequest",
+    "fhir_procedure_search_orders": "Procedure",
+    "fhir_document_reference_search_clinical_notes": "DocumentReference",
+    "fhir_service_request_search": "ServiceRequest",
+}
+_GRANULAR_CREATE = {
+    "fhir_medication_request_create": "MedicationRequest",
+    "fhir_service_request_create": "ServiceRequest",
+    "fhir_communication_create_message": "Communication",
+    "fhir_appointment_create": "Appointment",
+}
+
 _PAT_REF_RE = _re.compile(r"Patient/([A-Za-z0-9_\-.]+)")
 _IDENT_URL_RE = _re.compile(r"patient(?:\.identifier)?=([A-Za-z0-9_\-.]+)")
 
@@ -90,16 +114,30 @@ def _resolve_fhir_create(event, prev_state):
             "obligation_id": "resource_created", "state_changed": False, "progress_token": None}
 
 
-def _bundle_count(out):
-    """Number of matched resources in a FHIR search result (Bundle.total or len(entry)); None if not a
-    bundle."""
+def _search_entries(out):
+    """The list of matched resources in a FHIR SEARCH result, normalized across the two shapes PB emits:
+    the upstream granular shape {"entries":[resource,...], "total"} (what the REAL environment returns) and
+    a raw FHIR Bundle {"resourceType":"Bundle","entry":[{"resource":...}]} (generic fhir_search path).
+    Returns a list of resource dicts, or None when `out` is not a recognizable search result."""
     if not isinstance(out, dict):
         return None
-    if out.get("resourceType") != "Bundle":
+    if isinstance(out.get("entries"), list):
+        return [r for r in out["entries"] if isinstance(r, dict)]
+    if out.get("resourceType") == "Bundle":
+        return [e["resource"] for e in (out.get("entry") or [])
+                if isinstance(e, dict) and isinstance(e.get("resource"), dict)]
+    return None
+
+
+def _bundle_count(out):
+    """Number of matched resources in a FHIR search result; None if not a recognizable search result. Reads
+    the granular {"entries":[...],"total"} shape and the raw Bundle .total/.entry shape."""
+    ents = _search_entries(out)
+    if ents is None:
         return None
-    if isinstance(out.get("total"), int):
+    if isinstance(out, dict) and isinstance(out.get("total"), int):
         return out["total"]
-    return len(out.get("entry") or [])
+    return len(ents)
 
 
 def _resolve_fhir_search(event, prev_state):
@@ -124,8 +162,8 @@ def _resolve_fhir_search(event, prev_state):
     if n <= 0:
         return {"role": "acquire", "status": "partial", "milestones_added": [],
                 "obligation_id": "patient_record_loaded", "state_changed": False, "progress_token": None}
-    ids = ",".join(sorted(str((en.get("resource") or {}).get("id") or "")
-                          for en in (out.get("entry") or []))[:50])
+    ents = _search_entries(out) or []
+    ids = ",".join(sorted(str(r.get("id") or "") for r in ents)[:50])
     return {"role": "acquire", "status": "success", "milestones_added": ["patient_record_loaded"],
             "obligation_id": "patient_record_loaded",
             "progress_token": "state:search=%s" % _hash8(ids or str(n))}
@@ -150,6 +188,24 @@ def _resolve_fhir_read(event, prev_state):
                 "progress_token": "state:read=%s/%s" % (rtype, rid)}
     return {"role": "acquire", "status": "partial", "milestones_added": [],
             "obligation_id": "record_detail_loaded", "state_changed": False, "progress_token": None}
+
+
+def _resolve_write_file(event, prev_state):
+    """PB write_file: the required deliverable. The REAL environment returns {"written": <abs path>} on a
+    successful save; an error body (or no written path) -> partial, no deliverable_written. A real written
+    path -> success with a deliverable:<path> token so re-writing the SAME path repeats the token (no new
+    progress) but a NEW deliverable advances state."""
+    if _errored(event):
+        return {"role": "commit", "status": "failure", "milestones_added": [],
+                "obligation_id": "deliverable_written", "state_changed": False, "progress_token": None}
+    out = _result_output(event)
+    path = out.get("written") if isinstance(out, dict) else None
+    if path:
+        return {"role": "commit", "status": "success", "milestones_added": ["deliverable_written"],
+                "obligation_id": "deliverable_written",
+                "progress_token": "deliverable:%s" % _hash8(str(path))}
+    return {"role": "commit", "status": "partial", "milestones_added": [],
+            "obligation_id": "deliverable_written", "state_changed": False, "progress_token": None}
 
 
 # ----------------------------------------------------------------------------- SUBJECT identity + provenance
@@ -177,8 +233,11 @@ def _patient_subject(event, fallback=None):
             m = _PAT_REF_RE.search(str(subj["reference"]))
             if m:
                 return m.group(1)
-        for en in (out.get("entry") or []):
-            res = en.get("resource") or {}
+        # SEARCH results (both shapes): a Patient hit -> its id IS the subject; any other resource ->
+        # its subject reference Patient/<id>.
+        for res in (_search_entries(out) or []):
+            if res.get("resourceType") == "Patient" and res.get("id"):
+                return str(res.get("id"))
             subj = res.get("subject")
             if isinstance(subj, dict) and subj.get("reference"):
                 m = _PAT_REF_RE.search(str(subj["reference"]))
@@ -201,23 +260,28 @@ def _provenance(event):
     extractor = tool
     out = _result_output(event)
     args = event.get("args") if isinstance(event.get("args"), dict) else {}
+    # the queried resourceType: explicit arg (generic fhir_search) OR implied by the granular tool name.
+    qtype = (args.get("resourceType") or _GRANULAR_SEARCH.get(tool) or _GRANULAR_CREATE.get(tool) or "").strip()
     if _errored(event) or _is_operation_outcome_error(out):
         # what was REQUESTED (for provenance) but nothing usable obtained -> no context type
-        rtype = (args.get("resourceType") or "").strip()
-        inst = ("%s/%s" % (rtype, args.get("id")) if rtype and args.get("id")
-                else (rtype or tool))
+        inst = ("%s/%s" % (qtype, args.get("id")) if qtype and args.get("id")
+                else (qtype or tool))
         return None, _CH_FHIR, inst, extractor
-    if isinstance(out, dict) and out.get("resourceType") == "Bundle":
-        # a search: typed by the queried resourceType; instance keyed by the query target
-        qtype = (args.get("resourceType") or "").strip()
-        ctype = _RTYPE_CONTEXT.get(qtype.lower())
+    # a SEARCH (both the granular {"entries":[...]} shape and a raw Bundle): typed by the resourceType of
+    # the matched resources (so a category-less Observation search is typed by what it actually returned),
+    # falling back to the queried/granular resourceType. Instance keyed by the patient subject.
+    ents = _search_entries(out)
+    if ents is not None:
+        rtype_seen = next((r.get("resourceType") for r in ents if r.get("resourceType")), None)
+        ctype = _RTYPE_CONTEXT.get(str(rtype_seen or "").lower()) or _RTYPE_CONTEXT.get(qtype.lower())
         subj = _patient_subject(event)
-        inst = "%s?patient=%s" % (qtype or "search", subj or _hash8(str(args)))
+        inst = "%s?patient=%s" % (rtype_seen or qtype or "search", subj or _hash8(str(args)))
         return ctype, _CH_FHIR, inst, extractor
+    # a single resource body (fhir_read, or a create echoing the created resource)
     rtype = out.get("resourceType") if isinstance(out, dict) else None
     rid = out.get("id") if isinstance(out, dict) else None
-    ctype = _RTYPE_CONTEXT.get(str(rtype or "").lower())
-    inst = "%s/%s" % (rtype, rid) if rtype and rid else (rtype or tool)
+    ctype = _RTYPE_CONTEXT.get(str(rtype or "").lower()) or _RTYPE_CONTEXT.get(qtype.lower())
+    inst = "%s/%s" % (rtype, rid) if rtype and rid else (rtype or qtype or tool)
     return ctype, _CH_FHIR, inst, extractor
 
 
@@ -260,16 +324,35 @@ def _pb_evidence(trace):
 
 
 # ----------------------------------------------------------------------------- registration
+# Build the full tool_semantics / resolver maps. The generic fhir_search/read/create stay (the conformance
+# fixtures + any generic path use them); EVERY granular tool the REAL PhysicianBench environment exposes is
+# added so a genuine FHIR read maps to role='acquire' (+ patient_record_loaded), a create to role='commit'
+# (+ resource_created), and write_file to role='commit' (+ deliverable_written) — instead of silently
+# falling to the default_tool_role='act' with zero milestones (the dead-plugin bug).
+_TOOL_SEMANTICS = {
+    "fhir_search": {"role": "acquire", "success_milestones": ["patient_record_loaded"]},
+    "fhir_read": {"role": "acquire", "success_milestones": ["record_detail_loaded"]},
+    "fhir_create": {"role": "commit", "success_milestones": ["resource_created"]},
+    "write_file": {"role": "commit", "success_milestones": ["deliverable_written"]},
+}
+_RESOLVERS = {
+    "fhir_create": _resolve_fhir_create,
+    "fhir_search": _resolve_fhir_search,
+    "fhir_read": _resolve_fhir_read,
+    "write_file": _resolve_write_file,
+}
+for _t in _GRANULAR_SEARCH:                       # granular reads -> acquire + patient_record_loaded
+    _TOOL_SEMANTICS[_t] = {"role": "acquire", "success_milestones": ["patient_record_loaded"]}
+    _RESOLVERS[_t] = _resolve_fhir_search
+for _t in _GRANULAR_CREATE:                        # granular writes -> commit + resource_created
+    _TOOL_SEMANTICS[_t] = {"role": "commit", "success_milestones": ["resource_created"]}
+    _RESOLVERS[_t] = _resolve_fhir_create
+
 PLUGIN = {
     "benchmark": "PhysicianBench", "default_tool_role": "act",
-    "tool_semantics": {
-        "fhir_search": {"role": "acquire", "success_milestones": ["patient_record_loaded"]},
-        "fhir_read": {"role": "acquire", "success_milestones": ["record_detail_loaded"]},
-        "fhir_create": {"role": "commit", "success_milestones": ["resource_created"]}},
+    "tool_semantics": _TOOL_SEMANTICS,
     "evidence_extractor": _pb_evidence,
-    "resolvers": {"fhir_create": _resolve_fhir_create,
-                  "fhir_search": _resolve_fhir_search,
-                  "fhir_read": _resolve_fhir_read},
+    "resolvers": _RESOLVERS,
     "dimension_policy": {"required_milestones": ["patient_record_loaded"],
                          "required_context_units": [
                              {"id": "patient_identity", "type": "patient_identity"},

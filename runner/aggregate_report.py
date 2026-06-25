@@ -15,6 +15,15 @@ ENHANCED report that the per-run summary.json does not yet carry:
 
 Does NOT re-run any model. Pure read over existing bundles. Usage:
   python runner/aggregate_report.py <results_dir/agent> [--bench PhysicianBench|MedCTA|HealthAdminBench]
+
+SINGLE CANONICAL SCORING PATH (P2 / "two truths" guard): this report stage NEVER re-implements a scoring
+formula. Every dimension number it emits comes from calling the canonical evaluators in scoring.py / the
+substrate dim_* modules:
+  - Governance subject-scope -> scoring.governance_subject_scope
+  - HAB admin compliance core -> scoring._verify_admin_compliance_core
+  - benchmark Governance checkpoints -> scoring.aggregate_dimension (weighted continuous, + critical veto here)
+  - Execution/Lifecycle/Observability/Context/Verification/Tooling -> dim_* over the substrate
+There is exactly one place a number is computed per dimension; the report does not maintain a second math.
 """
 import json, os, sys, glob, collections, argparse
 from scoring import is_score_eligible
@@ -283,6 +292,18 @@ def _experimental_evaluators(agent_dir, bench):
     _rep = {d: {} for d in MODULES}   # per-dim per-task: True if score rests on REAL (reportable) evidence
     ctx_t, ver_t, tool_t = {}, {}, {}
     _lc_cov, _lc_unreportable = {}, []
+    # CRIT-latent (dual-glob) fix: the 7-dim universe / coverage denominator must be the SAME task-id set
+    # the outcome/native/n_tasks stages use (result.json), NOT the trajectory.jsonl glob. A task that has a
+    # result but no/empty trajectory was previously invisible to all 7 dims AND excluded from _ntask, so its
+    # coverage falsely computed as 1.0. We drive coverage from the UNION of result-dirs and trajectory-dirs.
+    _result_ids = {os.path.basename(os.path.dirname(p))
+                   for p in glob.glob(os.path.join(agent_dir, "*", "result.json"))}
+    _traj_ids = {os.path.basename(os.path.dirname(p))
+                 for p in glob.glob(os.path.join(agent_dir, "*", "trajectory.jsonl"))}
+    _all_task_ids = _result_ids | _traj_ids
+    # tasks with a result but no scorable trajectory -> they CANNOT receive a substrate dim score; they must
+    # still count against the coverage denominator (so coverage < 1.0 honestly reflects the gap).
+    _result_only_ids = sorted(_result_ids - _traj_ids)
     for tp in sorted(glob.glob(os.path.join(agent_dir, "*", "trajectory.jsonl"))):
         tid = os.path.basename(os.path.dirname(tp))
         try:
@@ -377,7 +398,14 @@ def _experimental_evaluators(agent_dir, bench):
                     _rules = _det.get("rules") or {}
                     _committed_rule = _rules.get("complete_task_without_required_evidence") or {}
                     _any_violation = any(v.get("violated") for v in _rules.values())
-                    _has_opportunity = (bool(_sb.get("covered_evidence"))
+                    # Defer reportability to the CANONICAL subject-scope verdict: an agent that ACTED under
+                    # an assigned subject but never established it is a REAL 0.0 miss (reportable=True), NOT a
+                    # no-opportunity task. covered_evidence alone wrongly dropped those snapshot/home-only misses
+                    # (-> m54_hab vacuous None / m55_hab inflated 1.0). The canonical scorer already returns the
+                    # contract value (0.0 reportable) for exactly these tasks.
+                    _scope_canon = _scoring.governance_subject_scope(evs, dp, task)
+                    _has_opportunity = (bool(_scope_canon.get("reportable"))
+                                        or bool(_sb.get("covered_evidence"))
                                         or bool(_committed_rule.get("applicable"))
                                         or bool(_any_violation))
                     _rep["Governance"][tid] = _has_opportunity
@@ -396,7 +424,17 @@ def _experimental_evaluators(agent_dir, bench):
                          and c.get("checkpoint_status") in ("passed", "failed") and c.get("score_eligible")]
                 _parts = []          # (score, reportable) contributions to this task's Governance
                 if _gcps:
-                    _parts.append((round(sum(1 for c in _gcps if c.get("checkpoint_status") == "passed") / len(_gcps), 3), True))
+                    # P1 fix: aggregate the benchmark Governance checkpoints with the SINGLE canonical
+                    # weighted-continuous aggregator (scoring.aggregate_dimension) -- NOT passed/total
+                    # re-binarization (which threw away each cp's continuous score + weight: a 0.875 cp marked
+                    # 'failed' became 0.0 and every weight was treated as 1). THEN apply the critical-violation
+                    # veto: any critical checkpoint -> 0.0 (a critical breach is not diluted by other passes).
+                    _gagg = _scoring.aggregate_dimension(_gcps)
+                    _gscore = _gagg.get("score_mean")
+                    if isinstance(_gscore, (int, float)):
+                        _gcrit = any(bool(c.get("critical_violation")) or c.get("failure_mode") == "critical_policy_violation"
+                                     for c in _gcps)
+                        _parts.append((0.0 if _gcrit else round(_gscore, 3), True))
                 if isinstance(_scope.get("score"), (int, float)):
                     _parts.append((_scope["score"], bool(_scope.get("reportable"))))
                 _rparts = [s for (s, rep) in _parts if rep]
@@ -450,12 +488,20 @@ def _experimental_evaluators(agent_dir, bench):
     # coverage. A dim with NO score across the whole dataset is an ADAPTER-ADMISSION gap (flagged), NOT 0/1.
     _DIM_T = {"Execution": ex_t, "Tooling": tool_t, "Context": ctx_t, "Lifecycle": lc_t,
               "Observability": ob_t, "Verification": ver_t, "Governance": gov_t}
-    _ntask = len({tid for tp in sorted(glob.glob(os.path.join(agent_dir, "*", "trajectory.jsonl")))
-                  for tid in [os.path.basename(os.path.dirname(tp))]}) or 1
+    # coverage denominator = UNIFIED task universe (result.json UNION trajectory.jsonl), the SAME denominator
+    # as n_tasks/outcome/native. So a result-only task (no trajectory) correctly drives coverage below 1.0.
+    _ntask = len(_all_task_ids) or 1
     formal = {}
     for _dim, _d in _DIM_T.items():
         _v = list(_d.values())
-        _nrep = sum(1 for tid in _d if _rep[_dim].get(tid))
+        # 方案 A (P0 fix): the DIMENSION MEAN aggregates REAL per-task scores only. A per-task score whose
+        # evidence is reportable=False is a non-applicable DEFAULT (e.g. the vacuous substrate fallback for a
+        # task with no governance opportunity) and MUST NOT enter the headline mean -- it would pollute it
+        # (e.g. PB Governance 1.0,1.0,1.0 reportable + two non-reportable defaults dragged the old mean to
+        # 0.8). The full all-scored mean is retained transparently as score_all_scored for audit, never as the
+        # headline number. n_reportable + confidence travel WITH the score so it is never shown bare.
+        _vr = [_d[tid] for tid in _d if _rep[_dim].get(tid)]    # REPORTABLE-ONLY per-task scores
+        _nrep = len(_vr)
         _conf = round(_nrep / len(_d), 3) if _d else 0.0
         # REPORTABLE-SUBSET informativeness: does the evidence that DOES rest on a real governance/process
         # opportunity actually discriminate, or is it a single saturated default? A dim is VACUOUS only when
@@ -474,15 +520,26 @@ def _experimental_evaluators(agent_dir, bench):
             _adm = ("ok (LOW COVERAGE: %d/%d tasks expose a real %s opportunity, confidence %.2f -- the score "
                     "is real and discriminating but thin on this dataset)" % (_nrep, len(_d), _dim, _conf))
         formal[_dim] = {
-            "score": round(sum(_v) / len(_v), 3) if _v else None,
+            # HEADLINE = reportable-only mean (方案 A). None when nothing reportable -- never a polluted number.
+            "score": round(sum(_vr) / len(_vr), 3) if _vr else None,
+            "score_all_scored": round(sum(_v) / len(_v), 3) if _v else None,   # audit-only (includes defaults)
             "coverage": round(len(_d) / _ntask, 3),
             "confidence": _conf,                          # fraction of scores resting on REAL (reportable) evidence
             "n_scored": len(_v), "n_reportable": _nrep,
-            "std": round(_st.pstdev(_v), 3) if len(_v) > 1 else (0.0 if _v else None),
-            "informativeness": ("saturated" if (_v and len(set(_v)) == 1) else ("discriminating" if _v else "none")),
+            # std / informativeness over the REPORTABLE subset (the subset the headline mean is taken over)
+            "std": round(_st.pstdev(_vr), 3) if len(_vr) > 1 else (0.0 if _vr else None),
+            "informativeness": ("saturated" if (_vr and len(set(_vr)) == 1) else ("discriminating" if _vr else "none")),
             "evidence_tier": "substrate_universal",
             "adapter_admission": _adm}
     panel["harness_seven"] = formal
+    panel["task_universe"] = {
+        "n_unified": len(_all_task_ids), "n_with_result": len(_result_ids), "n_with_trajectory": len(_traj_ids),
+        "result_only_no_trajectory": _result_only_ids,
+        "trajectory_only_no_result": sorted(_traj_ids - _result_ids),
+        "coverage_denominator": _ntask,
+        "note": ("7-dim coverage denominator = result.json UNION trajectory.jsonl (same as n_tasks/outcome). "
+                 "result_only_no_trajectory tasks cannot receive a substrate dim score -> they pull coverage "
+                 "below 1.0 honestly instead of being invisible.")}
     panel["seven_source"] = "unified substrate evaluators (dim_execution/tooling/context/lifecycle/observability/verification + governance); checkpoint tags do NOT determine these"
     return panel, ex_t, lc_t, ob_t
 

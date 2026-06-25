@@ -548,10 +548,21 @@ def verification(evidence_items, verification_actions=None, final_claims=None, c
     # explicit verify-role event (the plugin classifies a re-read/confirm tool as role=='verify'). A repeated
     # action that merely fails to make progress (state_changed==False) is STAGNATION, NOT verification, and is
     # deliberately NOT counted -- otherwise a thrashing agent would be rewarded for re-firing the same step.
-    #   score = min(1, n_confirmed_verify / n_committed-or-key actions), where confirmed = verify events that
-    #           produced a success result (fire-and-don't-confirm is discounted).
-    # An agent that took actions but ran ZERO verify-role steps -> 0 (NOT N/A, NOT 1.0). This is exactly the
-    # failing HAB agent: 12 navigates (role=='acquire'), no verify -> 0.
+    #
+    # BUGFIX (item #1): the old `confirmed = sum(status=='success')` counted EVERY verify-role success,
+    # including NO-PROGRESS REPEATS. A HAB agent that re-fired an IDENTICAL snapshot 12 times (role=verify,
+    # status=success, state_changed=False, SAME progress_token) scored a full 1.0 here -- pure thrashing
+    # rewarded as verification, inflating the dimension. (The byte-identical m55 trace, where the same
+    # snapshots carry role=acquire instead of verify, correctly scores 0 because there are no verify events.)
+    # A verify step now counts as a GENUINE self-check ("confirmed") only when it actually re-checked state:
+    #   * state_changed == True  (the re-check surfaced NEW state / a new milestone), OR
+    #   * it carries a NOVEL progress_token (a result not seen before in the action stream) AND it is a
+    #     re-observation of state the agent had PREVIOUSLY ESTABLISHED (some earlier action produced progress).
+    # A first-time passive observation of UNCHANGED state (authoritative state_changed==False, nothing yet
+    # established) is NOT a confirmation, and its identical repeats are stagnation -> neither counts. So the
+    # 12-snapshot thrash yields ZERO genuine self-checks -> 0, matching the role=acquire m55 parity.
+    #   score = min(1, n_genuine_verify / n_key-actions). An agent that took actions but ran ZERO verify-role
+    #   steps -> 0 (NOT N/A, NOT 1.0). The failing HAB agent (12 navigates, no verify) -> 0 unchanged.
     if has_actions:
         n_actions = max(1, len(action_events))
         if not verify_events:
@@ -559,10 +570,27 @@ def verification(evidence_items, verification_actions=None, final_claims=None, c
             vac_basis = ("agent took %d action(s) but ZERO verify-role self-checks -> unverified"
                          % len(action_events))
         else:
-            confirmed = sum(1 for s in verify_events if str(s.get("status")) == "success")
-            # coverage of the agent's actions by CONFIRMED verification, capped at 1.0.
+            # walk the FULL action stream in order so novelty/establishment of state is judged against
+            # everything the agent did, not just the verify subset (a verify re-confirms PRIOR progress).
+            _ordered = action_events if action_events else verify_events
+            _seen_tok, _established = set(), False
+            _vid = {id(s) for s in verify_events}
+            confirmed = 0
+            for s in _ordered:
+                pt = s.get("progress_token")
+                novel = pt is not None and pt not in _seen_tok
+                if id(s) in _vid:
+                    # GENUINE iff it advanced state OR it is a novel re-observation of already-established state
+                    if s.get("state_changed") or (novel and _established):
+                        confirmed += 1
+                if pt is not None:
+                    _seen_tok.add(pt)
+                if s.get("state_changed"):
+                    _established = True
+            # coverage of the agent's actions by GENUINE (state-advancing / real re-check) verification.
             vac_score = round(min(1.0, confirmed / float(n_actions)), 4)
-            vac_basis = ("%d/%d verify-role action(s) confirmed (status=success) over %d action(s)"
+            vac_basis = ("%d/%d verify-role action(s) were GENUINE self-checks (state-changing or a novel "
+                         "re-check of established state; no-progress repeats excluded) over %d action(s)"
                          % (confirmed, len(verify_events), len(action_events)))
         subs["verification_action_completion"] = {
             "score": vac_score, "status": "applicable",
@@ -595,19 +623,37 @@ def verification(evidence_items, verification_actions=None, final_claims=None, c
             # was any evidence DELIVERED before the decision? With sem_trace we can order it; without, we use
             # the global delivered set (best available).
             grounded_by_acquisition = n_deliv > 0
-            # when the decision has scorable CONTENT (a final answer the agent wrote), reward grounding by how
-            # well that content is backed by delivered evidence -- reuse the per-claim support already computed.
-            if claim_supp1:
-                n_sup = sum(1 for v in claim_supp1.values() if v)
+            # BUGFIX (item #2): the old code collapsed decision_grounding INTO evidence_support whenever
+            # claim_supp1 was non-empty (i.e. the terminal answer had ANY tokenizable word): it computed
+            # dg = n_sup/len(claim_supp1) and NEVER reached the acquisition-grounding branch. But PB agents
+            # end with META-TEXT -- 'Done.', 'Completed. The plan was saved to /workspace/out.md' -- which
+            # tokenizes (so claim_supp1 is non-empty) yet shares NO content with the FHIR payloads (n_sup==0),
+            # so EVERY PB task scored decision_grounding=0 even when the decision WAS grounded in evidence the
+            # agent had actually pulled. evidence_support correctly scores that meta-text 0 (there is no
+            # medical claim to support), but decision_grounding asks a DIFFERENT question -- did the terminal
+            # decision REST on acquired evidence -- and the answer is yes. So: only treat the terminal text as
+            # a SCORABLE CLAIM when its assertions actually OVERLAP delivered evidence (n_sup >= 1). When the
+            # terminal text has NO evidence-overlapping content (n_sup == 0), it is structural meta-text, not a
+            # medical claim, so we FALL THROUGH to acquisition grounding (grounded iff relevant evidence was
+            # delivered before the terminal decision) instead of scoring the meta-text as an ungrounded claim.
+            n_sup = sum(1 for v in claim_supp1.values() if v) if claim_supp1 else 0
+            if claim_supp1 and n_sup >= 1:
+                # the terminal answer is a real content claim partly/fully backed by delivered evidence ->
+                # reward grounding by how well that content is actually backed.
                 dg_score = round(n_sup / len(claim_supp1), 4)
                 dg_basis = ("terminal decision present; %d/%d of its assertions backed by delivered evidence"
                             % (n_sup, len(claim_supp1)))
             elif grounded_by_acquisition:
-                # a terminal commit with no scorable text (e.g. a structured GUI submit) but evidence WAS
-                # delivered before it -> grounded.
+                # either a structured commit with no scorable text (GUI submit) OR a terminal whose text is
+                # pure meta/structural ('Done.', 'saved to ...') with no evidence overlap -- BUT evidence WAS
+                # delivered before the decision -> the decision is grounded in acquisition.
                 dg_score = 1.0
-                dg_basis = ("terminal decision present and %d evidence unit(s) were delivered to ground it"
-                            % n_deliv)
+                if claim_supp1:
+                    dg_basis = ("terminal decision present (text is structural/meta, no evidence overlap) "
+                                "but %d evidence unit(s) were delivered to ground it" % n_deliv)
+                else:
+                    dg_basis = ("terminal decision present and %d evidence unit(s) were delivered to ground it"
+                                % n_deliv)
             else:
                 dg_score = 0.0
                 dg_basis = "terminal decision present but NO evidence was delivered to ground it"
@@ -907,9 +953,13 @@ if __name__ == "__main__":
     ok &= (hab["score"] == 0.0)                                           # both cores 0 -> dimension 0
 
     # (V13b) DISCRIMINATION: a GOOD action-based agent that re-checked state AND reached a grounded terminal
-    #        commit scores HIGHER than the failing one -> the cores DISCRIMINATE.
-    good_sem = ([S.semantic_event("acquire", status="success", state_changed=True, raw={}) for _ in range(3)]
-                + [S.semantic_event("verify", status="success", state_changed=False, raw={})]
+    #        commit scores HIGHER than the failing one -> the cores DISCRIMINATE. The verify here is a GENUINE
+    #        self-check: it carries a NOVEL progress_token (a real re-observation) of state the prior acquires
+    #        had already ESTABLISHED -> it counts under the bugfix-#1 stagnation gate.
+    good_sem = ([S.semantic_event("acquire", status="success", state_changed=True,
+                                  progress_token="evidence:read:est", raw={}) for _ in range(3)]
+                + [S.semantic_event("verify", status="success", state_changed=False,
+                                    progress_token="evidence:verify:recheck", raw={})]
                 + [S.semantic_event("commit", status="success", terminal=None, raw={})])
     good = verification([{"id": "read#%d" % i, "payload": "patient record alpha beta",
                           "delivered_to_agent": True, "delivery_fidelity": 1.0, "error_visible": False}
@@ -918,10 +968,43 @@ if __name__ == "__main__":
                         final_claims=[], judge_model=False, sem_trace=good_sem)
     gvac = good["submetrics"]["verification_action_completion"]
     gdg = good["submetrics"]["decision_grounding"]
-    print("  V13b good agent (verify + grounded commit) -> score=%s action_completion=%s decision_grounding=%s"
+    print("  V13b good agent (GENUINE verify + grounded commit) -> score=%s action_completion=%s decision_grounding=%s"
           % (good["score"], gvac["score"], gdg["score"]))
-    ok &= (gvac["score"] > 0.0 and gdg["score"] == 1.0)                  # verified + grounded commit
+    ok &= (gvac["score"] > 0.0 and gdg["score"] == 1.0)                  # genuine re-check + grounded commit
     ok &= (good["score"] > hab["score"])                                 # strictly discriminates the failure
+
+    # (V13d) BUGFIX #1 -- STAGNATION GATE: a HAB agent that re-fired an IDENTICAL snapshot 12 times as a
+    #        VERIFY-role action (status=success, state_changed=False, SAME progress_token, never establishing
+    #        new state) is THRASHING, not verification. verification_action_completion must be 0 (it used to be
+    #        a vacuous 1.0). This mirrors res_m54_hab/HAB-denial-easy-1.
+    thrash_pt = "evidence:snapshot:dead00"
+    thrash_sem = [S.semantic_event("verify", status="success", state_changed=False,
+                                   progress_token=thrash_pt, raw={}) for _ in range(12)]
+    thrash = verification([], verification_actions=list(thrash_sem), final_claims=[],
+                          judge_model=False, sem_trace=thrash_sem)
+    tvac = thrash["submetrics"]["verification_action_completion"]
+    print("  V13d 12 identical verify snapshots (no state change) -> action_completion=%s/%s (want applicable,0.0)"
+          % (tvac["score"], tvac["status"]))
+    ok &= (tvac["status"] == "applicable" and tvac["score"] == 0.0)     # pure thrash -> 0, NOT 1.0
+
+    # (V13e) BUGFIX #2 -- DECISION GROUNDING vs META-TEXT: a PB-style agent that PULLED evidence then ended
+    #        with structural meta-text ('Done.') that shares NO content with the evidence must have its
+    #        decision_grounding credited for the ACQUISITION (1.0), not scored as an ungrounded claim (0.0).
+    #        evidence_support stays 0 (no medical claim to support) -> the two stay DISTINCT.
+    meta = verification([{"id": "fhir#%d" % i, "payload": "patient hemoglobin sodium creatinine result",
+                          "delivered_to_agent": True, "delivery_fidelity": 1.0, "error_visible": False}
+                         for i in range(7)],
+                        verification_actions=[], final_claims=["Done."], judge_model=False,
+                        sem_trace=[S.semantic_event("acquire", status="success", state_changed=True,
+                                                    progress_token="evidence:fhir:%d" % i, raw={})
+                                   for i in range(7)]
+                                  + [S.semantic_event("final", terminal="final", raw={})])
+    mdg = meta["submetrics"]["decision_grounding"]
+    mes = meta["submetrics"]["evidence_support"]
+    print("  V13e PB meta-text 'Done.' over 7 delivered FHIR units -> decision_grounding=%s/%s evidence_support=%s "
+          "(want dg applicable 1.0; es 0.0 -> distinct)" % (mdg["score"], mdg["status"], mes["score"]))
+    ok &= (mdg["status"] == "applicable" and mdg["score"] == 1.0)       # grounded by acquisition, not meta-text
+    ok &= (mes["score"] == 0.0)                                          # evidence_support unchanged -> distinct cores
 
     # (V13c) UNGROUNDED COMMIT: agent reaches a terminal decision but acquired NO evidence -> grounding 0.
     ungrounded = verification([], verification_actions=[], final_claims=[],

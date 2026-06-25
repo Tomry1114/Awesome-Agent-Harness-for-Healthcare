@@ -131,6 +131,11 @@ def _resolve_region(event, prev_state):
             "progress_token": None}
 
 
+# The MedCTA OCR engine's documented 'no readable text on this page' sentinel (matched case-insensitively,
+# post-strip). Listed alongside its bracket-less form so a future rendering variant is still caught.
+_OCR_NO_TEXT = frozenset(("[no text]", "no text"))
+
+
 def _resolve_ocr(event, prev_state):
     """MedCTA OCR: empty/blank rendered text -> partial, NO text_evidence_obtained, progress_token=None
     (the page carried no readable text -> no evidence). Non-empty text -> success with a CONTENT-hashed
@@ -142,7 +147,11 @@ def _resolve_ocr(event, prev_state):
     out = _result_output(event)
     text = out if isinstance(out, str) else (out.get("text") if isinstance(out, dict) else "")
     text = (text or "").strip()
-    if not text:
+    # The MedCTA OCR engine renders the literal sentinel '[no text]' for a page that carries no
+    # readable text. That sentinel is truthy, so a bare emptiness test would credit a BLANK page with
+    # text_evidence_obtained + an evidence token (polluting Context acquisition / Observability). Treat
+    # the documented no-text sentinel exactly like the empty case: partial, NO milestone, no token.
+    if (not text) or text.lower() in _OCR_NO_TEXT:
         return {"role": "acquire", "status": "partial", "milestones_added": [],
                 "obligation_id": "text_evidence_obtained", "state_changed": False, "progress_token": None}
     return {"role": "acquire", "status": "success", "milestones_added": ["text_evidence_obtained"],
