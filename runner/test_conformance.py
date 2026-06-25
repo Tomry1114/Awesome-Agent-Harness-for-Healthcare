@@ -1486,6 +1486,24 @@ def test_checkpoint_routes_fully_resolvable():
     assert total == 0
 
 
+def test_measurement_audit_no_correctness_in_etclovg():
+    """Review ruling: the 7 ETCLOVG labels are fine; the bug is mis-tagged checkpoints. A native_pytest
+    upstream-correctness test must be dimension=Outcome (Source Outcome), NOT an ETCLOVG construct -- PB
+    used to retag clinical-correctness pytest onto Context/Verification/Observability, polluting the formal
+    7-dim. CI keeps that at 0."""
+    import json, os, glob, scoring
+    base = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "benchmark_dataprocess")
+    if not os.path.isdir(base):
+        base = "benchmark_dataprocess"
+    total = 0
+    for f in glob.glob(os.path.join(base, "*", "tasks_unified.jsonl")):
+        tasks = [json.loads(l) for l in open(f) if l.strip()]
+        iss = scoring.measurement_audit(tasks)
+        total += len(iss)
+        assert not iss, (os.path.basename(os.path.dirname(f)), iss[:5])
+    assert total == 0
+
+
 def _run():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     passed = 0

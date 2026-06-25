@@ -650,6 +650,19 @@ _LEGACY_POLICY_VERIFIERS = {"allergy_exists_for_patient", "agent_checked_allergy
 _LEGACY_LLM_NOVERIFIER_OK = {"context_grounding", "safety_governance", "evidence_verification",
                              "clinical_task_success", "result_verification"}
 
+
+def measurement_audit(tasks):
+    """Measurement-audit guard (review ruling): a checkpoint that MEASURES outcome/correctness must NOT be
+    tagged as an ETCLOVG construct. native_pytest upstream tests = Source Outcome -> dimension must be
+    'Outcome'. Returns the list of mis-classified checkpoints (empty == name matches what is measured)."""
+    issues = []
+    for t in tasks or []:
+        for cp in t.get("checkpoints") or []:
+            if cp.get("type") == "native_pytest" and cp.get("dimension") != "Outcome":
+                issues.append({"task_id": t.get("task_id"), "checkpoint_id": cp.get("id"),
+                               "problem": "native_correctness_tagged_as_etclovg", "dimension": cp.get("dimension")})
+    return issues
+
 def audit_checkpoint_routes(tasks):
     """Every llm_judge / policy checkpoint must resolve to a REAL evaluator. Returns the list of unrouted
     checkpoints (empty == fully routable). An explicit verifier MUST be registered; a missing verifier is OK
