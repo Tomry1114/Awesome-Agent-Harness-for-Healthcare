@@ -40,9 +40,11 @@ class ScopeEvidenceBinding(Capability):
                     reason="page now shows %s but the assigned subject is %s" % (shown, active),
                     feedback="You are viewing %s; the assigned case is %s — return to it." % (shown, active),
                     extra={"shown": shown, "active_subject": active})
-        # bind read-derived evidence to the active subject
+        # bind read-derived evidence (perception/search outputs) to the active subject. Bind even when
+        # there is no subject id (e.g. MedCTA single-image tasks) -> subject_id=None; the evidence is the
+        # perception tool output the grounding / semantic checks rely on.
         name = action.get("tool") if isinstance(action, dict) else None
-        if name and active and _looks_read(name, ctx.policy):
+        if name and _looks_read(name, ctx.policy):
             ctx.ledger.add_evidence(type=name, value=_summarize(result), subject_id=active,
                                     source_event="step-%d" % ctx.step, source_type=ctx.env_type)
         return None

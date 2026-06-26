@@ -264,6 +264,39 @@ def test_p3_medcta_real_pack():
     assert k.before_final("a 3 cm mass", step=2).type == D.ALLOW
 
 
+def test_p3_semantic_claim_support_judge():
+    """P3 semantic layer: with an INJECTED judge, the final answer is checked for claim<->image-evidence
+    support. supported -> ALLOW; unsupported(high conf) -> REVISE; low-conf -> ESCALATE; no judge -> ALLOW
+    (fail-safe, recorded unverified). Uses a fake judge_fn so the test needs no live model."""
+    from harness.engines.policy import load_policy
+    from harness.risk import classify_risk
+    pol = load_policy(bench="MedCTA", env_type="tool_sandbox")
+    task = {"task_id": "m", "goal": "finding?", "context": {}, "environment": {"type": "tool_sandbox"},
+            "source_benchmark": "MedCTA"}
+    contract = build_contract(task, env_type="tool_sandbox", policy=pol)
+
+    def mk(judge_fn):
+        k = HarnessKernel(contract, [ScopeEvidenceBinding(), ObligationLifecycle(), VerifyAndCommit()],
+                          mode="enforce", policy=pol, env_type="tool_sandbox",
+                          risk_of=lambda a: classify_risk(a, contract, pol), judge_fn=judge_fn,
+                          budget={"max_semantic_checks": 5})
+        # ground first so the obligation gate passes and we reach the semantic check
+        k.after_action({"type": "tool", "tool": "ImageDescription", "args": {}},
+                       "a 3cm spiculated RUL nodule", None, None, step=0)
+        return k
+
+    supp = mk(lambda p: '{"supported": true, "confidence": 0.9, "reason": "matches"}')
+    assert supp.before_final("RUL spiculated nodule", step=1).type == D.ALLOW
+    unsupp = mk(lambda p: '{"supported": false, "confidence": 0.9, "reason": "answer says LUL, evidence RUL"}')
+    assert unsupp.before_final("LUL effusion", step=1).type == D.REVISE
+    lowc = mk(lambda p: '{"supported": false, "confidence": 0.2, "reason": "unclear"}')
+    assert lowc.before_final("maybe a nodule", step=1).type == D.ESCALATE
+    # no judge -> semantic check is skipped (fail-safe ALLOW), recorded as an unresolved risk
+    nojudge = mk(None)
+    assert nojudge.before_final("RUL nodule", step=1).type == D.ALLOW
+    assert any(r["rule_id"] == "semantic_claim_support" for r in nojudge.ledger.unresolved_risks)
+
+
 def _run():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     passed = 0

@@ -51,5 +51,25 @@ def build_kernel(task, bench=None, env_type=None, mode=None, observed=None, capa
         raise
     caps = _make_capabilities(capabilities or DEFAULT_CAPABILITIES)
     risk_of = (lambda a: classify_risk(a, contract, policy))
+    judge_fn, judge_model = _build_judge()
     return HarnessKernel(contract, caps, mode=mode, policy=policy, env_type=env_type,
-                         risk_of=risk_of, budget=budget)
+                         risk_of=risk_of, budget=budget, judge_fn=judge_fn, judge_model=judge_model)
+
+
+def _build_judge():
+    """The harness's semantic judge — opt-in via MH_HARNESS_JUDGE_MODEL. Routed through the gateway as a
+    JUDGE call (judge=True -> MH_JUDGE_KEY), so the operator points it at an INDEPENDENT model (different
+    from the agent brain + tool backend). Returns (None, None) when unset -> semantic checks fail-safe off."""
+    model = os.environ.get("MH_HARNESS_JUDGE_MODEL")
+    if not model:
+        return None, None
+    try:
+        import gateway
+    except Exception:
+        return None, None
+
+    def judge_fn(prompt):
+        r = gateway.chat([{"role": "user", "content": prompt}], model=model, judge=True,
+                         max_tokens=300, timeout=60)
+        return (r or {}).get("content") if isinstance(r, dict) else r
+    return judge_fn, model

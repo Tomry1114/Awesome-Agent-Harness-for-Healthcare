@@ -33,7 +33,7 @@ class Effective:
 
 class HarnessKernel:
     def __init__(self, contract, capabilities, mode="observe", policy=None, env_type=None,
-                 risk_of=None, budget=None):
+                 risk_of=None, budget=None, judge_fn=None, judge_model=None):
         if mode not in MODES:
             raise ValueError("unknown harness mode %r" % (mode,))
         from .state import Ledger
@@ -47,7 +47,9 @@ class HarnessKernel:
         self.ledger = Ledger()
         if contract is not None and contract.subject:
             self.ledger.set_subject(contract.subject)
-        self.ctx = HarnessContext(self.ledger, contract, self.policy, mode, env_type, risk_of)
+        self.ctx = HarnessContext(self.ledger, contract, self.policy, mode, env_type, risk_of,
+                                  judge_fn=judge_fn, judge_model=judge_model,
+                                  semantic_budget=self.budget["max_semantic_checks"])
         self._n_interventions = 0
         self._n_semantic = 0
         self._rev_for_action = {}

@@ -47,9 +47,33 @@ class VerifyAndCommit(Capability):
         return None
 
     def before_final(self, answer, ctx):
-        # final answer = commit. P0: ALLOW (claim<->evidence linking is Module-C / P3 work).
-        # Keep the hook so P3 can require key claims be backed by subject-scoped evidence.
-        return None
+        # P3 SEMANTIC commit check: when the contract's final commit point asks for claim<->evidence
+        # support, verify the answer is SUPPORTED by the gathered (image-derived) evidence using the
+        # INDEPENDENT injected judge. Fail-safe: no judge / budget spent -> do NOT block (record that the
+        # claim was not verified). supported -> ALLOW; unsupported(high conf) -> REVISE; low-conf/unknown
+        # -> ESCALATE (cannot reliably adjudicate).
+        cp = ctx.contract.commit_point_for("final") if ctx.contract else None
+        post = (cp or {}).get("postcondition")
+        if not post or "support" not in str(post):
+            return None
+        if not ctx.spend_semantic():
+            ctx.ledger.add_unresolved_risk("semantic_claim_support",
+                                           "claim<->evidence not verified (no judge / budget spent)")
+            return None
+        from ..engines.semantic import verify_claim_support
+        v = verify_claim_support(answer, list(ctx.ledger.evidence), judge_fn=ctx.judge_fn)
+        if v.supported is True:
+            return None
+        if v.supported is False and (v.confidence or 0) >= 0.5:
+            return self._decide(
+                D.REVISE, rule_id=post, deterministic=False, extra={"semantic": v.to_dict()},
+                reason="final answer not supported by image-derived evidence: %s" % v.reason,
+                feedback="Your answer is not supported by the image evidence you gathered (%s) — "
+                         "re-examine the image before answering." % v.reason)
+        return self._decide(
+            D.ESCALATE, rule_id="semantic_low_confidence", deterministic=False,
+            extra={"semantic": v.to_dict()},
+            reason="claim<->evidence support is low-confidence/unknown: %s" % v.reason)
 
 
 def _name(action):

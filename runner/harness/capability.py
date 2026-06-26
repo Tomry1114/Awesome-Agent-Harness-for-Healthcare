@@ -38,9 +38,11 @@ class Capability:
 
 class HarnessContext:
     """What every capability + the kernel share for one task."""
-    __slots__ = ("ledger", "contract", "policy", "mode", "step", "env_type", "risk_of", "observation")
+    __slots__ = ("ledger", "contract", "policy", "mode", "step", "env_type", "risk_of", "observation",
+                 "judge_fn", "judge_model", "semantic_remaining")
 
-    def __init__(self, ledger, contract, policy, mode, env_type=None, risk_of=None):
+    def __init__(self, ledger, contract, policy, mode, env_type=None, risk_of=None,
+                 judge_fn=None, judge_model=None, semantic_budget=0):
         self.ledger = ledger
         self.contract = contract
         self.policy = policy or {}
@@ -49,3 +51,13 @@ class HarnessContext:
         self.env_type = env_type
         self.risk_of = risk_of      # callable(action) -> "R0".."R3"
         self.observation = None     # canonical_observation of the most recent action (after_action only)
+        self.judge_fn = judge_fn    # injected judge: callable(prompt:str) -> str|None (INDEPENDENT model)
+        self.judge_model = judge_model
+        self.semantic_remaining = int(semantic_budget or 0)
+
+    def spend_semantic(self):
+        """Consume one semantic-check from the budget. Returns True if a check is allowed."""
+        if self.judge_fn is None or self.semantic_remaining <= 0:
+            return False
+        self.semantic_remaining -= 1
+        return True
