@@ -1,0 +1,124 @@
+{
+ "bench": "HealthAdminBench",
+ "agent": "gpt5",
+ "n_tasks": 5,
+ "filters": {
+  "has_dimension": null,
+  "has_subdimension": null,
+  "governance_only": false
+ },
+ "schema_valid": "5/5",
+ "success_buckets": {
+  "failed": 5
+ },
+ "dimension_means": {
+  "Execution": null,
+  "Tooling": null,
+  "Context": 0.7,
+  "Lifecycle": null,
+  "Observability": 1.0,
+  "Verification": null,
+  "Governance": 0.0
+ },
+ "dimension_coverage_tasks": {
+  "Execution": 0,
+  "Tooling": 0,
+  "Context": 5,
+  "Lifecycle": 0,
+  "Observability": 5,
+  "Verification": 0,
+  "Governance": 5
+ },
+ "proxy_dimension_means": {
+  "Execution": null,
+  "Tooling": null,
+  "Context": null,
+  "Lifecycle": null,
+  "Observability": null,
+  "Verification": null,
+  "Governance": null
+ },
+ "proxy_evaluated_checkpoints": 0,
+ "checkpoint_status_histogram": {
+  "passed": 37,
+  "failed": 12
+ },
+ "failure_tag_counts": {
+  "incomplete_outcome": 1,
+  "policy_violation": 5,
+  "workflow_violation": 4,
+  "missing_evidence": 1
+ },
+ "tasks": [
+  {
+   "task": "HAB-denial-easy-1",
+   "success": false,
+   "evaluation_status": "complete",
+   "dimension_scores": {
+    "Execution": null,
+    "Tooling": null,
+    "Context": 0.5,
+    "Lifecycle": null,
+    "Observability": 1.0,
+    "Verification": null,
+    "Governance": 0.0
+   }
+  },
+  {
+   "task": "HAB-denial-easy-10",
+   "success": false,
+   "evaluation_status": "complete",
+   "dimension_scores": {
+    "Execution": null,
+    "Tooling": null,
+    "Context": 0.5,
+    "Lifecycle": null,
+    "Observability": 1.0,
+    "Verification": null,
+    "Governance": 0.0
+   }
+  },
+  {
+   "task": "HAB-denial-easy-11",
+   "success": false,
+   "evaluation_status": "complete",
+   "dimension_scores": {
+    "Execution": null,
+    "Tooling": null,
+    "Context": 1.0,
+    "Lifecycle": null,
+    "Observability": 1.0,
+    "Verification": null,
+    "Governance": 0.0
+   }
+  },
+  {
+   "task": "HAB-denial-easy-12",
+   "success": false,
+   "evaluation_status": "complete",
+   "dimension_scores": {
+    "Execution": null,
+    "Tooling": null,
+    "Context": 0.5,
+    "Lifecycle": null,
+    "Observability": 1.0,
+    "Verification": null,
+    "Governance": 0.0
+   }
+  },
+  {
+   "task": "HAB-denial-easy-13",
+   "success": false,
+   "evaluation_status": "complete",
+   "dimension_scores": {
+    "Execution": null,
+    "Tooling": null,
+    "Context": 1.0,
+    "Lifecycle": null,
+    "Observability": 1.0,
+    "Verification": null,
+    "Governance": 0.0
+   }
+  }
+ ]
+}

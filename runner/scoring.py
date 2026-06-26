@@ -717,11 +717,10 @@ def _nav_target(ev):
     a = ev.get("args") or {}
     for k in ("url", "target", "route", "value", "path"):
         v = a.get(k)
-        if v: return str(v)
-    ca = ev.get("canonical_action") or {}
-    for k in ("value", "target"):
-        v = ca.get(k)
-        if v: return str(v)
+        if v and isinstance(v, str) and "/" in v: return v   # an actual route string (mock navigate args.url)
+    # REAL CUA: a click/type carries NO route in args (args={element_id:..}); the page it LANDED on is in
+    # result.url / observation.current_url -- read it BEFORE canonical_action (whose value may be an
+    # element_id dict that must not shadow the real landed URL).
     r = ev.get("result")
     if isinstance(r, dict):
         for k in ("url", "current_url"):
@@ -729,6 +728,10 @@ def _nav_target(ev):
     co = ev.get("canonical_observation")
     if isinstance(co, dict) and co.get("current_url"):
         return str(co.get("current_url"))
+    ca = ev.get("canonical_action") or {}
+    for k in ("value", "target"):
+        v = ca.get(k)
+        if v and isinstance(v, str) and "/" in v: return v
     return ""
 
 

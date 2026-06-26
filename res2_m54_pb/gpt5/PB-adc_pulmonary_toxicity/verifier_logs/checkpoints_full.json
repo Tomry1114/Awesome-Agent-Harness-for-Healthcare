@@ -1,0 +1,82 @@
+[
+ {
+  "id": "cp1_data_retrieval",
+  "dimension": "Context",
+  "subdimension": "context_grounding",
+  "weight": 1.0,
+  "score_eligible": true,
+  "checkpoint_status": "failed",
+  "failure_mode": "agent_failure",
+  "note": "E   AssertionError: Data retrieval verification failed: Documents demographics, metastatic HER2-positive breast cancer, current fam-trastuzumab deruxtecan regimen, and a respiratory symptom timeline. ",
+  "evaluator_type": "native_pytest",
+  "evaluator_version": "2026.06.24"
+ },
+ {
+  "id": "cp2_enhertu_identification",
+  "dimension": "Outcome",
+  "subdimension": "source_outcome:reasoning",
+  "weight": 1.0,
+  "score_eligible": true,
+  "checkpoint_status": "passed",
+  "failure_mode": null,
+  "evaluator_type": "native_pytest",
+  "evaluator_version": "2026.06.24"
+ },
+ {
+  "id": "cp3_ild_assessment",
+  "dimension": "Outcome",
+  "subdimension": "source_outcome:reasoning",
+  "weight": 1.0,
+  "score_eligible": true,
+  "checkpoint_status": "failed",
+  "failure_mode": "agent_failure",
+  "note": "E   AssertionError: ILD assessment check failed: The note does provide an ILD assessment, with a primary conclusion of no confirmed evidence of drug-induced ILD and a differential including nonspecifi",
+  "evaluator_type": "native_pytest",
+  "evaluator_version": "2026.06.24"
+ },
+ {
+  "id": "cp4_infection_assessment",
+  "dimension": "Outcome",
+  "subdimension": "source_outcome:reasoning",
+  "weight": 1.0,
+  "score_eligible": true,
+  "checkpoint_status": "failed",
+  "failure_mode": "agent_failure",
+  "note": "E   AssertionError: Infection assessment check failed: Infection is mentioned in the differential and notes say there are no supporting clinical features in retrieved notes, but the note does not give",
+  "evaluator_type": "native_pytest",
+  "evaluator_version": "2026.06.24"
+ },
+ {
+  "id": "cp5_chemotherapy_recommendation",
+  "dimension": "Outcome",
+  "subdimension": "source_outcome:reasoning",
+  "weight": 1.0,
+  "score_eligible": true,
+  "checkpoint_status": "passed",
+  "failure_mode": null,
+  "evaluator_type": "native_pytest",
+  "evaluator_version": "2026.06.24"
+ },
+ {
+  "id": "cp6_followup_plan",
+  "dimension": "Outcome",
+  "subdimension": "source_outcome:documentation",
+  "weight": 1.0,
+  "score_eligible": true,
+  "checkpoint_status": "passed",
+  "failure_mode": null,
+  "evaluator_type": "native_pytest",
+  "evaluator_version": "2026.06.24"
+ },
+ {
+  "id": "cp7_documentation",
+  "dimension": "Outcome",
+  "subdimension": "source_outcome:documentation",
+  "weight": 1.0,
+  "score_eligible": true,
+  "checkpoint_status": "passed",
+  "failure_mode": null,
+  "evaluator_type": "native_pytest",
+  "evaluator_version": "2026.06.24"
+ }
+]

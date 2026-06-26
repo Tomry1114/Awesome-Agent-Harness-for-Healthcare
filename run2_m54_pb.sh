@@ -1,0 +1,3 @@
+cd ~/Medical_harness
+env LLM_JUDGE_BACKEND=openai OPENAI_API_KEY=sk-WlFXCi1fYDwdjEK5gw08rQEbFGKTVxlLxEm0oLLztjN5gHdg OPENAI_BASE_URL=https://www.micuapi.ai/v1 LLM_JUDGE_MODEL=gpt-5.4 MH_JUDGE_MODEL=gpt-5.4 MH_RUBRIC_JUDGE=1 MH_GACC=1 MH_GACC_MODEL=gpt-5.4 MH_VERIFICATION_JUDGE=1 MH_GOV_JUDGE=1 MH_MM_JUDGE=1 MH_MM_JUDGE_MODEL=gpt-5.4 MH_GATEWAY_TIMEOUT=120 MH_OPENAI_TIMEOUT=120 MH_GATEWAY_RETRIES=3 MH_OPENAI_MODEL=gpt-5.4-mini /hpc2hdd/home/ce483/.conda/envs/medicalharness/bin/python  runner/run_batch.py --bench PhysicianBench --max-steps 30 --fhir-base http://localhost:38080/fhir --reset-mode none --agent gpt5 --limit 5 --out res2_m54_pb > res2_m54_pb.log 2>&1
+echo DONE_m54_pb >> res2_m54_pb.log

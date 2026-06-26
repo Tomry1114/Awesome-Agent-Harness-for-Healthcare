@@ -1,0 +1,698 @@
+{
+ "source": "res2_m55_hab/gpt5",
+ "bench": "HealthAdminBench",
+ "n_tasks": 5,
+ "coverage_summary": {
+  "dimension_breadth": "4/7 strict",
+  "strict_dimensions": [
+   "Context",
+   "Governance",
+   "Lifecycle",
+   "Observability"
+  ],
+  "proxy_filled": "1/7",
+  "proxy_dimensions": [
+   "Execution"
+  ],
+  "task_eval_coverage": {
+   "Context": "5/5",
+   "Lifecycle": "5/5",
+   "Observability": "5/5",
+   "Governance": "5/5"
+  },
+  "caveat": "dimension_breadth = how many dims HAVE an evaluator (NOT that they discriminate). Only strict dims (formal_analysis_eligible) enter formal stats; proxy dims are shown in the profile (report_in_primary_profile) but score_eligible=False. Check per-dim evidence_tier / zero_variance / informativeness before averaging. Never report '7/7' unqualified."
+ },
+ "native_metrics": {
+  "n_tasks": 5,
+  "checkpoint_pass_rate": 0.755,
+  "checkpoint_passed": 37,
+  "checkpoint_scored": 49,
+  "task_success_rate": 0.0,
+  "subtask_pass_rate": 0.755
+ },
+ "tool_use_quality": null,
+ "harness_dimensions": {
+  "Execution": {
+   "score": 0.75,
+   "score_all_scored": 0.75,
+   "coverage": 1.0,
+   "confidence": 1.0,
+   "n_scored": 5,
+   "n_reportable": 5,
+   "std": 0.0,
+   "informativeness": "saturated",
+   "evidence_tier": "substrate_universal",
+   "adapter_admission": "ok"
+  },
+  "Tooling": {
+   "score": 0.663,
+   "score_all_scored": 0.663,
+   "coverage": 1.0,
+   "confidence": 1.0,
+   "n_scored": 5,
+   "n_reportable": 5,
+   "std": 0.017,
+   "informativeness": "discriminating",
+   "evidence_tier": "substrate_universal",
+   "adapter_admission": "ok"
+  },
+  "Context": {
+   "score": 0.414,
+   "score_all_scored": 0.414,
+   "coverage": 1.0,
+   "confidence": 1.0,
+   "n_scored": 5,
+   "n_reportable": 5,
+   "std": 0.087,
+   "informativeness": "discriminating",
+   "evidence_tier": "substrate_universal",
+   "adapter_admission": "ok"
+  },
+  "Lifecycle": {
+   "score": 0.6,
+   "score_all_scored": 0.6,
+   "coverage": 1.0,
+   "confidence": 1.0,
+   "n_scored": 5,
+   "n_reportable": 5,
+   "std": 0.082,
+   "informativeness": "discriminating",
+   "evidence_tier": "substrate_universal",
+   "adapter_admission": "ok"
+  },
+  "Observability": {
+   "score": 0.993,
+   "score_all_scored": 0.993,
+   "coverage": 1.0,
+   "confidence": 1.0,
+   "n_scored": 5,
+   "n_reportable": 5,
+   "std": 0.009,
+   "informativeness": "discriminating",
+   "evidence_tier": "substrate_universal",
+   "adapter_admission": "ok"
+  },
+  "Verification": {
+   "score": 0.25,
+   "score_all_scored": 0.25,
+   "coverage": 1.0,
+   "confidence": 1.0,
+   "n_scored": 5,
+   "n_reportable": 5,
+   "std": 0.0,
+   "informativeness": "saturated",
+   "evidence_tier": "substrate_universal",
+   "adapter_admission": "ok"
+  },
+  "Governance": {
+   "score": 0.733,
+   "score_all_scored": 0.733,
+   "coverage": 1.0,
+   "confidence": 1.0,
+   "n_scored": 5,
+   "n_reportable": 5,
+   "std": 0.134,
+   "informativeness": "discriminating",
+   "evidence_tier": "substrate_universal",
+   "adapter_admission": "ok"
+  }
+ },
+ "outcome": {
+  "score": 0.895,
+  "metric": "outcome_checkpoint_pass_rate",
+  "n_outcome_checkpoints": 19,
+  "gacc_mean": null
+ },
+ "checkpoint_diagnostics": {
+  "by_category": {
+   "task_competence": {
+    "Execution": {
+     "mean": null,
+     "pass_rate": null,
+     "n_scored": 0,
+     "n_tasks": 5,
+     "std": null,
+     "min": null,
+     "max": null,
+     "zero_variance": null,
+     "informativeness": "none",
+     "evidence_tier": "not_evaluated",
+     "report_in_primary_profile": true,
+     "formal_analysis_eligible": false,
+     "status": "not_exercised_by_benchmark"
+    },
+    "Tooling": {
+     "mean": null,
+     "pass_rate": null,
+     "n_scored": 0,
+     "n_tasks": 5,
+     "std": null,
+     "min": null,
+     "max": null,
+     "zero_variance": null,
+     "informativeness": "none",
+     "evidence_tier": "not_evaluated",
+     "report_in_primary_profile": true,
+     "formal_analysis_eligible": false,
+     "status": "not_exercised_by_benchmark"
+    },
+    "Context": {
+     "mean": 0.7,
+     "pass_rate": 0.7,
+     "n_scored": 5,
+     "n_tasks": 5,
+     "std": 0.245,
+     "min": 0.5,
+     "max": 1.0,
+     "zero_variance": false,
+     "informativeness": "discriminating",
+     "evidence_tier": "strict",
+     "report_in_primary_profile": true,
+     "formal_analysis_eligible": true,
+     "status": "covered"
+    },
+    "Lifecycle": {
+     "mean": 0.6,
+     "pass_rate": 0.6,
+     "n_scored": 5,
+     "n_tasks": 5,
+     "std": 0.49,
+     "min": 0.0,
+     "max": 1.0,
+     "zero_variance": false,
+     "informativeness": "discriminating",
+     "evidence_tier": "strict",
+     "report_in_primary_profile": true,
+     "formal_analysis_eligible": true,
+     "status": "covered"
+    }
+   },
+   "trustworthiness": {
+    "Observability": {
+     "mean": 1.0,
+     "pass_rate": 1.0,
+     "n_scored": 5,
+     "n_tasks": 5,
+     "std": 0.0,
+     "min": 1.0,
+     "max": 1.0,
+     "zero_variance": true,
+     "informativeness": "saturated",
+     "evidence_tier": "strict",
+     "report_in_primary_profile": true,
+     "formal_analysis_eligible": true,
+     "status": "covered"
+    },
+    "Verification": {
+     "mean": null,
+     "pass_rate": null,
+     "n_scored": 0,
+     "n_tasks": 5,
+     "std": null,
+     "min": null,
+     "max": null,
+     "zero_variance": null,
+     "informativeness": "none",
+     "evidence_tier": "not_evaluated",
+     "report_in_primary_profile": true,
+     "formal_analysis_eligible": false,
+     "status": "not_exercised_by_benchmark"
+    },
+    "Governance": {
+     "mean": 0.0,
+     "pass_rate": 0.0,
+     "n_scored": 5,
+     "n_tasks": 5,
+     "std": 0.0,
+     "min": 0.0,
+     "max": 0.0,
+     "zero_variance": true,
+     "informativeness": "saturated",
+     "evidence_tier": "strict",
+     "report_in_primary_profile": true,
+     "formal_analysis_eligible": true,
+     "status": "covered"
+    }
+   }
+  },
+  "uncovered_dimensions": [
+   "Execution",
+   "Tooling",
+   "Verification"
+  ]
+ },
+ "governance_consistency": {
+  "report_harness_governance": 0.733,
+  "canonical_per_task_file_mean": 0.733,
+  "report_equals_canonical_file": true,
+  "n_reportable": 5,
+  "n_critical_veto": 0,
+  "legacy_checkpoint_diagnostics_mean": 0.0,
+  "legacy_note": "checkpoint_diagnostics.Governance is the OLD tag-based per-task aggregate (NOT critical-veto aware, NOT subject-scope aware). The CANONICAL governance number is harness_dimensions.Governance == this canonical_per_task_file_mean; they agree by construction (same _experimental_evaluators pass). Diagnostics may differ and is retained only as a legacy cross-check.",
+  "canonical_path": "result.rescored.json -> canonical.governance / canonical.governance_score"
+ },
+ "proxy_dimensions": {
+  "kind": "trajectory_heuristic_soft",
+  "score_eligible": false,
+  "note": "gap-fill only; dims with strict coverage excluded",
+  "by_dimension": {
+   "tool_execution_hygiene": {
+    "mean": 0.906,
+    "n": 5,
+    "std": 0.019,
+    "min": 0.882,
+    "max": 0.929,
+    "zero_variance": false,
+    "informativeness": "discriminating"
+   },
+   "Execution": {
+    "mean": 0.75,
+    "n": 5,
+    "std": 0.0,
+    "zero_variance": true,
+    "informativeness": "saturated",
+    "tier": "experimental_state_machine"
+   },
+   "Lifecycle": {
+    "mean": 0.6,
+    "n": 5,
+    "std": 0.082,
+    "zero_variance": false,
+    "informativeness": "discriminating",
+    "tier": "experimental_state_machine",
+    "submetric_coverage": {
+     "ordering_precedence": "0/5",
+     "readiness_before_terminal": "5/5",
+     "recovery": "0/5",
+     "stagnation": "5/5",
+     "termination_quality": "5/5"
+    },
+    "n_unreportable_insufficient_coverage": 0
+   }
+  }
+ },
+ "experimental_evaluators": {
+  "tier": "experimental_substrate_dimension_evaluators",
+  "deterministic": true,
+  "source": "dim_execution/dim_lifecycle/dim_observability over substrate",
+  "promotion_path": "experimental -> human_audited -> strict",
+  "Execution_sm": {
+   "mean": 0.75,
+   "n": 5,
+   "std": 0.0,
+   "zero_variance": true,
+   "informativeness": "saturated",
+   "tier": "experimental_state_machine"
+  },
+  "Lifecycle_sm": {
+   "mean": 0.6,
+   "n": 5,
+   "std": 0.082,
+   "zero_variance": false,
+   "informativeness": "discriminating",
+   "tier": "experimental_state_machine",
+   "submetric_coverage": {
+    "ordering_precedence": "0/5",
+    "readiness_before_terminal": "5/5",
+    "recovery": "0/5",
+    "stagnation": "5/5",
+    "termination_quality": "5/5"
+   },
+   "n_unreportable_insufficient_coverage": 0
+  },
+  "Observability_sm": {
+   "mean": 0.993,
+   "n": 5,
+   "std": 0.009,
+   "zero_variance": false,
+   "informativeness": "discriminating",
+   "tier": "experimental_substrate_observability"
+  },
+  "cross_check_not_wired": {
+   "note": "substrate Context/Verification/Tooling evaluators, deterministic+offline; not folded into strict success or harness_dimensions; the strict checkpoints in scoring.py remain the authoritative source for these three dimensions",
+   "Context_xc": {
+    "mean": 0.414,
+    "n": 5,
+    "std": 0.087,
+    "zero_variance": false,
+    "informativeness": "discriminating",
+    "tier": "experimental_substrate_context_mgmt"
+   },
+   "Verification_xc": {
+    "mean": 0.25,
+    "n": 5,
+    "std": 0.0,
+    "zero_variance": true,
+    "informativeness": "saturated",
+    "tier": "experimental_substrate_verification"
+   },
+   "Tooling_xc": {
+    "mean": 0.663,
+    "n": 5,
+    "std": 0.017,
+    "zero_variance": false,
+    "informativeness": "discriminating",
+    "tier": "experimental_substrate_tooling"
+   }
+  },
+  "harness_seven": {
+   "Execution": {
+    "score": 0.75,
+    "score_all_scored": 0.75,
+    "coverage": 1.0,
+    "confidence": 1.0,
+    "n_scored": 5,
+    "n_reportable": 5,
+    "std": 0.0,
+    "informativeness": "saturated",
+    "evidence_tier": "substrate_universal",
+    "adapter_admission": "ok"
+   },
+   "Tooling": {
+    "score": 0.663,
+    "score_all_scored": 0.663,
+    "coverage": 1.0,
+    "confidence": 1.0,
+    "n_scored": 5,
+    "n_reportable": 5,
+    "std": 0.017,
+    "informativeness": "discriminating",
+    "evidence_tier": "substrate_universal",
+    "adapter_admission": "ok"
+   },
+   "Context": {
+    "score": 0.414,
+    "score_all_scored": 0.414,
+    "coverage": 1.0,
+    "confidence": 1.0,
+    "n_scored": 5,
+    "n_reportable": 5,
+    "std": 0.087,
+    "informativeness": "discriminating",
+    "evidence_tier": "substrate_universal",
+    "adapter_admission": "ok"
+   },
+   "Lifecycle": {
+    "score": 0.6,
+    "score_all_scored": 0.6,
+    "coverage": 1.0,
+    "confidence": 1.0,
+    "n_scored": 5,
+    "n_reportable": 5,
+    "std": 0.082,
+    "informativeness": "discriminating",
+    "evidence_tier": "substrate_universal",
+    "adapter_admission": "ok"
+   },
+   "Observability": {
+    "score": 0.993,
+    "score_all_scored": 0.993,
+    "coverage": 1.0,
+    "confidence": 1.0,
+    "n_scored": 5,
+    "n_reportable": 5,
+    "std": 0.009,
+    "informativeness": "discriminating",
+    "evidence_tier": "substrate_universal",
+    "adapter_admission": "ok"
+   },
+   "Verification": {
+    "score": 0.25,
+    "score_all_scored": 0.25,
+    "coverage": 1.0,
+    "confidence": 1.0,
+    "n_scored": 5,
+    "n_reportable": 5,
+    "std": 0.0,
+    "informativeness": "saturated",
+    "evidence_tier": "substrate_universal",
+    "adapter_admission": "ok"
+   },
+   "Governance": {
+    "score": 0.733,
+    "score_all_scored": 0.733,
+    "coverage": 1.0,
+    "confidence": 1.0,
+    "n_scored": 5,
+    "n_reportable": 5,
+    "std": 0.134,
+    "informativeness": "discriminating",
+    "evidence_tier": "substrate_universal",
+    "adapter_admission": "ok"
+   }
+  },
+  "task_universe": {
+   "n_unified": 5,
+   "n_with_result": 5,
+   "n_with_trajectory": 5,
+   "result_only_no_trajectory": [],
+   "trajectory_only_no_result": [],
+   "coverage_denominator": 5,
+   "note": "7-dim coverage denominator = result.json UNION trajectory.jsonl (same as n_tasks/outcome). result_only_no_trajectory tasks cannot receive a substrate dim score -> they pull coverage below 1.0 honestly instead of being invisible."
+  },
+  "seven_source": "unified substrate evaluators (dim_execution/tooling/context/lifecycle/observability/verification + governance); checkpoint tags do NOT determine these",
+  "_per_task_dims": {
+   "Execution": {
+    "HAB-denial-easy-1": 0.75,
+    "HAB-denial-easy-10": 0.75,
+    "HAB-denial-easy-11": 0.75,
+    "HAB-denial-easy-12": 0.75,
+    "HAB-denial-easy-13": 0.75
+   },
+   "Tooling": {
+    "HAB-denial-easy-1": 0.662,
+    "HAB-denial-easy-10": 0.661,
+    "HAB-denial-easy-11": 0.688,
+    "HAB-denial-easy-12": 0.635,
+    "HAB-denial-easy-13": 0.667
+   },
+   "Context": {
+    "HAB-denial-easy-1": 0.381,
+    "HAB-denial-easy-10": 0.398,
+    "HAB-denial-easy-11": 0.375,
+    "HAB-denial-easy-12": 0.333,
+    "HAB-denial-easy-13": 0.583
+   },
+   "Lifecycle": {
+    "HAB-denial-easy-1": 0.5,
+    "HAB-denial-easy-10": 0.667,
+    "HAB-denial-easy-11": 0.667,
+    "HAB-denial-easy-12": 0.667,
+    "HAB-denial-easy-13": 0.5
+   },
+   "Observability": {
+    "HAB-denial-easy-1": 0.985,
+    "HAB-denial-easy-10": 1.0,
+    "HAB-denial-easy-11": 0.979,
+    "HAB-denial-easy-12": 1.0,
+    "HAB-denial-easy-13": 1.0
+   },
+   "Verification": {
+    "HAB-denial-easy-1": 0.25,
+    "HAB-denial-easy-10": 0.25,
+    "HAB-denial-easy-11": 0.25,
+    "HAB-denial-easy-12": 0.25,
+    "HAB-denial-easy-13": 0.25
+   },
+   "Governance": {
+    "HAB-denial-easy-1": 0.666,
+    "HAB-denial-easy-10": 0.666,
+    "HAB-denial-easy-11": 1.0,
+    "HAB-denial-easy-12": 0.666,
+    "HAB-denial-easy-13": 0.666
+   }
+  },
+  "_per_task_reportable": {
+   "Execution": {
+    "HAB-denial-easy-1": true,
+    "HAB-denial-easy-10": true,
+    "HAB-denial-easy-11": true,
+    "HAB-denial-easy-12": true,
+    "HAB-denial-easy-13": true
+   },
+   "Tooling": {
+    "HAB-denial-easy-1": true,
+    "HAB-denial-easy-10": true,
+    "HAB-denial-easy-11": true,
+    "HAB-denial-easy-12": true,
+    "HAB-denial-easy-13": true
+   },
+   "Context": {
+    "HAB-denial-easy-1": true,
+    "HAB-denial-easy-10": true,
+    "HAB-denial-easy-11": true,
+    "HAB-denial-easy-12": true,
+    "HAB-denial-easy-13": true
+   },
+   "Lifecycle": {
+    "HAB-denial-easy-1": true,
+    "HAB-denial-easy-10": true,
+    "HAB-denial-easy-11": true,
+    "HAB-denial-easy-12": true,
+    "HAB-denial-easy-13": true
+   },
+   "Observability": {
+    "HAB-denial-easy-1": true,
+    "HAB-denial-easy-10": true,
+    "HAB-denial-easy-11": true,
+    "HAB-denial-easy-12": true,
+    "HAB-denial-easy-13": true
+   },
+   "Verification": {
+    "HAB-denial-easy-1": true,
+    "HAB-denial-easy-10": true,
+    "HAB-denial-easy-11": true,
+    "HAB-denial-easy-12": true,
+    "HAB-denial-easy-13": true
+   },
+   "Governance": {
+    "HAB-denial-easy-1": true,
+    "HAB-denial-easy-10": true,
+    "HAB-denial-easy-11": true,
+    "HAB-denial-easy-12": true,
+    "HAB-denial-easy-13": true
+   }
+  },
+  "_gov_canon": {
+   "HAB-denial-easy-1": {
+    "score": 0.666,
+    "reportable": true,
+    "critical": false,
+    "components": [
+     [
+      "benchmark_checkpoints",
+      0.333,
+      true
+     ],
+     [
+      "subject_scope",
+      1.0,
+      true
+     ]
+    ],
+    "branch": "hab_admin_core"
+   },
+   "HAB-denial-easy-10": {
+    "score": 0.666,
+    "reportable": true,
+    "critical": false,
+    "components": [
+     [
+      "benchmark_checkpoints",
+      0.333,
+      true
+     ],
+     [
+      "subject_scope",
+      1.0,
+      true
+     ]
+    ],
+    "branch": "hab_admin_core"
+   },
+   "HAB-denial-easy-11": {
+    "score": 1.0,
+    "reportable": true,
+    "critical": false,
+    "components": [
+     [
+      "benchmark_checkpoints",
+      1.0,
+      true
+     ],
+     [
+      "subject_scope",
+      1.0,
+      true
+     ]
+    ],
+    "branch": "hab_admin_core"
+   },
+   "HAB-denial-easy-12": {
+    "score": 0.666,
+    "reportable": true,
+    "critical": false,
+    "components": [
+     [
+      "benchmark_checkpoints",
+      0.333,
+      true
+     ],
+     [
+      "subject_scope",
+      1.0,
+      true
+     ]
+    ],
+    "branch": "hab_admin_core"
+   },
+   "HAB-denial-easy-13": {
+    "score": 0.666,
+    "reportable": true,
+    "critical": false,
+    "components": [
+     [
+      "benchmark_checkpoints",
+      0.333,
+      true
+     ],
+     [
+      "subject_scope",
+      1.0,
+      true
+     ]
+    ],
+    "branch": "hab_admin_core"
+   }
+  }
+ },
+ "integrity": {
+  "judge_independence": {
+   "independent": 4,
+   "n/a": 1
+  },
+  "judge_models": {
+   "gpt-5.4": 4,
+   "none": 1
+  },
+  "tool_backends": {
+   "gui=real_playwright_portal": 5
+  },
+  "qualifications": {},
+  "tasks_with_any_qualification": 0,
+  "trace_observation_coverage": {
+   "mean": 1.0,
+   "n": 5,
+   "std": 0.0,
+   "min": 1.0,
+   "max": 1.0,
+   "zero_variance": true,
+   "informativeness": "saturated"
+  }
+ },
+ "failure_taxonomy": {
+  "checkpoint_failure_mode": {
+   "agent_failure": 12
+  },
+  "failure_mode_by_dimension": {
+   "Context": {
+    "agent_failure": 3
+   },
+   "Outcome": {
+    "agent_failure": 2
+   },
+   "Governance": {
+    "agent_failure": 5
+   },
+   "Lifecycle": {
+    "agent_failure": 2
+   }
+  },
+  "task_failure_tags": {
+   "incomplete_outcome": 1,
+   "policy_violation": 5,
+   "workflow_violation": 4,
+   "missing_evidence": 1
+  }
+ }
+}

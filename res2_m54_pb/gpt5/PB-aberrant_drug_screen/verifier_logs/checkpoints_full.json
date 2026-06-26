@@ -1,0 +1,97 @@
+[
+ {
+  "id": "cp1_data_retrieval",
+  "dimension": "Context",
+  "subdimension": "context_grounding",
+  "weight": 1.0,
+  "score_eligible": true,
+  "checkpoint_status": "failed",
+  "failure_mode": "agent_failure",
+  "note": "E   AssertionError: Agent did not query required FHIR resources: urine drug screen results (fhir_observation_search_labs), medication orders (fhir_medication_request_search_orders)",
+  "evaluator_type": "native_pytest",
+  "evaluator_version": "2026.06.24"
+ },
+ {
+  "id": "cp2_uds_interpretation",
+  "dimension": "Outcome",
+  "subdimension": "source_outcome:reasoning",
+  "weight": 1.0,
+  "score_eligible": true,
+  "checkpoint_status": "failed",
+  "failure_mode": "agent_failure",
+  "note": "E   AssertionError: UDS interpretation check failed: Content materially misreports the case: it interprets an oxycodone-negative/benzodiazepine-positive/cannabinoid-positive screen instead of the grou",
+  "evaluator_type": "native_pytest",
+  "evaluator_version": "2026.06.24"
+ },
+ {
+  "id": "cp3_confirmatory_testing",
+  "dimension": "Outcome",
+  "subdimension": "source_outcome:reasoning",
+  "weight": 1.0,
+  "score_eligible": true,
+  "checkpoint_status": "passed",
+  "failure_mode": null,
+  "evaluator_type": "native_pytest",
+  "evaluator_version": "2026.06.24"
+ },
+ {
+  "id": "cp4_negative_opiates_management",
+  "dimension": "Outcome",
+  "subdimension": "source_outcome:reasoning",
+  "weight": 1.0,
+  "score_eligible": true,
+  "checkpoint_status": "failed",
+  "failure_mode": "agent_failure",
+  "note": "E   AssertionError: Negative opiates management check failed: Addresses both diversion/nonadherence and OUD as possible explanations and recommends confirmatory testing plus reassessment, but it does ",
+  "evaluator_type": "native_pytest",
+  "evaluator_version": "2026.06.24"
+ },
+ {
+  "id": "cp5_buprenorphine_protocol",
+  "dimension": "Outcome",
+  "subdimension": "source_outcome:reasoning",
+  "weight": 1.0,
+  "score_eligible": true,
+  "checkpoint_status": "failed",
+  "failure_mode": "agent_failure",
+  "note": "E   AssertionError: Buprenorphine protocol check failed: Content mentions considering buprenorphine if OUD is suspected, but does not provide the required initiation protocol: no clear 24-hour opioid-",
+  "evaluator_type": "native_pytest",
+  "evaluator_version": "2026.06.24"
+ },
+ {
+  "id": "cp6_seizure_risk_assessment",
+  "dimension": "Outcome",
+  "subdimension": "source_outcome:reasoning",
+  "weight": 1.0,
+  "score_eligible": true,
+  "checkpoint_status": "failed",
+  "failure_mode": "agent_failure",
+  "note": "E   AssertionError: Seizure risk assessment check failed: The content gives generally appropriate UDS interpretation and says not to abruptly discontinue opioids based on a single immunoassay, but it ",
+  "evaluator_type": "native_pytest",
+  "evaluator_version": "2026.06.24"
+ },
+ {
+  "id": "cp7_addiction_referral",
+  "dimension": "Outcome",
+  "subdimension": "source_outcome:reasoning",
+  "weight": 1.0,
+  "score_eligible": true,
+  "checkpoint_status": "failed",
+  "failure_mode": "agent_failure",
+  "note": "E   AssertionError: Addiction referral check failed: Content does recommend addiction medicine referral, but only conditionally ('if confirmatory testing or clinical assessment suggests OUD') rather t",
+  "evaluator_type": "native_pytest",
+  "evaluator_version": "2026.06.24"
+ },
+ {
+  "id": "cp8_documentation",
+  "dimension": "Outcome",
+  "subdimension": "source_outcome:documentation",
+  "weight": 1.0,
+  "score_eligible": true,
+  "checkpoint_status": "failed",
+  "failure_mode": "agent_failure",
+  "note": "E   AssertionError: Documentation incomplete: Content does not match ground-truth UDS or medications: it incorrectly reports oxycodone negative/benzodiazepine positive/cannabinoids positive and omits ",
+  "evaluator_type": "native_pytest",
+  "evaluator_version": "2026.06.24"
+ }
+]

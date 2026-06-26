@@ -1,0 +1,112 @@
+Clinical Assessment and Management Plan: Aberrant Urine Drug Screen
+
+Patient: Female, born 1960-02-06 (age 63)
+MRN: MRN6025656705
+Date of UDS: 2023-03-24
+Practitioner: dr-thomas-robinson
+
+Relevant EHR Data Reviewed
+- Demographics: Female, age 63.
+- Problem list:
+  - Chronic pain (G89.29)
+  - Chronic low back pain / low back pain, unspecified (M54.50)
+  - Right foot/heel pain
+  - Opioid dependence / continuous opioid dependence (F11.20)
+  - Type 2 diabetes mellitus without complications (E11.9)
+- Controlled substance prescription:
+  - Oxycodone ER 10 mg PO q12h PRN for chronic pain, active since 2023-03-19, prescribed by dr-thomas-robinson.
+- Social history:
+  - Denies alcohol use.
+  - Reports daily marijuana use for sleep.
+- Clinical notes:
+  - 2023-03-19 pain follow-up: degenerative lumbar disease; controlled substance agreement reviewed; PDMP without concerning fills; prior UDS appropriate; oxycodone continued.
+  - 2023-03-24 abnormal UDS follow-up: patient stated she takes oxycodone "most days" but missed a few doses this week due to nausea; denied benzodiazepine use but reported niece gave her an unspecified "sleeping pill" last weekend; admitted daily marijuana use; confirmatory testing ordered.
+- Urine drug screen (immunoassay panel, 2023-03-24 09:45):
+  - Opiates: Negative
+  - Oxycodone: Negative
+  - Benzodiazepines: Positive
+  - Cannabinoids: Positive
+  - Cocaine: Negative
+  - Amphetamines: Negative
+  - Barbiturates: Negative
+  - Methadone: Negative
+  - Phencyclidine: Negative
+  - Fentanyl: Negative
+  - Buprenorphine: Negative
+  - Alcohol: Negative
+- Active confirmatory test ordered:
+  - Urine drug screen, confirmation (ServiceRequest 2023-03-24 10:20)
+
+Interpretation of Findings
+1) Unexpected negative: oxycodone not detected despite active oxycodone ER prescription.
+- Clinical significance: Concerning for nonadherence, intermittent use with recent missed doses, running out early, diversion, or assay/timing issues.
+- Opiates negative is not necessarily abnormal because standard opiate immunoassays often do not reliably detect oxycodone; however, the oxycodone-specific negative is clinically important.
+
+2) Unexpected positive: benzodiazepines positive.
+- Clinical significance: Unexpected because no benzodiazepine is prescribed. Patient reported exposure to an unspecified "sleeping pill" from a family member, raising concern for non-prescribed sedative use and additive overdose risk with opioids.
+- Requires confirmatory testing to identify the specific agent and assess for false-positive immunoassay results.
+
+3) Cannabinoids positive.
+- Clinical significance: Consistent with documented daily marijuana use; not unexpected based on history, but relevant to counseling and overall safety planning.
+
+4) Other substances negative.
+- No evidence on this screen of cocaine, amphetamines, fentanyl, methadone, buprenorphine, alcohol, or barbiturates.
+
+Need for Confirmatory Testing
+- Yes. Confirmatory testing (GC/MS or LC-MS/MS) is indicated for:
+  - Benzodiazepine positive result.
+  - Oxycodone negative result.
+- Confirmatory testing is already ordered and should be reviewed before major changes to opioid therapy unless there is an immediate safety concern.
+
+Clinical Significance in Context
+- The active problem list includes opioid dependence (F11.20), which increases concern for opioid-related risk and warrants a structured reassessment for opioid use disorder (OUD) versus physiologic dependence.
+- An absent prescribed opioid plus unexpected benzodiazepine exposure is a clinically meaningful safety signal and may indicate nonadherence, diversion, or substance misuse.
+- Daily marijuana use should be discussed as part of the overall controlled-substance risk assessment.
+
+Clinical Decision Algorithm / Next Steps
+1) Immediate safety and verification
+- Review timing of last oxycodone dose, nausea/vomiting, missed doses, and any potential urine dilution.
+- Reconcile all medications, including any outside prescriptions and over-the-counter sleep aids.
+- Check PDMP again for undisclosed controlled substances.
+- Await confirmatory testing before irreversible decisions when clinically safe to do so.
+
+2) Counseling now
+- Advise patient to stop taking any non-prescribed sedatives or "sleeping pills."
+- Counsel on high overdose risk when opioids are combined with benzodiazepines or other sedatives.
+- Provide/renew naloxone and overdose education if not already in place.
+
+3) Opioid prescribing while pending confirmation
+- Do not abruptly discontinue opioid therapy based solely on a single immunoassay result.
+- Increase monitoring intensity: shorter refill interval, close follow-up, and consideration of random UDS and pill counts.
+- Reassess whether the current opioid regimen remains appropriate given the concerning result pattern and the problem-list history of opioid dependence.
+
+4) If confirmatory testing shows oxycodone absent and benzodiazepine confirmed
+- Reassess adherence, diversion risk, and the overall risk-benefit balance of opioid therapy.
+- Perform a focused assessment for OUD using DSM-5 criteria (loss of control, craving, continued use despite harm, inability to adhere to treatment, etc.).
+- If OUD is suspected or confirmed, discuss medication treatment options, especially buprenorphine, and refer to addiction medicine.
+- If opioid therapy continues, use tighter monitoring: frequent visits, random toxicology testing, pill counts, and a renewed treatment agreement.
+
+5) If confirmatory testing shows a false-positive benzodiazepine result and oxycodone is present
+- Continue opioid therapy only if overall risk remains acceptable.
+- Reinforce adherence, safe storage, avoidance of non-prescribed medications, and adherence to the controlled-substance agreement.
+- Maintain or increase monitoring depending on clinical judgment.
+
+6) Specialty referral triggers
+- Addiction medicine referral if confirmatory testing or clinical assessment suggests OUD, recurrent non-prescribed sedative use, or loss of control over controlled substances.
+- Pain management referral if pain control is inadequate, opioid risk is high, or opioid-sparing strategies are needed.
+- Behavioral health referral if insomnia/anxiety is driving use of non-prescribed sedatives.
+
+Assessment Summary
+- Aberrant UDS with unexpected benzodiazepine positive and unexpected oxycodone negative in a patient prescribed oxycodone ER.
+- Cannabinoid positive is consistent with reported daily marijuana use.
+- Active problem list includes opioid dependence, heightening concern for opioid-related harm and the need to evaluate for OUD.
+- Current best interpretation: concerning but not definitive for nonadherence/diversion and non-prescribed sedative exposure; confirmatory testing is required before major treatment changes.
+
+Recommended Plan to Document/Implement
+- Review results with the patient in a nonjudgmental manner.
+- Complete and review confirmatory urine testing.
+- Counsel to avoid benzodiazepines and all non-prescribed sedatives.
+- Provide naloxone/overdose education if not already done.
+- Reassess opioid risk-benefit within 1 week or sooner when confirmation returns.
+- If confirmatory results support aberrant use, evaluate for OUD and consider buprenorphine or addiction medicine referral.
+- Consider pain management referral if opioid therapy needs restructuring or tapering.

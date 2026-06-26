@@ -1,0 +1,85 @@
+Clinical Assessment and Management Plan: Abnormal Uterine Bleeding (Persistent Intermenstrual Spotting)
+
+Patient: MRN2970753705
+Demographics available from EHR:
+- Female
+- DOB: 1997-02-19 (age 24 on 2022-02-06)
+
+Chart review performed in this session:
+- Demographics successfully retrieved.
+- Additional requested chart elements (problem list, laboratory studies including thyroid function and prolactin, clinical notes describing bleeding pattern/timeline, and prior procedures/screening) were not successfully retrieved in this session, so this assessment is based on the available demographic information and standard AUB evaluation principles.
+
+Assessment
+- Premenopausal patient of reproductive age with persistent intermenstrual spotting.
+- Intermenstrual bleeding is abnormal uterine bleeding (AUB) and should be evaluated using the PALM-COEIN framework.
+- In a 24-year-old, common etiologies include:
+  - Pregnancy-related bleeding
+  - Ovulatory dysfunction/anovulatory bleeding
+  - Cervical causes (cervicitis, ectropion, polyp, dysplasia)
+  - Endometrial causes (polyp, submucosal fibroid)
+  - Iatrogenic/hormonal bleeding (contraceptives, anticoagulants)
+  - Infection
+  - Less commonly coagulopathy or endometrial hyperplasia/malignancy
+
+Workup review / adequacy of initial evaluation
+- The currently retrieved data are insufficient to confirm whether the initial workup has been completed.
+- At minimum, persistent intermenstrual spotting should have pregnancy excluded and should include targeted labs and structural evaluation if symptoms persist.
+- Because the clinical notes and lab results were not retrievable here, recommend confirming whether the following have already been completed:
+  - Pregnancy test
+  - CBC
+  - TSH
+  - Prolactin
+  - STI testing if indicated
+  - Cervical cancer screening status
+  - Pelvic imaging
+
+Recommended diagnostic plan
+1. Exclude pregnancy
+- Obtain urine or serum hCG if not already documented.
+
+2. Laboratory evaluation
+- CBC to assess for anemia if bleeding has been persistent or heavy.
+- TSH to evaluate thyroid dysfunction as a contributor to ovulatory dysfunction.
+- Prolactin if there are signs of ovulatory dysfunction, galactorrhea, menstrual irregularity, or if not already resulted.
+- Consider gonorrhea/chlamydia testing if cervicitis risk, pelvic pain, postcoital bleeding, discharge, or new partner exposure.
+- Consider coagulation testing only if history suggests a bleeding disorder (easy bruising, heavy menses since menarche, surgical/dental bleeding, family history).
+
+3. Imaging / structural evaluation
+- Order transvaginal pelvic ultrasound as first-line imaging to evaluate for:
+  - Endometrial polyp
+  - Submucosal fibroid
+  - Endometrial thickness/abnormality
+  - Ovarian pathology
+- If transvaginal ultrasound is unrevealing and spotting persists, consider saline infusion sonohysterography or hysteroscopy for improved evaluation of intracavitary lesions.
+
+4. Cervical evaluation
+- Perform/specify pelvic exam with speculum inspection if not already done.
+- Confirm cervical cancer screening is up to date.
+- Evaluate for cervical lesion, polyp, ectropion, friability, or cervicitis.
+
+Management considerations
+- If hemodynamically stable and pregnancy has been excluded, symptom-directed therapy may be considered while workup is ongoing, especially if bleeding is bothersome:
+  - Combined hormonal contraception if no contraindications and contraception is acceptable
+  - Cyclic or continuous progestin if estrogen is not desired or contraindicated
+  - Levonorgestrel-releasing IUD if contraception and bleeding control are desired
+- NSAIDs may help reduce bleeding in patients with concomitant heavier flow, provided no contraindication.
+- If anovulation is suspected, cycle regulation with hormonal therapy is reasonable after exclusion of pregnancy and significant structural lesions.
+
+Contingency plan if initial workup is unrevealing
+- If pregnancy testing, CBC, TSH, prolactin, and transvaginal ultrasound do not identify a cause and bleeding persists:
+  - Reassess medication and contraceptive history
+  - Reassess for cervical/vaginal sources of bleeding
+  - Consider infection testing if not already completed
+  - Escalate to sonohysterography or hysteroscopy for occult intracavitary lesions
+  - Consider endometrial sampling if risk factors emerge, bleeding worsens, or symptoms persist despite initial management
+
+Suggested order
+- Transvaginal pelvic ultrasound
+
+Clinical summary
+- Young reproductive-age patient with persistent intermenstrual spotting.
+- Initial evaluation should ensure pregnancy exclusion, review endocrine labs (TSH/prolactin), assess for anemia and infection as indicated, and obtain transvaginal ultrasound to evaluate structural causes.
+- If no structural or endocrine cause is identified, treat symptomatically based on contraceptive goals and reassess if bleeding persists.
+
+Note
+- This note should be updated after full chart review of the patient's bleeding timeline, prior labs, and prior screening/procedural history.
