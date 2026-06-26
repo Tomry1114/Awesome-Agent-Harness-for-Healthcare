@@ -1,0 +1,20 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "HarnessDecision",
+  "description": "A capability verdict on a proposed action / final answer.",
+  "type": "object",
+  "required": ["decision"],
+  "properties": {
+    "decision": {"type": "string", "enum": ["ALLOW", "REVISE", "BLOCK", "ESCALATE"]},
+    "stage": {"type": ["string", "null"], "enum": ["before_action", "after_action", "before_final", null]},
+    "capability": {"type": ["string", "null"]},
+    "rule_id": {"type": ["string", "null"]},
+    "reason": {"type": ["string", "null"]},
+    "missing_obligations": {"type": "array", "items": {"type": "string"}},
+    "suggested_capabilities": {"type": "array", "items": {"type": "string"}},
+    "feedback": {},
+    "deterministic": {"type": ["boolean", "null"]},
+    "risk": {"type": ["string", "null"], "enum": ["R0", "R1", "R2", "R3", null]},
+    "effective": {"type": ["string", "null"], "enum": ["ALLOW", "REVISE", "BLOCK", "ESCALATE", null]}
+  }
+}

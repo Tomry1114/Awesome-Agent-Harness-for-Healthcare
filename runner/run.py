@@ -116,6 +116,17 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
         task["available_tools"] = environments.FHIR_GRANULAR_TOOLS
     agent = agents.make_agent(agent_name, task)
 
+    # ---- Clinical Process Harness (Part 2), gated by MH_HARNESS_MODE (default 'off' -> _harness=None,
+    #      ZERO behavior change). A harness build/runtime error must never break a run (fail open).
+    _harness = None
+    try:
+        import harness as _Harness
+        if _Harness.resolve_mode(os.environ.get("MH_HARNESS_MODE")) != "off":
+            _harness = _Harness.build_kernel(task, bench=task.get("source_benchmark") or bench,
+                                             env_type=env_type, mode=os.environ.get("MH_HARNESS_MODE"))
+    except Exception:
+        _harness = None
+
     trajectory, last_obs, last_res, finished = [], None, None, False
     deliv = DeliverableScaffold(task)  # PB deliverable scaffolding (Codex #1: extracted from the generic runner; no-op for non-PB)
     _fail_sig = None; _fail_n = 0; _aborted = False  # circuit breaker: abort on repeated identical failing call
@@ -140,6 +151,21 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
             if _pn is not None:
                 last_res, last_obs = _pn
                 continue
+            if _harness is not None:                    # final answer is a commit point
+                try:
+                    _hf = _harness.before_final(action.get("answer", ""), step=step)
+                except Exception:
+                    _hf = None
+                if _hf is not None:
+                    trajectory.extend(_hf.events)
+                    if _hf.type in ("REVISE", "BLOCK"):
+                        last_res = {"harness_decision": _hf.type, "harness_feedback": _hf.feedback}
+                        last_obs = json.dumps(last_res, ensure_ascii=False)[:int(os.environ.get("MH_OBS_MAX_LEN", "10000"))]
+                        continue
+                    if _hf.type == "ESCALATE":
+                        trajectory.append({"step": step, "event_type": "harness_escalation",
+                                           "feedback": _hf.feedback, "status": "error"})
+                        _aborted = True; break
             trajectory.append({"step": step, "event_type": "final_answer", "thought": action.get("answer", ""), "status": "ok", "canonical_action": _canon.canonical_action(action, env_type)})
             finished = True; break
         if action["type"] == "tool_call_truncated":  # cut-off tool call (e.g. oversized write_file) -> ask to re-issue
@@ -151,12 +177,33 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
         if action["type"] != "tool_call" or not action.get("tool"):
             trajectory.append({"step": step, "event_type": "agent_error", "error": "bad_action_type", "raw": str(action)[:200], "status": "error"})
             finished = True; break
+        if _harness is not None:
+            try:
+                _hb = _harness.before_action(action, _state_hash(env), step=step)
+            except Exception:
+                _hb = None
+            if _hb is not None:
+                trajectory.extend(_hb.events)
+                if _hb.type in ("REVISE", "BLOCK"):     # do NOT execute the tool; feed feedback back
+                    last_res = {"harness_decision": _hb.type, "harness_feedback": _hb.feedback}
+                    last_obs = json.dumps(last_res, ensure_ascii=False)[:int(os.environ.get("MH_OBS_MAX_LEN", "10000"))]
+                    continue
+                if _hb.type == "ESCALATE":
+                    trajectory.append({"step": step, "event_type": "harness_escalation",
+                                       "feedback": _hb.feedback, "status": "error"})
+                    _aborted = True; break
         _state_before = _state_hash(env)
         try:
             res = env.call_tool(action["tool"], action.get("args", {}))
         except Exception as _e:
             res = {"error": repr(_e)}
         _state_after = _state_hash(env)
+        _hpost = None
+        if _harness is not None:
+            try:
+                _hpost = _harness.after_action(action, res, _state_before, _state_after, step=step)
+            except Exception:
+                _hpost = None
         _src_full = json.dumps(res, ensure_ascii=False)
         obs = _src_full[:int(os.environ.get("MH_OBS_MAX_LEN", "10000"))]  # official mini_agent caps tool output to LLM at 10k (was 200 -> agent could not see search results -> over-read)
         _err = res.get("error") if isinstance(res, dict) else None
@@ -186,6 +233,10 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
                                       if ("HTTP " + c) in _es),
                                      "exception" if any(k in _es for k in ("Error", "Exception", "Traceback")) else "tool_error")
         trajectory.append(_ev)
+        if _hpost is not None:
+            trajectory.extend(_hpost.events)
+            if _hpost.type in ("REVISE", "BLOCK", "ESCALATE") and _hpost.feedback:   # fold into next obs
+                obs = (obs + "\n[HARNESS] " + json.dumps(_hpost.feedback, ensure_ascii=False))[:int(os.environ.get("MH_OBS_MAX_LEN", "10000"))]
         _last_tool_ev = _ev   # mark consumed only if a later agent.act() runs (circuit-break -> stays False)
         if _err:
             _sig = (action["tool"], json.dumps(action.get("args", {}), sort_keys=True), _ev.get("error_type"))
@@ -410,6 +461,14 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
                   "fidelity": fidelity, "medcta_config": _medcta_cfg, "capabilities": _caps,
                   "prompt_provenance": _prompt_prov}
     result = scoring.build_result(task, trajectory, results, provenance)
+    if _harness is not None:
+        try:
+            from harness.ledger import governance as _hgov
+            _h_events = [ev for ev in trajectory if str(ev.get("event_type", "")).startswith("harness_")]
+            result["harness"] = {"mode": _harness.mode, "audit": _harness.audit(),
+                                 "metrics": _hgov.summarize(_harness.ledger, _h_events, mode=_harness.mode)}
+        except Exception:
+            pass
     _sv = validate_result(result)
     # validate_result is contracted to return a dict (valid result, schema errors, OR fail-closed
     # 'jsonschema dependency missing'). If anything unexpected leaks through, treat it as NOT valid

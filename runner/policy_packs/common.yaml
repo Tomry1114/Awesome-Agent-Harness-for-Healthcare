@@ -1,0 +1,17 @@
+# Common policy defaults — PUBLIC, oracle-free. Per-dataset packs deep-merge OVER this.
+# A policy pack declares only ENVIRONMENT policy (subject spec, action risk classes, obligation /
+# commit-point templates). It must NEVER contain per-task gold answers or reference trajectories.
+
+subject:
+  type: null
+  id_context_keys: []        # which task.context keys hold the assigned subject id
+
+subject_arg_keys: []         # which action.args keys hold the operated-on subject id (scope check)
+read_actions: []             # R0
+reversible_actions: []       # R1
+commit_actions: []           # R2
+final_risk: R2               # the final answer is a commit point
+
+evidence_obligations: []     # [{id, satisfied_by: {tool, resource_type}}]
+workflow_obligations: []     # [{id, requires: [obligation_id, ...]}]
+commit_points: []            # [{action, risk, requires: [...], postcondition}]

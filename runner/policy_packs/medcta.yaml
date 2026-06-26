@@ -1,0 +1,28 @@
+# MedCTA policy pack (P3 target — evidence/grounding-heavy). Templates; verified in P3.
+# IMPORTANT: do NOT hard-code "must call crop" / "must call OCR". The obligation is OUTCOME-shaped:
+# a key visual claim in the final answer must be backed by image-derived evidence — this leaves the
+# agent's tool path free.
+
+subject:
+  type: medical_image
+  id_context_keys: [image_id, series_id, image, region_id]
+
+subject_arg_keys: [image_id, image, region_id, series_id]
+
+read_actions: [ImageDescription, RegionAttributeDescription, OCR, GoogleSearch, Calculator]
+reversible_actions: []
+commit_actions: []           # MedCTA's only commit is the final answer
+
+evidence_obligations:
+  - id: image_derived_evidence            # at least one perception tool produced image evidence
+    satisfied_by: {tool: ImageDescription}
+
+workflow_obligations:
+  - id: grounded_reasoning
+    requires: [image_derived_evidence]
+
+commit_points:
+  - action: final
+    risk: R2
+    requires: [grounded_reasoning]
+    postcondition: key_claims_supported_by_image_evidence

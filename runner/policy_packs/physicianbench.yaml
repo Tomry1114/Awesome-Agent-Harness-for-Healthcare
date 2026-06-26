@@ -1,0 +1,37 @@
+# PhysicianBench policy pack (P1 target — deterministic-heavy).
+# NOTE: action/tool names below are TEMPLATES; P1 verifies them against the real PB tool schema and
+# the FHIR resource.subject path before enabling enforce mode on PB.
+
+subject:
+  type: patient
+  id_context_keys: [patient_ref, patient_id, patient, subject]
+
+# args that carry the operated-on patient id -> Module A scope check (wrong-patient BLOCK)
+subject_arg_keys: [patient, subject, patient_id, subject_id]
+
+read_actions:
+  - fhir_search
+  - fhir_read
+  - fhir_observation_search_labs
+reversible_actions:
+  - write_file
+commit_actions:
+  - create_medication_request
+  - fhir_create
+  - fhir_update
+
+evidence_obligations:
+  - id: check_allergies
+    satisfied_by: {tool: fhir_search, resource_type: AllergyIntolerance}
+  - id: check_current_medications
+    satisfied_by: {tool: fhir_search, resource_type: MedicationRequest}
+
+workflow_obligations:
+  - id: medication_safety_review
+    requires: [check_allergies, check_current_medications]
+
+commit_points:
+  - action: create_medication_request
+    risk: R2
+    requires: [medication_safety_review]
+    postcondition: created_resource_read_back

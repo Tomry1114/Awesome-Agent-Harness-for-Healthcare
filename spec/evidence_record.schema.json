@@ -1,0 +1,15 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "EvidenceRecord",
+  "description": "One piece of observed evidence, bound to the subject it came from.",
+  "type": "object",
+  "required": ["evidence_id", "type", "subject_id"],
+  "properties": {
+    "evidence_id": {"type": "string"},
+    "type": {"type": "string"},
+    "value": {},
+    "subject_id": {"type": ["string", "null"]},
+    "source_event": {"type": ["string", "null"]},
+    "source_type": {"type": ["string", "null"]}
+  }
+}

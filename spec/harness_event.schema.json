@@ -1,0 +1,35 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "HarnessEvent",
+  "description": "A harness trajectory event — DISTINCT from ordinary tool events.",
+  "oneOf": [
+    {
+      "type": "object",
+      "required": ["event_type", "decision"],
+      "properties": {
+        "event_type": {"const": "harness_decision"},
+        "id": {"type": "string"},
+        "stage": {"type": "string", "enum": ["before_action", "after_action", "before_final"]},
+        "mode": {"type": "string", "enum": ["observe", "assist", "enforce"]},
+        "capability": {"type": ["string", "null"]},
+        "decision": {"type": "string", "enum": ["ALLOW", "REVISE", "BLOCK", "ESCALATE"]},
+        "effective": {"type": ["string", "null"], "enum": ["ALLOW", "REVISE", "BLOCK", "ESCALATE", null]},
+        "rule_id": {"type": ["string", "null"]},
+        "missing_obligations": {"type": "array", "items": {"type": "string"}},
+        "proposed_action_id": {"type": ["string", "null"]},
+        "deterministic": {"type": ["boolean", "null"]}
+      }
+    },
+    {
+      "type": "object",
+      "required": ["event_type", "resolution"],
+      "properties": {
+        "event_type": {"const": "harness_resolution"},
+        "id": {"type": "string"},
+        "original_decision_id": {"type": ["string", "null"]},
+        "resolution": {"type": "string"},
+        "satisfying_event_ids": {"type": "array", "items": {"type": "string"}}
+      }
+    }
+  ]
+}

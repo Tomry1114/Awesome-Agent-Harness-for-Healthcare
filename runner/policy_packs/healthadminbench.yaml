@@ -1,0 +1,29 @@
+# HealthAdminBench policy pack (P2 target — workflow-heavy). Templates; verified in P2.
+
+subject:
+  type: admin_case
+  id_context_keys: [case_id, authorization_id, appeal_id, member_id]
+
+subject_arg_keys: [case_id, authorization_id, appeal_id]
+
+read_actions: [navigate, view, snapshot, search_claims, check_eligibility]
+reversible_actions: [type, fill, select, upload]
+commit_actions: [submit, send_appeal, change_case_status, upload_final_document]
+
+evidence_obligations:
+  - id: locate_case
+    satisfied_by: {tool: navigate}
+  - id: check_eligibility
+    satisfied_by: {tool: check_eligibility}
+  - id: prepare_materials
+    satisfied_by: {tool: upload}
+
+workflow_obligations:
+  - id: appeal_packet_complete
+    requires: [locate_case, check_eligibility, prepare_materials]
+
+commit_points:
+  - action: submit
+    risk: R2
+    requires: [appeal_packet_complete]
+    postcondition: case_status_not_draft

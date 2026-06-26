@@ -1,0 +1,41 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ClinicalProcessContract",
+  "description": "Per-task executable description of a CORRECT PROCESS. NOT a gold answer / reference trajectory.",
+  "type": "object",
+  "required": ["contract_id"],
+  "properties": {
+    "contract_id": {"type": "string"},
+    "subject": {
+      "type": ["object", "null"],
+      "properties": {"type": {"type": ["string", "null"]}, "id": {"type": ["string", "null"]}}
+    },
+    "evidence_obligations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id"],
+        "properties": {
+          "id": {"type": "string"},
+          "satisfied_by": {"type": "object",
+            "properties": {"tool": {"type": "string"}, "resource_type": {"type": "string"}}}
+        }
+      }
+    },
+    "workflow_obligations": {
+      "type": "array",
+      "items": {"type": "object", "required": ["id"],
+        "properties": {"id": {"type": "string"}, "requires": {"type": "array", "items": {"type": "string"}}}}
+    },
+    "commit_points": {
+      "type": "array",
+      "items": {"type": "object", "required": ["action"],
+        "properties": {
+          "action": {"type": "string"},
+          "risk": {"type": "string", "enum": ["R0", "R1", "R2", "R3"]},
+          "requires": {"type": "array", "items": {"type": "string"}},
+          "postcondition": {"type": ["string", "null"]}}}
+    },
+    "meta": {"type": "object"}
+  }
+}

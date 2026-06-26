@@ -1,0 +1,67 @@
+"""Module A — Clinical Scope & Evidence Binding.
+
+Addresses "did the right thing, but to the WRONG subject or from the WRONG evidence". Maintains the
+active subject + the evidence ledger; blocks actions that operate on a foreign subject and binds
+observed evidence to the subject it came from. P0: deterministic subject-scope check driven by the
+policy pack's `subject_arg_keys` (which action arg holds the operated-on id). Richer per-dataset
+evidence binding (FHIR resource.subject / case id / image region) is layered in P1–P3.
+"""
+from ..capability import Capability
+from .. import decision as D
+
+
+class ScopeEvidenceBinding(Capability):
+    name = "scope_evidence"
+
+    def before_action(self, action, ctx):
+        active = ctx.ledger.subject_id()
+        if not active:
+            return None                                   # no assigned subject yet -> nothing to enforce
+        target = self._action_target(action, ctx.policy)
+        if target is not None and _norm(target) != _norm(active):
+            return self._decide(
+                D.BLOCK, rule_id="subject_scope_mismatch", deterministic=True,
+                reason="action operates on %s but the active subject is %s" % (target, active),
+                feedback="This action targets %s; the assigned subject is %s. Operate only on %s."
+                         % (target, active, active),
+                extra={"target": target, "active_subject": active})
+        return None
+
+    def after_action(self, action, result, before_state, after_state, ctx):
+        # bind read-derived evidence to the active subject (lightweight, generic for P0)
+        active = ctx.ledger.subject_id()
+        name = action.get("tool") if isinstance(action, dict) else None
+        if name and active and _looks_read(name, ctx.policy):
+            ctx.ledger.add_evidence(type=name, value=_summarize(result), subject_id=active,
+                                    source_event="step-%d" % ctx.step, source_type=ctx.env_type)
+        return None
+
+    def _action_target(self, action, policy):
+        """Which subject id this action operates on, read from its args via policy.subject_arg_keys."""
+        if not isinstance(action, dict):
+            return None
+        args = action.get("args") or {}
+        if not isinstance(args, dict):
+            return None
+        for k in (policy.get("subject_arg_keys") or []):
+            v = args.get(k)
+            if v:
+                return str(v)
+        return None
+
+
+def _looks_read(name, policy):
+    reads = set(policy.get("read_actions", []))
+    if name in reads:
+        return True
+    low = (name or "").lower()
+    return any(h in low for h in ("search", "read", "get", "view", "ocr", "describe", "lookup"))
+
+
+def _norm(x):
+    return str(x or "").strip().lower().split("/")[-1]
+
+
+def _summarize(result):
+    s = result if isinstance(result, str) else str(result)
+    return s[:200]
