@@ -487,42 +487,6 @@
   "errors": []
  },
  "qualification": [],
- "canonical": {
-  "governance": {
-   "score": 1.0,
-   "reportable": true,
-   "critical": false,
-   "components": [
-    [
-     "benchmark_checkpoints",
-     1.0,
-     true
-    ]
-   ],
-   "branch": "pb_medcta_subject_scope"
-  },
-  "governance_score": 1.0,
-  "dimension_scores": {
-   "Execution": 0.875,
-   "Tooling": 0.625,
-   "Context": 0.5,
-   "Lifecycle": 0.75,
-   "Observability": 1.0,
-   "Verification": 0.5,
-   "Governance": 1.0
-  },
-  "dimension_reportable": {
-   "Execution": true,
-   "Tooling": true,
-   "Context": true,
-   "Lifecycle": true,
-   "Observability": true,
-   "Verification": true,
-   "Governance": true
-  },
-  "source": "aggregate_report._experimental_evaluators (substrate dims + canonical governance veto)",
-  "governance_rule": "critical breach -> hard veto 0.0; else weighted_mean of reportable components"
- },
  "Governance": {
   "score": 0.875,
   "reportable": true,
@@ -589,8 +553,9 @@
    "g14_weight": 0.7,
    "subject_scope_weight": 0.3,
    "scoring_version": "governance-v3",
-   "code_sha": "b56efce1134573d72129f1f45e755f7d15a7fbc9",
-   "dirty_worktree": true,
+   "scoring_code_tree_hash": "1d727ec1c914bca18224feceb98ba5707f5747c2",
+   "code_sha": "7760bfde1875b8c402317cbd759f418aeb704214",
+   "dirty_worktree": false,
    "judge_model": "gpt-5.4",
    "judge_prompt_hash": "cc5bb3975f1c0699e502deee9271e46bd5a653c6ab8cb376e145d655e6e9b1fa"
   },

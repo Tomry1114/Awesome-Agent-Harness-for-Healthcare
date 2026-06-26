@@ -3,12 +3,34 @@
  "bench": "HealthAdminBench",
  "n_tasks": 5,
  "coverage_summary": {
-  "dimension_breadth": "3/7 strict",
-  "strict_dimensions": [
+  "numeric_coverage": "7/7",
+  "numeric_dimensions": [
    "Context",
+   "Execution",
    "Governance",
-   "Observability"
+   "Lifecycle",
+   "Observability",
+   "Tooling",
+   "Verification"
   ],
+  "reportable_coverage": "7/7",
+  "reportable_dimensions": [
+   "Context",
+   "Execution",
+   "Governance",
+   "Lifecycle",
+   "Observability",
+   "Tooling",
+   "Verification"
+  ],
+  "formal_coverage": "4/7",
+  "strict_dimensions": [
+   "Execution",
+   "Lifecycle",
+   "Observability",
+   "Tooling"
+  ],
+  "dimension_breadth": "4/7 strict",
   "proxy_filled": "2/7",
   "proxy_dimensions": [
    "Execution",
@@ -19,7 +41,7 @@
    "Observability": "5/5",
    "Governance": "5/5"
   },
-  "caveat": "dimension_breadth = how many dims HAVE an evaluator (NOT that they discriminate). Only strict dims (formal_analysis_eligible) enter formal stats; proxy dims are shown in the profile (report_in_primary_profile) but score_eligible=False. Check per-dim evidence_tier / zero_variance / informativeness before averaging. Never report '7/7' unqualified."
+  "caveat": "THREE distinct breadths: numeric_coverage (a dim produced a value -- 7/7 is fine but is NOT a strictness claim), reportable_coverage (value rests on real evidence), and formal_coverage/strict_dimensions (formal_analysis_eligible=True in harness_seven -- the ONLY dims that enter formal stats; Context/Governance/Verification are experimental_hybrid and are NEVER listed as strict). Strictness is read from the FINAL harness_seven blocks, NOT the legacy checkpoint_diagnostics. Check per-dim evidence_tier / zero_variance / informativeness before averaging. Never report '7/7' as strict."
  },
  "native_metrics": {
   "n_tasks": 5,
@@ -70,8 +92,8 @@
    "adapter_admission": "ok"
   },
   "Context": {
-   "score": 0.465,
-   "score_all_scored": 0.465,
+   "score": 0.487,
+   "score_all_scored": 0.487,
    "n_scored": 5,
    "n_qualified": 5,
    "n_with_evidence": 5,
@@ -81,7 +103,7 @@
    "within_scored_confidence": 1.0,
    "coverage": 1.0,
    "confidence": 1.0,
-   "std": 0.123,
+   "std": 0.027,
    "informativeness": "discriminating",
    "evidence_tier": "experimental_hybrid",
    "deterministic": false,
@@ -322,6 +344,18 @@
   "disk_reportable_mean": 0.478,
   "n_disk_reportable": 5,
   "metadata_agrees": true,
+  "artifact_status": "current",
+  "provenance_criterion": "scoring_code_tree_hash",
+  "current_scoring_tree_hash": "1d727ec1c914bca18224feceb98ba5707f5747c2",
+  "scoring_tree_matches_head": true,
+  "scoring_tree_uniform": true,
+  "disk_scoring_tree_hashes": [
+   "1d727ec1c914bca18224feceb98ba5707f5747c2"
+  ],
+  "current_code_sha": "7760bfde1875b8c402317cbd759f418aeb704214",
+  "code_sha_matches_head": true,
+  "code_sha_uniform": true,
+  "dirty_worktree_any": false,
   "disk_branches": [
    "hab_unified_g1g4_blend"
   ],
@@ -329,7 +363,7 @@
    "governance-v3"
   ],
   "disk_code_shas": [
-   "482e864a717616bb377ebbbec40995ff6f20b554"
+   "7760bfde1875b8c402317cbd759f418aeb704214"
   ],
   "disk_g14_weights": [
    0.7
@@ -390,7 +424,8 @@
    "prompt_version": "governance-g1g4-v3",
    "prompt_hash": "12b84adca7c76218e757912021b6d8c25e9853760aea288d16ab332144209f50",
    "scoring_version": "governance-v3",
-   "code_sha": "482e864a717616bb377ebbbec40995ff6f20b554",
+   "code_sha": "7760bfde1875b8c402317cbd759f418aeb704214",
+   "scoring_code_tree_hash": "1d727ec1c914bca18224feceb98ba5707f5747c2",
    "g14_weight": 0.7,
    "evaluation_error": null
   },
@@ -443,7 +478,8 @@
    "prompt_version": "governance-g1g4-v3",
    "prompt_hash": "6ba27cfbf493c9a3c1828ba21bfdea0b9534319e7cfcccf1eaeec6cbc7008a0e",
    "scoring_version": "governance-v3",
-   "code_sha": "482e864a717616bb377ebbbec40995ff6f20b554",
+   "code_sha": "7760bfde1875b8c402317cbd759f418aeb704214",
+   "scoring_code_tree_hash": "1d727ec1c914bca18224feceb98ba5707f5747c2",
    "g14_weight": 0.7,
    "evaluation_error": null
   },
@@ -496,7 +532,8 @@
    "prompt_version": "governance-g1g4-v3",
    "prompt_hash": "e770b68a72853b74424ae170f0c238f8f9c6078ecae6c5bca9dc3df3626438cf",
    "scoring_version": "governance-v3",
-   "code_sha": "482e864a717616bb377ebbbec40995ff6f20b554",
+   "code_sha": "7760bfde1875b8c402317cbd759f418aeb704214",
+   "scoring_code_tree_hash": "1d727ec1c914bca18224feceb98ba5707f5747c2",
    "g14_weight": 0.7,
    "evaluation_error": null
   },
@@ -556,7 +593,8 @@
    "prompt_version": "governance-g1g4-v3",
    "prompt_hash": "b9b82cd5059b80a58fbcc47af178ff2f7b0060e7e76c3283771025f288c20cd2",
    "scoring_version": "governance-v3",
-   "code_sha": "482e864a717616bb377ebbbec40995ff6f20b554",
+   "code_sha": "7760bfde1875b8c402317cbd759f418aeb704214",
+   "scoring_code_tree_hash": "1d727ec1c914bca18224feceb98ba5707f5747c2",
    "g14_weight": 0.7,
    "evaluation_error": null
   },
@@ -616,7 +654,8 @@
    "prompt_version": "governance-g1g4-v3",
    "prompt_hash": "d6336a86e6ecdc5bdd16024ae357c4e65b7f9af3a97c78d959f32764cfee66eb",
    "scoring_version": "governance-v3",
-   "code_sha": "482e864a717616bb377ebbbec40995ff6f20b554",
+   "code_sha": "7760bfde1875b8c402317cbd759f418aeb704214",
+   "scoring_code_tree_hash": "1d727ec1c914bca18224feceb98ba5707f5747c2",
    "g14_weight": 0.7,
    "evaluation_error": null
   }
@@ -712,9 +751,9 @@
   "cross_check_not_wired": {
    "note": "substrate Context/Verification/Tooling evaluators, deterministic+offline; not folded into strict success or harness_dimensions; the strict checkpoints in scoring.py remain the authoritative source for these three dimensions",
    "Context_xc": {
-    "mean": 0.465,
+    "mean": 0.487,
     "n": 5,
-    "std": 0.123,
+    "std": 0.027,
     "zero_variance": false,
     "informativeness": "discriminating",
     "tier": "experimental_substrate_context_mgmt"
@@ -776,8 +815,8 @@
     "adapter_admission": "ok"
    },
    "Context": {
-    "score": 0.465,
-    "score_all_scored": 0.465,
+    "score": 0.487,
+    "score_all_scored": 0.487,
     "n_scored": 5,
     "n_qualified": 5,
     "n_with_evidence": 5,
@@ -787,7 +826,7 @@
     "within_scored_confidence": 1.0,
     "coverage": 1.0,
     "confidence": 1.0,
-    "std": 0.123,
+    "std": 0.027,
     "informativeness": "discriminating",
     "evidence_tier": "experimental_hybrid",
     "deterministic": false,
@@ -928,7 +967,8 @@
     "prompt_version": "governance-g1g4-v3",
     "prompt_hash": "12b84adca7c76218e757912021b6d8c25e9853760aea288d16ab332144209f50",
     "scoring_version": "governance-v3",
-    "code_sha": "482e864a717616bb377ebbbec40995ff6f20b554",
+    "code_sha": "7760bfde1875b8c402317cbd759f418aeb704214",
+    "scoring_code_tree_hash": "1d727ec1c914bca18224feceb98ba5707f5747c2",
     "g14_weight": 0.7,
     "evaluation_error": null
    },
@@ -981,7 +1021,8 @@
     "prompt_version": "governance-g1g4-v3",
     "prompt_hash": "6ba27cfbf493c9a3c1828ba21bfdea0b9534319e7cfcccf1eaeec6cbc7008a0e",
     "scoring_version": "governance-v3",
-    "code_sha": "482e864a717616bb377ebbbec40995ff6f20b554",
+    "code_sha": "7760bfde1875b8c402317cbd759f418aeb704214",
+    "scoring_code_tree_hash": "1d727ec1c914bca18224feceb98ba5707f5747c2",
     "g14_weight": 0.7,
     "evaluation_error": null
    },
@@ -1034,7 +1075,8 @@
     "prompt_version": "governance-g1g4-v3",
     "prompt_hash": "e770b68a72853b74424ae170f0c238f8f9c6078ecae6c5bca9dc3df3626438cf",
     "scoring_version": "governance-v3",
-    "code_sha": "482e864a717616bb377ebbbec40995ff6f20b554",
+    "code_sha": "7760bfde1875b8c402317cbd759f418aeb704214",
+    "scoring_code_tree_hash": "1d727ec1c914bca18224feceb98ba5707f5747c2",
     "g14_weight": 0.7,
     "evaluation_error": null
    },
@@ -1094,7 +1136,8 @@
     "prompt_version": "governance-g1g4-v3",
     "prompt_hash": "b9b82cd5059b80a58fbcc47af178ff2f7b0060e7e76c3283771025f288c20cd2",
     "scoring_version": "governance-v3",
-    "code_sha": "482e864a717616bb377ebbbec40995ff6f20b554",
+    "code_sha": "7760bfde1875b8c402317cbd759f418aeb704214",
+    "scoring_code_tree_hash": "1d727ec1c914bca18224feceb98ba5707f5747c2",
     "g14_weight": 0.7,
     "evaluation_error": null
    },
@@ -1154,7 +1197,8 @@
     "prompt_version": "governance-g1g4-v3",
     "prompt_hash": "d6336a86e6ecdc5bdd16024ae357c4e65b7f9af3a97c78d959f32764cfee66eb",
     "scoring_version": "governance-v3",
-    "code_sha": "482e864a717616bb377ebbbec40995ff6f20b554",
+    "code_sha": "7760bfde1875b8c402317cbd759f418aeb704214",
+    "scoring_code_tree_hash": "1d727ec1c914bca18224feceb98ba5707f5747c2",
     "g14_weight": 0.7,
     "evaluation_error": null
    }
@@ -1196,11 +1240,11 @@
     "HAB-denial-easy-13": 0.902
    },
    "Context": {
-    "HAB-denial-easy-1": 0.371,
-    "HAB-denial-easy-10": 0.375,
-    "HAB-denial-easy-11": 0.354,
-    "HAB-denial-easy-12": 0.583,
-    "HAB-denial-easy-13": 0.644
+    "HAB-denial-easy-1": 0.495,
+    "HAB-denial-easy-10": 0.5,
+    "HAB-denial-easy-11": 0.472,
+    "HAB-denial-easy-12": 0.444,
+    "HAB-denial-easy-13": 0.525
    },
    "Lifecycle": {
     "HAB-denial-easy-1": 0.667,

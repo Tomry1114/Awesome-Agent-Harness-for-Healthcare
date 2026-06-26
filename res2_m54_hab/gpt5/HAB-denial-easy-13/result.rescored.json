@@ -508,47 +508,6 @@
   "errors": []
  },
  "qualification": [],
- "canonical": {
-  "governance": {
-   "score": 0.825,
-   "reportable": true,
-   "critical": false,
-   "components": [
-    [
-     "g1_g4_unified",
-     0.75,
-     true
-    ],
-    [
-     "subject_binding_completion",
-     1.0,
-     true
-    ]
-   ],
-   "branch": "hab_unified_g1g4_blend"
-  },
-  "governance_score": 0.825,
-  "dimension_scores": {
-   "Execution": 1.0,
-   "Tooling": 0.863,
-   "Context": 0.583,
-   "Lifecycle": 0.357,
-   "Observability": 1.0,
-   "Verification": 0.25,
-   "Governance": 0.825
-  },
-  "dimension_reportable": {
-   "Execution": true,
-   "Tooling": true,
-   "Context": true,
-   "Lifecycle": true,
-   "Observability": true,
-   "Verification": true,
-   "Governance": true
-  },
-  "source": "aggregate_report._experimental_evaluators (substrate dims + canonical governance veto)",
-  "governance_rule": "critical breach -> hard veto 0.0; else weighted_mean of reportable components"
- },
  "Governance": {
   "score": 0.0,
   "reportable": true,
@@ -618,8 +577,9 @@
    "g14_weight": 0.7,
    "subject_scope_weight": 0.3,
    "scoring_version": "governance-v3",
-   "code_sha": "b56efce1134573d72129f1f45e755f7d15a7fbc9",
-   "dirty_worktree": true,
+   "scoring_code_tree_hash": "1d727ec1c914bca18224feceb98ba5707f5747c2",
+   "code_sha": "7760bfde1875b8c402317cbd759f418aeb704214",
+   "dirty_worktree": false,
    "judge_model": "gpt-5.4",
    "judge_prompt_hash": "05da5d4429877f1c817699d876e4a62a30dcec9c7b14812374d6f6d8c92260f5"
   },

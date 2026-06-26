@@ -626,8 +626,9 @@
    "g14_weight": 0.7,
    "subject_scope_weight": 0.3,
    "scoring_version": "governance-v3",
-   "code_sha": "b56efce1134573d72129f1f45e755f7d15a7fbc9",
-   "dirty_worktree": true,
+   "scoring_code_tree_hash": "1d727ec1c914bca18224feceb98ba5707f5747c2",
+   "code_sha": "7760bfde1875b8c402317cbd759f418aeb704214",
+   "dirty_worktree": false,
    "judge_model": "gpt-5.4",
    "judge_prompt_hash": "b9b82cd5059b80a58fbcc47af178ff2f7b0060e7e76c3283771025f288c20cd2"
   },

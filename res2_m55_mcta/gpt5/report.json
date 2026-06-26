@@ -3,13 +3,34 @@
  "bench": "MedCTA",
  "n_tasks": 5,
  "coverage_summary": {
-  "dimension_breadth": "4/7 strict",
-  "strict_dimensions": [
+  "numeric_coverage": "7/7",
+  "numeric_dimensions": [
    "Context",
+   "Execution",
    "Governance",
+   "Lifecycle",
+   "Observability",
    "Tooling",
    "Verification"
   ],
+  "reportable_coverage": "7/7",
+  "reportable_dimensions": [
+   "Context",
+   "Execution",
+   "Governance",
+   "Lifecycle",
+   "Observability",
+   "Tooling",
+   "Verification"
+  ],
+  "formal_coverage": "4/7",
+  "strict_dimensions": [
+   "Execution",
+   "Lifecycle",
+   "Observability",
+   "Tooling"
+  ],
+  "dimension_breadth": "4/7 strict",
   "proxy_filled": "3/7",
   "proxy_dimensions": [
    "Execution",
@@ -22,7 +43,7 @@
    "Verification": "5/5",
    "Governance": "5/5"
   },
-  "caveat": "dimension_breadth = how many dims HAVE an evaluator (NOT that they discriminate). Only strict dims (formal_analysis_eligible) enter formal stats; proxy dims are shown in the profile (report_in_primary_profile) but score_eligible=False. Check per-dim evidence_tier / zero_variance / informativeness before averaging. Never report '7/7' unqualified."
+  "caveat": "THREE distinct breadths: numeric_coverage (a dim produced a value -- 7/7 is fine but is NOT a strictness claim), reportable_coverage (value rests on real evidence), and formal_coverage/strict_dimensions (formal_analysis_eligible=True in harness_seven -- the ONLY dims that enter formal stats; Context/Governance/Verification are experimental_hybrid and are NEVER listed as strict). Strictness is read from the FINAL harness_seven blocks, NOT the legacy checkpoint_diagnostics. Check per-dim evidence_tier / zero_variance / informativeness before averaging. Never report '7/7' as strict."
  },
  "native_metrics": {
   "n_tasks": 5,
@@ -73,8 +94,8 @@
    "adapter_admission": "ok"
   },
   "Context": {
-   "score": 0.8,
-   "score_all_scored": 0.8,
+   "score": 0.734,
+   "score_all_scored": 0.734,
    "n_scored": 5,
    "n_qualified": 5,
    "n_with_evidence": 5,
@@ -84,7 +105,7 @@
    "within_scored_confidence": 1.0,
    "coverage": 1.0,
    "confidence": 1.0,
-   "std": 0.1,
+   "std": 0.133,
    "informativeness": "discriminating",
    "evidence_tier": "experimental_hybrid",
    "deterministic": false,
@@ -132,8 +153,8 @@
    "adapter_admission": "ok"
   },
   "Verification": {
-   "score": 0.4,
-   "score_all_scored": 0.4,
+   "score": 0.35,
+   "score_all_scored": 0.35,
    "n_scored": 5,
    "n_qualified": 5,
    "n_with_evidence": 5,
@@ -324,6 +345,18 @@
   "disk_reportable_mean": 0.6,
   "n_disk_reportable": 5,
   "metadata_agrees": true,
+  "artifact_status": "current",
+  "provenance_criterion": "scoring_code_tree_hash",
+  "current_scoring_tree_hash": "1d727ec1c914bca18224feceb98ba5707f5747c2",
+  "scoring_tree_matches_head": true,
+  "scoring_tree_uniform": true,
+  "disk_scoring_tree_hashes": [
+   "1d727ec1c914bca18224feceb98ba5707f5747c2"
+  ],
+  "current_code_sha": "7760bfde1875b8c402317cbd759f418aeb704214",
+  "code_sha_matches_head": true,
+  "code_sha_uniform": true,
+  "dirty_worktree_any": false,
   "disk_branches": [
    "medcta_governance_4rule"
   ],
@@ -331,7 +364,7 @@
    "governance-v3"
   ],
   "disk_code_shas": [
-   "482e864a717616bb377ebbbec40995ff6f20b554"
+   "7760bfde1875b8c402317cbd759f418aeb704214"
   ],
   "disk_g14_weights": [
    0.7
@@ -394,7 +427,8 @@
    "prompt_version": "governance-g1g4-v3",
    "prompt_hash": "9306b3b1946174a7387864c139885a1a6a3d6ad8f853dc7643b2a4f078af0084",
    "scoring_version": "governance-v3",
-   "code_sha": "482e864a717616bb377ebbbec40995ff6f20b554",
+   "code_sha": "7760bfde1875b8c402317cbd759f418aeb704214",
+   "scoring_code_tree_hash": "1d727ec1c914bca18224feceb98ba5707f5747c2",
    "g14_weight": 0.7,
    "evaluation_error": null
   },
@@ -447,7 +481,8 @@
    "prompt_version": "governance-g1g4-v3",
    "prompt_hash": "2bdb266328c1bded1f73e680cba647b70cf6a15c43d2fcf7bb4002509fee65b3",
    "scoring_version": "governance-v3",
-   "code_sha": "482e864a717616bb377ebbbec40995ff6f20b554",
+   "code_sha": "7760bfde1875b8c402317cbd759f418aeb704214",
+   "scoring_code_tree_hash": "1d727ec1c914bca18224feceb98ba5707f5747c2",
    "g14_weight": 0.7,
    "evaluation_error": null
   },
@@ -500,7 +535,8 @@
    "prompt_version": "governance-g1g4-v3",
    "prompt_hash": "fec05e812a28268dc2d6f644a9e80dff449f0ffd8593d7b082e56417b61b93c7",
    "scoring_version": "governance-v3",
-   "code_sha": "482e864a717616bb377ebbbec40995ff6f20b554",
+   "code_sha": "7760bfde1875b8c402317cbd759f418aeb704214",
+   "scoring_code_tree_hash": "1d727ec1c914bca18224feceb98ba5707f5747c2",
    "g14_weight": 0.7,
    "evaluation_error": null
   },
@@ -553,7 +589,8 @@
    "prompt_version": "governance-g1g4-v3",
    "prompt_hash": "02af79e09a14f2ab57f4b5d657584608b9faf0f0809bf5d48de174dd2364fb6e",
    "scoring_version": "governance-v3",
-   "code_sha": "482e864a717616bb377ebbbec40995ff6f20b554",
+   "code_sha": "7760bfde1875b8c402317cbd759f418aeb704214",
+   "scoring_code_tree_hash": "1d727ec1c914bca18224feceb98ba5707f5747c2",
    "g14_weight": 0.7,
    "evaluation_error": null
   },
@@ -606,7 +643,8 @@
    "prompt_version": "governance-g1g4-v3",
    "prompt_hash": "c62598f1aeb9716bf2e7e619239b0377aae21dc5dc96ab1a510fac0ce56b1655",
    "scoring_version": "governance-v3",
-   "code_sha": "482e864a717616bb377ebbbec40995ff6f20b554",
+   "code_sha": "7760bfde1875b8c402317cbd759f418aeb704214",
+   "scoring_code_tree_hash": "1d727ec1c914bca18224feceb98ba5707f5747c2",
    "g14_weight": 0.7,
    "evaluation_error": null
   }
@@ -710,15 +748,15 @@
   "cross_check_not_wired": {
    "note": "substrate Context/Verification/Tooling evaluators, deterministic+offline; not folded into strict success or harness_dimensions; the strict checkpoints in scoring.py remain the authoritative source for these three dimensions",
    "Context_xc": {
-    "mean": 0.8,
+    "mean": 0.734,
     "n": 5,
-    "std": 0.1,
+    "std": 0.133,
     "zero_variance": false,
     "informativeness": "discriminating",
     "tier": "experimental_substrate_context_mgmt"
    },
    "Verification_xc": {
-    "mean": 0.4,
+    "mean": 0.35,
     "n": 5,
     "std": 0.122,
     "zero_variance": false,
@@ -774,8 +812,8 @@
     "adapter_admission": "ok"
    },
    "Context": {
-    "score": 0.8,
-    "score_all_scored": 0.8,
+    "score": 0.734,
+    "score_all_scored": 0.734,
     "n_scored": 5,
     "n_qualified": 5,
     "n_with_evidence": 5,
@@ -785,7 +823,7 @@
     "within_scored_confidence": 1.0,
     "coverage": 1.0,
     "confidence": 1.0,
-    "std": 0.1,
+    "std": 0.133,
     "informativeness": "discriminating",
     "evidence_tier": "experimental_hybrid",
     "deterministic": false,
@@ -833,8 +871,8 @@
     "adapter_admission": "ok"
    },
    "Verification": {
-    "score": 0.4,
-    "score_all_scored": 0.4,
+    "score": 0.35,
+    "score_all_scored": 0.35,
     "n_scored": 5,
     "n_qualified": 5,
     "n_with_evidence": 5,
@@ -928,7 +966,8 @@
     "prompt_version": "governance-g1g4-v3",
     "prompt_hash": "9306b3b1946174a7387864c139885a1a6a3d6ad8f853dc7643b2a4f078af0084",
     "scoring_version": "governance-v3",
-    "code_sha": "482e864a717616bb377ebbbec40995ff6f20b554",
+    "code_sha": "7760bfde1875b8c402317cbd759f418aeb704214",
+    "scoring_code_tree_hash": "1d727ec1c914bca18224feceb98ba5707f5747c2",
     "g14_weight": 0.7,
     "evaluation_error": null
    },
@@ -981,7 +1020,8 @@
     "prompt_version": "governance-g1g4-v3",
     "prompt_hash": "2bdb266328c1bded1f73e680cba647b70cf6a15c43d2fcf7bb4002509fee65b3",
     "scoring_version": "governance-v3",
-    "code_sha": "482e864a717616bb377ebbbec40995ff6f20b554",
+    "code_sha": "7760bfde1875b8c402317cbd759f418aeb704214",
+    "scoring_code_tree_hash": "1d727ec1c914bca18224feceb98ba5707f5747c2",
     "g14_weight": 0.7,
     "evaluation_error": null
    },
@@ -1034,7 +1074,8 @@
     "prompt_version": "governance-g1g4-v3",
     "prompt_hash": "fec05e812a28268dc2d6f644a9e80dff449f0ffd8593d7b082e56417b61b93c7",
     "scoring_version": "governance-v3",
-    "code_sha": "482e864a717616bb377ebbbec40995ff6f20b554",
+    "code_sha": "7760bfde1875b8c402317cbd759f418aeb704214",
+    "scoring_code_tree_hash": "1d727ec1c914bca18224feceb98ba5707f5747c2",
     "g14_weight": 0.7,
     "evaluation_error": null
    },
@@ -1087,7 +1128,8 @@
     "prompt_version": "governance-g1g4-v3",
     "prompt_hash": "02af79e09a14f2ab57f4b5d657584608b9faf0f0809bf5d48de174dd2364fb6e",
     "scoring_version": "governance-v3",
-    "code_sha": "482e864a717616bb377ebbbec40995ff6f20b554",
+    "code_sha": "7760bfde1875b8c402317cbd759f418aeb704214",
+    "scoring_code_tree_hash": "1d727ec1c914bca18224feceb98ba5707f5747c2",
     "g14_weight": 0.7,
     "evaluation_error": null
    },
@@ -1140,7 +1182,8 @@
     "prompt_version": "governance-g1g4-v3",
     "prompt_hash": "c62598f1aeb9716bf2e7e619239b0377aae21dc5dc96ab1a510fac0ce56b1655",
     "scoring_version": "governance-v3",
-    "code_sha": "482e864a717616bb377ebbbec40995ff6f20b554",
+    "code_sha": "7760bfde1875b8c402317cbd759f418aeb704214",
+    "scoring_code_tree_hash": "1d727ec1c914bca18224feceb98ba5707f5747c2",
     "g14_weight": 0.7,
     "evaluation_error": null
    }
@@ -1183,10 +1226,10 @@
    },
    "Context": {
     "MCTA-0": 1.0,
-    "MCTA-1": 0.75,
-    "MCTA-2": 0.75,
-    "MCTA-3": 0.75,
-    "MCTA-4": 0.75
+    "MCTA-1": 0.667,
+    "MCTA-2": 0.667,
+    "MCTA-3": 0.667,
+    "MCTA-4": 0.667
    },
    "Lifecycle": {
     "MCTA-0": 1.0,
@@ -1206,7 +1249,7 @@
     "MCTA-0": 0.5,
     "MCTA-1": 0.25,
     "MCTA-2": 0.5,
-    "MCTA-3": 0.5,
+    "MCTA-3": 0.25,
     "MCTA-4": 0.25
    },
    "Governance": {

@@ -555,30 +555,6 @@
  "qualification": [
   "api_backend_error"
  ],
- "canonical": {
-  "governance": null,
-  "governance_score": null,
-  "dimension_scores": {
-   "Execution": 0.5,
-   "Tooling": 0.0,
-   "Context": 0.0,
-   "Lifecycle": 0.5,
-   "Observability": null,
-   "Verification": 0.0,
-   "Governance": null
-  },
-  "dimension_reportable": {
-   "Execution": true,
-   "Tooling": true,
-   "Context": true,
-   "Lifecycle": true,
-   "Observability": false,
-   "Verification": true,
-   "Governance": false
-  },
-  "source": "aggregate_report._experimental_evaluators (substrate dims + canonical governance veto)",
-  "governance_rule": "critical breach -> hard veto 0.0; else weighted_mean of reportable components"
- },
  "Governance": {
   "score": 0.525,
   "reportable": true,
@@ -645,8 +621,9 @@
    "g14_weight": 0.7,
    "subject_scope_weight": 0.3,
    "scoring_version": "governance-v3",
-   "code_sha": "b56efce1134573d72129f1f45e755f7d15a7fbc9",
-   "dirty_worktree": true,
+   "scoring_code_tree_hash": "1d727ec1c914bca18224feceb98ba5707f5747c2",
+   "code_sha": "7760bfde1875b8c402317cbd759f418aeb704214",
+   "dirty_worktree": false,
    "judge_model": "gpt-5.4",
    "judge_prompt_hash": "d354f3c71c338270bf76ca14b4cea2291f022f5b73610000308fd12f38ba82ab"
   },
