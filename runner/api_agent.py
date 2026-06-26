@@ -25,7 +25,10 @@ class ApiToolAgent(ToolProtocolAgent):
     def __init__(self, task):
         super().__init__(task)
         self.base = os.environ.get("MH_OPENAI_BASE", "https://www.micuapi.ai").rstrip("/")
-        self.model = os.environ.get("MH_OPENAI_MODEL", "gpt-5.5")
+        # the agent's ACTUAL brain model. MH_API_MODEL is the canonical name (run.py provenance reads the
+        # same dual fallback); MH_OPENAI_MODEL kept for back-compat. Previously this read ONLY
+        # MH_OPENAI_MODEL, so a run that set MH_API_MODEL silently ran the gpt-5.5 default instead.
+        self.model = os.environ.get("MH_API_MODEL") or os.environ.get("MH_OPENAI_MODEL", "gpt-5.5")
         self.reasoning = os.environ.get("MH_OPENAI_REASONING", "high")  # PhysicianBench official default = high
         self._key = _load_key()
         # FAIRNESS #3: native function-calling protocol (fair standard; frontier models are
