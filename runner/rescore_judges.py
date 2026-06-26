@@ -104,6 +104,24 @@ def _sha(s):
     return hashlib.sha256((s or "").encode("utf-8")).hexdigest()
 
 
+def _sha_file(path):
+    """sha256 of a file's bytes (None if absent). The unit of source-input provenance recorded into each
+    Governance block so aggregate can detect a bundle edited AFTER rescoring."""
+    try:
+        with open(path, "rb") as fh:
+            return hashlib.sha256(fh.read()).hexdigest()
+    except Exception:
+        return None
+
+
+def _tasks_unified_sha(bench):
+    """sha256 of the LIVE tasks_unified.jsonl aggregate's _remap reads (checkpoint dimension/subdim/WEIGHT).
+    Resolved from the repo root (dirname(dirname(__file__))) so it is cwd-independent yet hashes the SAME
+    file aggregate_report reads via _ROOT/<bench>/tasks_unified.jsonl."""
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    return _sha_file(os.path.join(root, "benchmark_dataprocess", bench, "tasks_unified.jsonl"))
+
+
 # ---- judge cache + a gateway.chat wrapper so governance()'s internal judge call is CACHED -------------
 class _JudgeCache:
     """Disk cache for the ONE governance judge call per task. Key = (task_id, output_hash, judge_model,
@@ -345,6 +363,20 @@ def rescore(agent_dir, bench, judge_model=DEFAULT_JUDGE):
 
         block = _build_governance_block(bench, gov, scope, gcps, judge_model, agent_model,
                                         extraction, cache, evaluation_error=eval_err, tool_model=tool_model)
+        # SOURCE-INPUT PROVENANCE (P0/P1): hashes of the raw inputs this Governance was computed from, so the
+        # aggregate can detect a bundle whose result/trajectory/task/checkpoint-set was edited AFTER rescoring
+        # (which the runner-tree guard cannot see). Recomputed + compared live by aggregate's source audit.
+        block["input_provenance"] = {
+            "raw_result_sha256": _sha_file(os.path.join(bdir, "result.json")),
+            "trajectory_sha256": _sha_file(os.path.join(bdir, "trajectory.jsonl")),
+            "task_json_sha256": _sha_file(os.path.join(bdir, "task.json")),
+            "checkpoint_set_sha256": _sha(json.dumps(
+                [[c.get("id"), c.get("dimension"), c.get("subdimension"), c.get("weight")]
+                 for c in (res.get("checkpoints") or [])], sort_keys=True, ensure_ascii=False)),
+        }
+        # task-asset provenance: the tasks_unified.jsonl aggregate re-maps from (dimension/subdim/WEIGHT).
+        if isinstance(block.get("scoring_config"), dict):
+            block["scoring_config"]["tasks_unified_sha256"] = _tasks_unified_sha(bench)
         if block.get("evaluation_error"):
             if block["evaluation_error"] == "judge_not_independent" and refused:
                 pass

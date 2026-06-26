@@ -698,15 +698,17 @@ def _read_disk_governance(agent_dir):
         if blk is None:
             out[tid] = {"score": None, "reportable": False, "critical": None, "branch": None,
                         "scoring_version": None, "code_sha": None, "scoring_code_tree_hash": None,
-                        "dirty_worktree": None,
+                        "dirty_worktree": None, "judge_model": None, "prompt_version": None,
                         "g14_weight": None, "evaluation_error": err}
             continue
         _sc = blk.get("scoring_config") or {}
+        _j = blk.get("judge") or {}
         out[tid] = {"score": blk.get("score"), "reportable": bool(blk.get("reportable")),
                     "critical": blk.get("critical"), "branch": blk.get("branch"),
                     "scoring_version": _sc.get("scoring_version"), "code_sha": _sc.get("code_sha"),
                     "scoring_code_tree_hash": _sc.get("scoring_code_tree_hash"),
                     "dirty_worktree": _sc.get("dirty_worktree"),
+                    "judge_model": _j.get("model"), "prompt_version": _j.get("prompt_version"),
                     "g14_weight": _sc.get("g14_weight"), "evaluation_error": blk.get("evaluation_error")}
     return out
 
@@ -723,6 +725,7 @@ def build(agent_dir, bench):
     # rescore_judges.py per the SHARED CONTRACT). _read_disk_governance re-reads that on-disk view for the
     # disk-consistency check; _exp_panel.harness_seven.Governance was built from the SAME blocks -> they agree.
     _disk_gov = _read_disk_governance(agent_dir)
+    _src_prov = _source_provenance_audit(agent_dir, bench)   # P0/P1: live-recompute source-input hashes
     # FILL the Execution / Lifecycle / Observability dimension cells with the substrate-based dimension
     # evaluators (dim_execution / dim_lifecycle / dim_observability). Single source of truth: the old
     # raw-event lifecycle_exec formulas and the proxy_verifiers Observability pipeline no longer feed the
@@ -782,7 +785,8 @@ def build(agent_dir, bench):
         "harness_dimensions": (_exp_panel.get("harness_seven") if isinstance(_exp_panel, dict) else None),
         "outcome": _outcome_metric(results, bench),
         "checkpoint_diagnostics": hd,
-        "governance_consistency": _governance_consistency(_exp_panel, _disk_gov, hd),
+        "governance_consistency": _governance_consistency(_exp_panel, _disk_gov, hd, source_prov=_src_prov),
+        "source_provenance": _src_prov,
         "evaluator_errors_by_dimension": ((_exp_panel or {}).get("evaluator_errors_by_dimension") or []
                                           if isinstance(_exp_panel, dict) else []),  # task item 7
         "governance_audit": ((_exp_panel or {}).get("governance_audit") or {}
@@ -824,7 +828,79 @@ def _current_scoring_tree_hash():
         return None
 
 
-def _governance_consistency(exp_panel, disk_gov, hd):
+def _sha_file(path):
+    """PURE READ sha256 of a file's bytes (None if absent/unreadable). The unit of source-input provenance."""
+    import hashlib
+    try:
+        with open(path, "rb") as fh:
+            return hashlib.sha256(fh.read()).hexdigest()
+    except Exception:
+        return None
+
+
+def _current_tasks_unified_sha(bench):
+    """sha256 of the LIVE tasks_unified.jsonl that _remap reads (checkpoint dimension/subdimension/WEIGHT).
+    Editing it changes report scores WITHOUT changing the runner/ tree, so it is a distinct scoring-asset
+    provenance key (P1-1). Same path resolution as _remap (_ROOT/<bench>/tasks_unified.jsonl)."""
+    return _sha_file(os.path.join(_ROOT, bench, "tasks_unified.jsonl"))
+
+
+def _source_provenance_audit(agent_dir, bench):
+    """P0/P1 SOURCE PROVENANCE. The rescored Governance is a partial overlay on a bundle whose raw inputs
+    (result.json / trajectory.jsonl / task.json / checkpoint set) could be edited AFTER rescoring without
+    re-running the judge -- leaving a stale Governance that the runner-tree guard cannot detect. Each
+    rescored block records Governance.input_provenance{...sha256}; here we RECOMPUTE those hashes from the
+    LIVE bundle files and compare. Also compares each block's recorded tasks_unified_sha256 to the live file.
+    Returns a per-task match map + bundle/task-asset rollup statuses. PURE READ, no model call."""
+    live_tu = _current_tasks_unified_sha(bench)
+    per_task = {}
+    n_with_ip = n_src_match = n_tu_match = n_tu_recorded = 0
+    for rp in sorted(glob.glob(os.path.join(agent_dir, "*", "result.json"))):
+        tid = os.path.basename(os.path.dirname(rp))
+        bdir = os.path.dirname(rp)
+        blk, _ = _read_dim_block(bdir, "Governance")
+        ip = (blk or {}).get("input_provenance") or {}
+        tu_recorded = ((blk or {}).get("scoring_config") or {}).get("tasks_unified_sha256")
+        if not ip:
+            per_task[tid] = {"has_input_provenance": False, "source_match": None, "tasks_unified_match": None}
+            continue
+        n_with_ip += 1
+        live = {
+            "raw_result_sha256": _sha_file(os.path.join(bdir, "result.json")),
+            "trajectory_sha256": _sha_file(os.path.join(bdir, "trajectory.jsonl")),
+            "task_json_sha256": _sha_file(os.path.join(bdir, "task.json")),
+        }
+        # compare only the file-backed keys present in BOTH recorded ip and live recompute.
+        mism = [k for k, v in live.items() if k in ip and ip.get(k) != v]
+        src_ok = (len(mism) == 0)
+        n_src_match += 1 if src_ok else 0
+        tu_ok = None
+        if tu_recorded is not None:
+            n_tu_recorded += 1
+            tu_ok = (tu_recorded == live_tu)
+            n_tu_match += 1 if tu_ok else 0
+        per_task[tid] = {"has_input_provenance": True, "source_match": src_ok,
+                         "source_mismatch_keys": mism, "tasks_unified_match": tu_ok}
+    # rollups: source_bundle_status / task_asset_status. "no_provenance" when nothing recorded it yet.
+    if n_with_ip == 0:
+        source_status = "no_input_provenance"
+    elif n_src_match == n_with_ip:
+        source_status = "current"
+    else:
+        source_status = "stale_input_artifact"
+    if n_tu_recorded == 0:
+        task_asset_status = "no_task_asset_provenance"
+    elif n_tu_match == n_tu_recorded:
+        task_asset_status = "current"
+    else:
+        task_asset_status = "stale_task_asset"
+    return {"per_task": per_task, "live_tasks_unified_sha256": live_tu,
+            "source_bundle_status": source_status, "task_asset_status": task_asset_status,
+            "n_with_input_provenance": n_with_ip, "n_source_match": n_src_match,
+            "n_tasks_unified_recorded": n_tu_recorded, "n_tasks_unified_match": n_tu_match}
+
+
+def _governance_consistency(exp_panel, disk_gov, hd, source_prov=None):
     """Single-source-of-truth audit. Reconciles the governance views:
       - report harness Governance  = harness_seven.Governance.score (reportable-only canonical mean)
       - in-memory per-task verdicts = _gov_canon (what the headline was built from)
@@ -849,14 +925,23 @@ def _governance_consistency(exp_panel, disk_gov, hd):
     _disk_rep = [v["score"] for v in disk_gov.values()
                  if v.get("reportable") and isinstance(v.get("score"), (int, float))]
     disk_mean = round(sum(_disk_rep) / len(_disk_rep), 3) if _disk_rep else None
-    # branch / scoring_version / code_sha / g14_weight must be uniform across the on-disk reportable blocks.
+    # branch / scoring_version / code_sha / g14_weight uniform across the on-disk REPORTABLE blocks (these
+    # gate the SCORE mean). _uniq -> reportable-only.
     def _uniq(field):
         vals = {disk_gov[t].get(field) for t in disk_gov
                 if disk_gov[t].get("reportable") and disk_gov[t].get(field) is not None}
         return sorted(v for v in vals if v is not None)
+    # PROVENANCE fields (tree hash / dirty / scoring_version / judge model / prompt version) must be uniform
+    # across ALL scored blocks -- INCLUDING non-reportable / judge-failed tasks (P1-1). A task that produced
+    # no score but was scored under a DIFFERENT tree / dirty worktree / judge still pollutes the artifact set,
+    # and it silently escaped the reportable-only check before. _uniq_all -> every block that recorded a value.
+    def _uniq_all(field):
+        vals = {disk_gov[t].get(field) for t in disk_gov if disk_gov[t].get(field) is not None}
+        return sorted(v for v in vals if v is not None)
     _branches, _svers = _uniq("branch"), _uniq("scoring_version")
     _shas, _weights = _uniq("code_sha"), _uniq("g14_weight")
-    _trees = _uniq("scoring_code_tree_hash")
+    _trees = _uniq_all("scoring_code_tree_hash")
+    _judges, _pvers = _uniq_all("judge_model"), _uniq_all("prompt_version")
     # ---- task item 2: PROVENANCE GUARD (P0-2 fix). The staleness criterion is the SCORING-CODE TREE HASH
     # (git rev-parse HEAD:runner), NOT the full-repo HEAD. The tree hash is a content hash of runner/ only,
     # so it is INVARIANT under artifact-only commits (committing res2_* result.rescored.json does not touch
@@ -866,8 +951,9 @@ def _governance_consistency(exp_panel, disk_gov, hd):
     # required. Legacy artifacts that predate the tree hash fall back to the old code_sha==HEAD check. ----
     _head = _current_git_head()
     _tree_head = _current_scoring_tree_hash()
+    # dirty over ALL scored blocks (not just reportable) -- a dirty worktree on any scored task is suspect.
     _dirty_flags = sorted({bool(disk_gov[t].get("dirty_worktree")) for t in disk_gov
-                           if disk_gov[t].get("reportable") and disk_gov[t].get("dirty_worktree") is not None})
+                           if disk_gov[t].get("dirty_worktree") is not None})
     _any_dirty = any(_dirty_flags)
     _sha_uniform = len(_shas) <= 1                              # reported for audit; no longer gating
     _sha_matches_head = bool(_head) and bool(_shas) and _shas == [_head]
@@ -879,19 +965,42 @@ def _governance_consistency(exp_panel, disk_gov, hd):
         _tree_uniform = True
         _tree_matches_head = None
         _code_current = (not _shas) or _sha_matches_head
-    # metadata_agrees: branch/version/weight uniform + tree hash uniform + scored under current code tree +
-    # clean worktree. (code_sha intentionally dropped from the gating set so a re-stamp can't false-flag.)
-    _meta_agree = bool(all(len(s) <= 1 for s in (_branches, _svers, _weights))
-                       and _tree_uniform and _code_current and not _any_dirty)
-    # artifact_status: green ONLY when the on-disk scoring-code tree equals HEAD:runner and no worktree dirty.
+    # P1-2: judge model + prompt VERSION must be uniform across all scored blocks (a panel that silently
+    # switched judges mid-dataset is not a comparable scoring run). prompt_version (a template id) is the
+    # right granularity -- NOT each task's full prompt_hash, which legitimately differs per task content.
+    _judge_uniform, _pver_uniform = len(_judges) <= 1, len(_pvers) <= 1
+    # ---- SPLIT STATUSES (P0/P1 naming clarity). Three orthogonal provenance axes + an overall rollup: ----
+    #   scoring_code_status : runner/ tree == HEAD:runner, uniform, clean worktree, judges/prompt uniform
+    #   task_asset_status   : recorded tasks_unified_sha256 == live file (from source audit)
+    #   source_bundle_status: recorded input hashes == live bundle files  (from source audit)
+    _sp = source_prov or {}
     if not _shas and not _trees:
-        _artifact_status = "no_rescored_artifact"             # nothing to verify yet
-    elif _any_dirty:
-        _artifact_status = "stale_code_version"
-    elif not _code_current:
-        _artifact_status = "stale_code_version"
+        scoring_code_status = "no_rescored_artifact"
+    elif _any_dirty or not _code_current or not _tree_uniform or not _judge_uniform or not _pver_uniform:
+        scoring_code_status = "stale_code_version"
     else:
-        _artifact_status = "current"
+        scoring_code_status = "current"
+    task_asset_status = _sp.get("task_asset_status", "no_task_asset_provenance")
+    source_bundle_status = _sp.get("source_bundle_status", "no_input_provenance")
+    # overall: current ONLY if every axis is current OR cleanly-absent (no_* = nothing to contradict yet).
+    def _ok(s):  return s in ("current", "no_rescored_artifact", "no_task_asset_provenance", "no_input_provenance")
+    if scoring_code_status == "no_rescored_artifact":
+        overall_artifact_status = "no_rescored_artifact"
+    elif scoring_code_status == "current" and _ok(task_asset_status) and _ok(source_bundle_status):
+        overall_artifact_status = "current"
+    else:
+        overall_artifact_status = (scoring_code_status if scoring_code_status != "current"
+                                   else (task_asset_status if task_asset_status not in (None, "current",
+                                         "no_task_asset_provenance") else source_bundle_status))
+    # back-compat: artifact_status now mirrors the OVERALL rollup (was scoring-code only).
+    _artifact_status = overall_artifact_status
+    # metadata_agrees: reportable branch/version/weight uniform + tree uniform + current code + clean +
+    # judge/prompt uniform + task-asset & source axes not stale.
+    _meta_agree = bool(all(len(s) <= 1 for s in (_branches, _svers, _weights))
+                       and _tree_uniform and _code_current and not _any_dirty
+                       and _judge_uniform and _pver_uniform
+                       and task_asset_status != "stale_task_asset"
+                       and source_bundle_status != "stale_input_artifact")
     # disk_equals_report: the headline equals the freshly re-read on-disk reportable mean. When NO task has
     # been rescored yet (disk_mean is None AND report_score is None) the two trivially agree (both N/A).
     disk_equals_report = bool(report_score == disk_mean and _meta_agree)
@@ -905,17 +1014,32 @@ def _governance_consistency(exp_panel, disk_gov, hd):
         "disk_reportable_mean": disk_mean,
         "n_disk_reportable": len(_disk_rep),
         "metadata_agrees": _meta_agree,
-        # task item 2: provenance guard outputs (P0-2: tree hash is the criterion; code_sha is audit-only).
+        # provenance guard outputs. artifact_status = OVERALL rollup (back-compat); the three axes are split
+        # out so 'current' has a precise meaning (P0/P1 naming clarity).
         "artifact_status": _artifact_status,
+        "overall_artifact_status": overall_artifact_status,
+        "scoring_code_status": scoring_code_status,
+        "task_asset_status": task_asset_status,
+        "source_bundle_status": source_bundle_status,
+        "artifact_status_meaning": ("'current' iff scoring_code (runner/ tree == HEAD:runner, uniform judges/"
+                                    "prompt, clean worktree) AND task assets (tasks_unified.jsonl unchanged) "
+                                    "AND source bundle (result/trajectory/task unchanged) all verify."),
         "provenance_criterion": "scoring_code_tree_hash" if _trees else "code_sha_legacy_fallback",
         "current_scoring_tree_hash": _tree_head,
         "scoring_tree_matches_head": _tree_matches_head,
         "scoring_tree_uniform": _tree_uniform,
         "disk_scoring_tree_hashes": _trees,
-        "current_code_sha": _head,
+        "disk_judge_models": _judges, "judge_model_uniform": _judge_uniform,
+        "disk_prompt_versions": _pvers, "prompt_version_uniform": _pver_uniform,
+        # audit-only (NOT used for artifact validity): which commit scored vs current repo HEAD.
+        "scorer_commit_code_sha": _shas[0] if _shas else None,
+        "current_repository_head": _head,
         "code_sha_matches_head": _sha_matches_head,
+        "code_sha_matches_head_note": "audit only; NOT a validity criterion (artifact-only commits advance HEAD)",
         "code_sha_uniform": _sha_uniform,
         "dirty_worktree_any": _any_dirty,
+        "live_tasks_unified_sha256": _sp.get("live_tasks_unified_sha256"),
+        "n_source_match": _sp.get("n_source_match"), "n_with_input_provenance": _sp.get("n_with_input_provenance"),
         "disk_branches": _branches, "disk_scoring_versions": _svers,
         "disk_code_shas": _shas, "disk_g14_weights": _weights,
         "disk_not_rescored": sorted(t for t in disk_gov
@@ -995,10 +1119,27 @@ def compare_models(agent_dir_a, agent_dir_b, bench, label_a=None, label_b=None, 
     pa = round(sum(A[t][0] for t in common) / len(common), 3) if common else None
     pb = round(sum(B[t][0] for t in common) / len(common), 3) if common else None
     n_tasks = len(set(A) | set(B))
+    # P1-2 CONTRACT COMPATIBILITY: a paired comparison is valid ONLY if both models were scored under the
+    # SAME scoring contract. For governance, compare scoring_version / scoring_code_tree_hash / g14_weight /
+    # judge model / prompt version across the two bundles. If they diverge (or vary within a model), the
+    # paired number compares apples-to-oranges -> NULL the paired score and surface why; never report it.
+    comp_status, comp_detail = "compatible", {}
+    if metric == "governance":
+        ga, gb = _read_disk_governance(agent_dir_a), _read_disk_governance(agent_dir_b)
+        def _uval(g, f):
+            return sorted({g[t].get(f) for t in g if g[t].get(f) is not None})
+        for f in ("scoring_version", "scoring_code_tree_hash", "g14_weight", "judge_model", "prompt_version"):
+            va, vb = _uval(ga, f), _uval(gb, f)
+            if len(va) > 1 or len(vb) > 1 or va != vb:
+                comp_status = "incompatible_scoring_contract"
+                comp_detail[f] = {la: va, lb: vb}
+    if comp_status != "compatible":
+        pa = pb = None
     return {
         "bench": bench, "metric": metric,
         "models": [la, lb],
         "n_tasks": n_tasks,
+        "comparison_status": comp_status, "contract_incompatibilities": comp_detail,
         "paired_common_task_ids": common, "n_paired_common": len(common),
         "paired_common_task_score": {la: pa, lb: pb},
         "all_task_score": {la: _mean(A), lb: _mean(B)},
@@ -1007,7 +1148,8 @@ def compare_models(agent_dir_a, agent_dir_b, bench, label_a=None, label_b=None, 
         "n_reportable": {la: len(rep_a), lb: len(rep_b)},
         "note": ("paired_common_task_score compares the SAME reportable task ids in both models "
                  "(apples-to-apples); all_task_score is each model's own reportable mean; they DIVERGE when "
-                 "reportability differs across models -- always show both, never collapse to one number.")}
+                 "reportability differs across models -- always show both, never collapse to one number. "
+                 "paired score is NULLED when comparison_status != compatible (incompatible scoring contract).")}
 
 
 def _guess_bench(agent_dir, results):
