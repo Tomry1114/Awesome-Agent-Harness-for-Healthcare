@@ -376,11 +376,11 @@
   "source_bundle_status": "current",
   "artifact_status_meaning": "'current' iff scoring_code (runner/ tree == HEAD:runner, uniform judges/prompt, clean worktree) AND task assets (tasks_unified.jsonl unchanged) AND source bundle (result/trajectory/task unchanged) all verify.",
   "provenance_criterion": "scoring_code_tree_hash",
-  "current_scoring_tree_hash": "863e8adcb072c95a00297db2e1b4ee04556582df",
+  "current_scoring_tree_hash": "f8590d4a7a1e17068a5ccb9d45ca428d5e4dcbd0",
   "scoring_tree_matches_head": true,
   "scoring_tree_uniform": true,
   "disk_scoring_tree_hashes": [
-   "863e8adcb072c95a00297db2e1b4ee04556582df"
+   "f8590d4a7a1e17068a5ccb9d45ca428d5e4dcbd0"
   ],
   "disk_judge_models": [
    "gpt-5.4"
@@ -390,8 +390,8 @@
    "governance-g1g4-v3"
   ],
   "prompt_version_uniform": true,
-  "scorer_commit_code_sha": "969a45c2814292b17bafd6ed04ecb57b717c3bb5",
-  "current_repository_head": "969a45c2814292b17bafd6ed04ecb57b717c3bb5",
+  "scorer_commit_code_sha": "386e7d5f497f4081e7a48215610ad7e6541cc0b7",
+  "current_repository_head": "386e7d5f497f4081e7a48215610ad7e6541cc0b7",
   "code_sha_matches_head": true,
   "code_sha_matches_head_note": "audit only; NOT a validity criterion (artifact-only commits advance HEAD)",
   "code_sha_uniform": true,
@@ -406,7 +406,7 @@
    "governance-v3"
   ],
   "disk_code_shas": [
-   "969a45c2814292b17bafd6ed04ecb57b717c3bb5"
+   "386e7d5f497f4081e7a48215610ad7e6541cc0b7"
   ],
   "disk_g14_weights": [
    0.7
@@ -525,8 +525,8 @@
    "prompt_version": "governance-g1g4-v3",
    "prompt_hash": "439fd4660495ed22f69ec9f442468208736796406b0934c2cdbdeefc6129de00",
    "scoring_version": "governance-v3",
-   "code_sha": "969a45c2814292b17bafd6ed04ecb57b717c3bb5",
-   "scoring_code_tree_hash": "863e8adcb072c95a00297db2e1b4ee04556582df",
+   "code_sha": "386e7d5f497f4081e7a48215610ad7e6541cc0b7",
+   "scoring_code_tree_hash": "f8590d4a7a1e17068a5ccb9d45ca428d5e4dcbd0",
    "g14_weight": 0.7,
    "evaluation_error": null
   },
@@ -579,8 +579,8 @@
    "prompt_version": "governance-g1g4-v3",
    "prompt_hash": "ed18b8cd8bf070bd13c39e08cd8c3bd338499a56d86e9cf914bef971c523bad4",
    "scoring_version": "governance-v3",
-   "code_sha": "969a45c2814292b17bafd6ed04ecb57b717c3bb5",
-   "scoring_code_tree_hash": "863e8adcb072c95a00297db2e1b4ee04556582df",
+   "code_sha": "386e7d5f497f4081e7a48215610ad7e6541cc0b7",
+   "scoring_code_tree_hash": "f8590d4a7a1e17068a5ccb9d45ca428d5e4dcbd0",
    "g14_weight": 0.7,
    "evaluation_error": null
   },
@@ -642,8 +642,8 @@
    "prompt_version": "governance-g1g4-v3",
    "prompt_hash": "e0123fee64adfb956154c62eb76c16d0baf6e480659ee877f11c6d298b60afbf",
    "scoring_version": "governance-v3",
-   "code_sha": "969a45c2814292b17bafd6ed04ecb57b717c3bb5",
-   "scoring_code_tree_hash": "863e8adcb072c95a00297db2e1b4ee04556582df",
+   "code_sha": "386e7d5f497f4081e7a48215610ad7e6541cc0b7",
+   "scoring_code_tree_hash": "f8590d4a7a1e17068a5ccb9d45ca428d5e4dcbd0",
    "g14_weight": 0.7,
    "evaluation_error": null
   },
@@ -696,8 +696,8 @@
    "prompt_version": "governance-g1g4-v3",
    "prompt_hash": "29afd0c45d320845e90498d9237c701e3d36c45345806c2ee61e7eb111155931",
    "scoring_version": "governance-v3",
-   "code_sha": "969a45c2814292b17bafd6ed04ecb57b717c3bb5",
-   "scoring_code_tree_hash": "863e8adcb072c95a00297db2e1b4ee04556582df",
+   "code_sha": "386e7d5f497f4081e7a48215610ad7e6541cc0b7",
+   "scoring_code_tree_hash": "f8590d4a7a1e17068a5ccb9d45ca428d5e4dcbd0",
    "g14_weight": 0.7,
    "evaluation_error": null
   },
@@ -750,8 +750,8 @@
    "prompt_version": "governance-g1g4-v3",
    "prompt_hash": "a99b7f85f14a2b398249282f19eed470159d4f3469ada87e88acffc497172959",
    "scoring_version": "governance-v3",
-   "code_sha": "969a45c2814292b17bafd6ed04ecb57b717c3bb5",
-   "scoring_code_tree_hash": "863e8adcb072c95a00297db2e1b4ee04556582df",
+   "code_sha": "386e7d5f497f4081e7a48215610ad7e6541cc0b7",
+   "scoring_code_tree_hash": "f8590d4a7a1e17068a5ccb9d45ca428d5e4dcbd0",
    "g14_weight": 0.7,
    "evaluation_error": null
   }
@@ -1078,8 +1078,8 @@
     "prompt_version": "governance-g1g4-v3",
     "prompt_hash": "439fd4660495ed22f69ec9f442468208736796406b0934c2cdbdeefc6129de00",
     "scoring_version": "governance-v3",
-    "code_sha": "969a45c2814292b17bafd6ed04ecb57b717c3bb5",
-    "scoring_code_tree_hash": "863e8adcb072c95a00297db2e1b4ee04556582df",
+    "code_sha": "386e7d5f497f4081e7a48215610ad7e6541cc0b7",
+    "scoring_code_tree_hash": "f8590d4a7a1e17068a5ccb9d45ca428d5e4dcbd0",
     "g14_weight": 0.7,
     "evaluation_error": null
    },
@@ -1132,8 +1132,8 @@
     "prompt_version": "governance-g1g4-v3",
     "prompt_hash": "ed18b8cd8bf070bd13c39e08cd8c3bd338499a56d86e9cf914bef971c523bad4",
     "scoring_version": "governance-v3",
-    "code_sha": "969a45c2814292b17bafd6ed04ecb57b717c3bb5",
-    "scoring_code_tree_hash": "863e8adcb072c95a00297db2e1b4ee04556582df",
+    "code_sha": "386e7d5f497f4081e7a48215610ad7e6541cc0b7",
+    "scoring_code_tree_hash": "f8590d4a7a1e17068a5ccb9d45ca428d5e4dcbd0",
     "g14_weight": 0.7,
     "evaluation_error": null
    },
@@ -1195,8 +1195,8 @@
     "prompt_version": "governance-g1g4-v3",
     "prompt_hash": "e0123fee64adfb956154c62eb76c16d0baf6e480659ee877f11c6d298b60afbf",
     "scoring_version": "governance-v3",
-    "code_sha": "969a45c2814292b17bafd6ed04ecb57b717c3bb5",
-    "scoring_code_tree_hash": "863e8adcb072c95a00297db2e1b4ee04556582df",
+    "code_sha": "386e7d5f497f4081e7a48215610ad7e6541cc0b7",
+    "scoring_code_tree_hash": "f8590d4a7a1e17068a5ccb9d45ca428d5e4dcbd0",
     "g14_weight": 0.7,
     "evaluation_error": null
    },
@@ -1249,8 +1249,8 @@
     "prompt_version": "governance-g1g4-v3",
     "prompt_hash": "29afd0c45d320845e90498d9237c701e3d36c45345806c2ee61e7eb111155931",
     "scoring_version": "governance-v3",
-    "code_sha": "969a45c2814292b17bafd6ed04ecb57b717c3bb5",
-    "scoring_code_tree_hash": "863e8adcb072c95a00297db2e1b4ee04556582df",
+    "code_sha": "386e7d5f497f4081e7a48215610ad7e6541cc0b7",
+    "scoring_code_tree_hash": "f8590d4a7a1e17068a5ccb9d45ca428d5e4dcbd0",
     "g14_weight": 0.7,
     "evaluation_error": null
    },
@@ -1303,8 +1303,8 @@
     "prompt_version": "governance-g1g4-v3",
     "prompt_hash": "a99b7f85f14a2b398249282f19eed470159d4f3469ada87e88acffc497172959",
     "scoring_version": "governance-v3",
-    "code_sha": "969a45c2814292b17bafd6ed04ecb57b717c3bb5",
-    "scoring_code_tree_hash": "863e8adcb072c95a00297db2e1b4ee04556582df",
+    "code_sha": "386e7d5f497f4081e7a48215610ad7e6541cc0b7",
+    "scoring_code_tree_hash": "f8590d4a7a1e17068a5ccb9d45ca428d5e4dcbd0",
     "g14_weight": 0.7,
     "evaluation_error": null
    }
