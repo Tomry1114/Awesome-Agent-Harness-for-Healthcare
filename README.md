@@ -64,23 +64,23 @@ backend — a judge sharing either is `judge_not_independent` (fail-closed, neve
 
 ## Models & multi-key support
 
-The default brain is an **API model via the micuapi gateway** (`gpt-5.5` strong / `gpt-5.4-mini` weak,
-for sensitivity studies); a fully local **Qwen3-VL** brain is still available (`--agent qwen`, no API
-key). The agent layer is vendor-neutral: the shared text tool-call scaffolding lives in
-`ToolProtocolAgent` (`runner/tool_agent.py`); the API brain `ApiToolAgent` (`runner/api_agent.py`)
-subclasses it and only swaps the transport.
+The brain is any **OpenAI-compatible chat model** behind a gateway. The agent layer is vendor-neutral:
+the shared text tool-call scaffolding lives in `ToolProtocolAgent` (`runner/tool_agent.py`); the API
+brain `ApiToolAgent` (`runner/api_agent.py`) subclasses it and only swaps the transport.
 
-A run can use **different API keys per role** (e.g. a gemini/deepseek-only key for the agent brain,
-a gpt key for the VLM perception and the judge), all in one process:
+Each of the three model **roles** takes its own model + key env, so one run can put the agent, the
+image-perception VLM, and the judge on **different providers/keys** — useful when one key serves the
+agent model and another serves the judge:
 
-| Role | Key env | Model env |
+| Role | Model env | Key env |
 |---|---|---|
-| agent brain | `OPENAI_API_KEY` (global) | `MH_API_MODEL` |
-| VLM perception (MedCTA image tools) | `MH_VLM_API_KEY` | `MH_VLM_API_MODEL` |
-| judge (gacc / mm / governance / context / verification) | `MH_JUDGE_KEY` | `MH_JUDGE_MODEL` etc. |
+| agent brain | `MH_API_MODEL` | `OPENAI_API_KEY` (global default) |
+| VLM perception (image tools) | `MH_VLM_API_MODEL` | `MH_VLM_API_KEY` |
+| judge (gacc / mm / governance / context / verification) | `MH_JUDGE_MODEL` | `MH_JUDGE_KEY` |
 
-`runner/gateway.py` resolves the key per call: `override > MH_JUDGE_KEY (judge) > MH_OPENAI_KEY /
-OPENAI_API_KEY > ~/.xbai_key`.
+`runner/gateway.py` resolves the key per call: explicit `override` > `MH_JUDGE_KEY` (judge calls) >
+`MH_OPENAI_KEY` / `OPENAI_API_KEY`. Set just `OPENAI_API_KEY` for a single-key run, or add
+`MH_JUDGE_KEY` / `MH_VLM_API_KEY` to split roles across keys.
 
 ## Phased scoring — judge calls are isolated, the report is pure-read
 
@@ -154,9 +154,9 @@ runner/                 # unified harness
   environments.py       #   FhirEnv (real HAPI) · GuiEnvReal (real Playwright portal) + GuiEnvMock · ToolSandboxEnv
   tool_agent.py         #   ToolProtocolAgent — shared text <tool_call>/<answer> protocol (model-agnostic)
   api_agent.py          #   ApiToolAgent — API brain over the gateway (subclasses ToolProtocolAgent)
-  agents.py             #   make_agent() registry: gpt5/openai → ApiToolAgent · qwen → local Qwen3-VL · stub/replay/scripted
+  agents.py             #   make_agent() registry: gpt5/openai → ApiToolAgent · qwen → local VLM · stub/replay/scripted
   gateway.py            #   unified OpenAI-compatible client; per-role key resolution; bounded retry/deadline
-  vlm_backend.py        #   VLM perception (api gpt-5.x default · local Qwen3-VL); own key via MH_VLM_API_KEY
+  vlm_backend.py        #   VLM perception (gateway model default · pluggable local backend); own key via MH_VLM_API_KEY
   tools_medcta.py       #   MedCTA tool backend: ImageDescription / RegionAttributeDescription / OCR / Calculator / GoogleSearch(frozen)
   scoring.py            #   checkpoint dispatch · subject-scope state machine · weighted 7-module aggregation
   governance_contract.py#   SINGLE source: governance blend · critical veto · scoring_config · checkpoint_set hash
@@ -178,22 +178,18 @@ TASK_MANIFEST.json      # task universe + pinned upstream revisions + checksums
 ## Running
 
 ```bash
-# single task (API brain via gateway; needs OPENAI_API_KEY for the gateway)
+# single task (API brain via the gateway; needs OPENAI_API_KEY)
 python runner/run.py --bench MedCTA --task MCTA-0 --agent gpt5
-
-# fully local Qwen3-VL brain (no API key)
-python runner/run.py --bench MedCTA --task MCTA-0 --agent qwen
 
 # batch (per-task result bundles + summary.json), then post-hoc judge + pure-read report
 python runner/run_batch.py --bench PhysicianBench --agent gpt5 --limit 10 --fhir-base $FHIR --out results/
-python runner/rescore_judges.py results/gpt5 --judge-model gpt-5.4   # writes result.rescored.json
+python runner/rescore_judges.py results/gpt5 --judge-model <judge>   # writes result.rescored.json
 python runner/aggregate_report.py results/gpt5                       # pure-read report.json
 ```
 
-Key env vars: `MH_API_MODEL` (agent model), `OPENAI_API_KEY` + `MH_OPENAI_BASE` (gateway),
-`MH_JUDGE_MODEL` / `MH_JUDGE_KEY` (judge), `MH_VLM_API_MODEL` / `MH_VLM_API_KEY` (MedCTA perception),
-`MH_GUI_MODE` (`real`|`mock` for HealthAdminBench), `MH_VLM_PATH` (local Qwen3-VL dir),
-`MH_GATEWAY_TIMEOUT` / `MH_GATEWAY_RETRIES`.
+Key env vars: `MH_API_MODEL` (agent model) + `OPENAI_API_KEY` + `MH_OPENAI_BASE` (gateway),
+`MH_JUDGE_MODEL` / `MH_JUDGE_KEY` (judge), `MH_VLM_API_MODEL` / `MH_VLM_API_KEY` (image perception),
+`MH_GUI_MODE` (`real`|`mock` for HealthAdminBench), `MH_GATEWAY_TIMEOUT` / `MH_GATEWAY_RETRIES`.
 
 ## Not in this repo (re-fetch separately)
 
