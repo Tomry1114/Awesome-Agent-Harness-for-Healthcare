@@ -58,6 +58,23 @@ real execution: FHIR HTTP / Playwright DOM / the VLM *inside* the image tools) �
 (scores process + outcome). Judge **independence** is enforced against BOTH the brain and the tool
 backend — a judge sharing either is `judge_not_independent` (fail-closed, never a silent pass).
 
+## Metrics — the 7 ETCLOVG dimensions, in two panels
+
+Every qualified run is scored on the same 7 dimensions in [0,1], grouped into two panels:
+**Efficiency** (did it do the task well) and **Safety** (can it be trusted). Reported per benchmark.
+
+| Panel | Dimension | Meaning |
+|---|---|---|
+| **Efficiency** | **E**xecution | completed the task steps and reached the goal state |
+| | **T**ooling | right tool choice, valid arguments, successful calls |
+| | **C**ontext | grounded in the real patient / image evidence (no fabricated facts) |
+| | **L**ifecycle | followed the required multi-step workflow through to completion |
+| **Safety** | **O**bservability | left a complete, inspectable trace (actions + observations + state) |
+| | **V**erification | checked its own work / confirmed results before committing |
+| | **G**overnance | policy & safety compliance (patient scope, prechecks, no forbidden / unsafe actions) |
+
+> **Outcome** — the dataset-native task correctness — is a SEPARATE line, not one of the 7.
+
 ## Models & multi-key support
 
 The brain is any **OpenAI-compatible chat model** behind a gateway. The agent layer is vendor-neutral:
@@ -78,51 +95,19 @@ agent model and another serves the judge:
 `MH_OPENAI_KEY` / `OPENAI_API_KEY`. Set just `OPENAI_API_KEY` for a single-key run, or add
 `MH_JUDGE_KEY` / `MH_VLM_API_KEY` to split roles across keys.
 
-## Metrics — the 7 ETCLOVG dimensions, in two panels
-
-Every qualified run is scored on the same 7 dimensions in [0,1], grouped into two panels:
-**Efficiency** (did it do the task well) and **Safety** (can it be trusted). Reported per benchmark.
-
-| Panel | Dimension | Meaning |
-|---|---|---|
-| **Efficiency** | **E**xecution | completed the task steps and reached the goal state |
-| | **T**ooling | right tool choice, valid arguments, successful calls |
-| | **C**ontext | grounded in the real patient / image evidence (no fabricated facts) |
-| | **L**ifecycle | followed the required multi-step workflow through to completion |
-| **Safety** | **O**bservability | left a complete, inspectable trace (actions + observations + state) |
-| | **V**erification | checked its own work / confirmed results before committing |
-| | **G**overnance | policy & safety compliance (patient scope, prechecks, no forbidden / unsafe actions) |
-
-> **Outcome** — the dataset-native task correctness — is a SEPARATE line, not one of the 7.
-
 ## Layout
 
 ```
-runner/                 # unified harness
-  run.py / run_batch.py #   single-task + batch CLI (env adapter → agent loop → trajectory → scorer → result)
-  environments.py       #   FhirEnv (real HAPI) · GuiEnvReal (real Playwright portal) + GuiEnvMock · ToolSandboxEnv
-  tool_agent.py         #   ToolProtocolAgent — shared text <tool_call>/<answer> protocol (model-agnostic)
-  api_agent.py          #   ApiToolAgent — API brain over the gateway (subclasses ToolProtocolAgent)
-  agents.py             #   make_agent() registry: gpt5/openai → ApiToolAgent · qwen → local VLM · stub/replay/scripted
-  gateway.py            #   unified OpenAI-compatible client; per-role key resolution; bounded retry/deadline
-  vlm_backend.py        #   VLM perception (gateway model default · pluggable local backend); own key via MH_VLM_API_KEY
-  tools_medcta.py       #   MedCTA tool backend: ImageDescription / RegionAttributeDescription / OCR / Calculator / GoogleSearch(frozen)
-  scoring.py            #   checkpoint dispatch · subject-scope state machine · weighted 7-module aggregation
-  governance_contract.py#   SINGLE source: governance blend · critical veto · scoring_config · checkpoint_set hash
-  rescore_judges.py     #   the ONLY Governance judge caller; writes result.rescored.json (+ input_provenance)
-  aggregate_report.py   #   PURE-READ report builder; native_task_outcome; provenance audit; model comparison
-  test_conformance.py   #   109 conformance checks (metric integrity, provenance, tamper detection)
-scripts/                # run launchers (run_*.sh / run2_*.sh) for each model × dataset
-spec/                   # frozen JSON schemas: task / checkpoint / tool / trajectory / governance / result
-benchmark_dataprocess/  # per-benchmark converters, augmentations, validators, and unified outputs
-  <Bench>/tasks_unified.jsonl   # the converted, scored benchmark assets
-benchmark_metric/       # action-level safety + efficiency + integrity-meta reporting panels
-docs/                   # ARCHITECTURE · CANONICAL_CONTRACT · CAPABILITY_MATRIX · task spec · processing notes
-TASK_MANIFEST.json      # task universe + pinned upstream revisions + checksums
+runner/                # the harness — env adapters · agents · gateway · scoring · judge · report · tests
+scripts/               # run launchers (one per model × dataset)
+spec/                  # frozen JSON schemas (task · checkpoint · tool · trajectory · governance · result)
+benchmark_dataprocess/ # per-benchmark converters + the unified tasks_unified.jsonl assets
+benchmark_metric/      # efficiency · safety · integrity-meta reporting panels
+docs/                  # architecture · contract · processing notes
+TASK_MANIFEST.json     # task universe + pinned upstream revisions
 ```
 
-> Per-run experiment outputs (`res_*` / `res2_*` / `res3_*` / `results_*`) are **regenerable** and
-> git-ignored — rebuild them with the `scripts/` launchers + `rescore_judges.py`.
+> Per-run outputs (`res_*` / `results_*`) are regenerable and git-ignored.
 
 ## Running
 
