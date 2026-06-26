@@ -198,20 +198,31 @@ def _allowed_tool_names(task):
     return out or None
 
 
-def _unified_governance(evs, bench, task, prov, dp, manifest, bundle_dir, use_judge=True):
-    """Run the UNIFIED G1-G4 governance (governance.governance) for ONE task, threading in the agent's
-    REAL final output (agent_final_output: PB workspace deliverable, HAB submitted triageNotes) so the
-    G3/G4 judge reasons over what the model actually produced. Returns the gov dict or None on failure."""
+# ---------------------------------------------------------------- SHARED-CONTRACT GOVERNANCE READER (PURE)
+# PURITY (task item 1): this report stage makes NO model call. The judge-backed Governance score + full
+# audit are produced upstream by runner/rescore_judges.py and persisted PER TASK to <task>/result.rescored
+# .json as a self-describing per-dimension block (the SHARED CANONICAL SCHEMA). The aggregate READS that
+# block; it never re-runs governance.governance / a gateway judge. If the rescored file (or its Governance
+# block) is missing for a task -> that task's Governance is N/A (reportable=False,
+# evaluation_error="not_rescored"), NOT a live judge call.
+def _read_dim_block(bundle_dir, dim):
+    """Read the per-dimension self-describing block `dim` from <bundle_dir>/result.rescored.json (SHARED
+    CONTRACT). Returns (block_or_None, evaluation_error). evaluation_error is set when the contract layer
+    is absent so the caller surfaces an HONEST N/A instead of fabricating a number.
+      - no result.rescored.json                 -> (None, "not_rescored")
+      - rescored file present but no `dim` block -> (None, "dimension_block_missing")
+      - block present                           -> (block, block.get("evaluation_error"))"""
+    rescored = os.path.join(bundle_dir, "result.rescored.json")
+    if not os.path.exists(rescored):
+        return None, "not_rescored"
     try:
-        import governance as _gov
-        policy = _gov._resolve_policy(bench)
-        answer = _gov.agent_final_output(evs, policy=policy, bundle_dir=bundle_dir)
-        return _gov.governance(
-            evs, policy=bench, question=(task.get("goal") or ""), answer=answer,
-            allowed_tools=_allowed_tool_names(task), provenance=(prov or {}).get("prompt_provenance"),
-            dimension_policy=dp, manifest=manifest, use_judge=use_judge)
-    except Exception:
-        return None
+        doc = json.load(open(rescored))
+    except Exception as _e:
+        return None, "rescored_unreadable:%s" % type(_e).__name__
+    blk = doc.get(dim)
+    if not isinstance(blk, dict):
+        return None, "dimension_block_missing"
+    return blk, blk.get("evaluation_error")
 
 
 def _bundle_path(rp):
@@ -244,14 +255,22 @@ def _remap(results, bench):
     tf = os.path.join(_ROOT, bench, "tasks_unified.jsonl")
     if not os.path.exists(tf):
         return results
+    # COMPOSITE KEY (task item 3): key the taxonomy map by (task_id, cp_id), NOT cp_id alone. PB reuses
+    # generic checkpoint ids (cp1_data_retrieval / cp2_...) across DIFFERENT tasks with DIFFERENT dimension/
+    # weight; a cp_id-only map let the LAST task's tags clobber every earlier task's same-id checkpoint
+    # (cross-task taxonomy bleed). (task_id, cp_id) isolates each task's own checkpoint definitions.
     idmap = {}
     for l in open(tf):
-        for cp in (json.loads(l).get("checkpoints") or []):
-            idmap[cp.get("id")] = (cp.get("dimension"), cp.get("subdimension"), cp.get("weight", 1.0))
+        _t = json.loads(l)
+        _tid = _t.get("task_id")
+        for cp in (_t.get("checkpoints") or []):
+            idmap[(_tid, cp.get("id"))] = (cp.get("dimension"), cp.get("subdimension"), cp.get("weight", 1.0))
     for r in results:
+        _rtid = r.get("task_id")
         for c in (r.get("checkpoints") or []):
-            if c.get("id") in idmap:
-                c["dimension"], c["subdimension"], _w = idmap[c["id"]]
+            _k = (_rtid, c.get("id"))
+            if _k in idmap:
+                c["dimension"], c["subdimension"], _w = idmap[_k]
                 c["weight"] = _w                      # carry task weight so aggregate_dimension is exact
         # Codex #1: report layer uses the SAME aggregate_dimension as raw/rescore — no second math.
         _dims = {m: aggregate_dimension([c for c in (r.get("checkpoints") or []) if c.get("dimension") == m]) for m in MODULES}
@@ -466,6 +485,9 @@ def _experimental_evaluators(agent_dir, bench):
         return {"tier": "unavailable", "score_eligible": False, "problem": _plugin_problem}, {}, {}, {}
     ex_t, lc_t, ob_t, ctx_t, ver_t, tool_t, gov_t = {}, {}, {}, {}, {}, {}, {}
     _gov_canon = {}                   # P1-1: per-task canonical Governance (score/reportable/critical/components)
+    _gov_audit = {}                   # task item 1/2: the per-task Governance SHARED-CONTRACT block read from disk
+    _eval_errors = []                 # task item 7: [{dimension, task_id, exception_type, failure_stage}]
+    _qualified = set()                # task item 6: the COMMON qualified-profile task set (one 7-dim denominator)
     _cov_low = {}
     _rep = {d: {} for d in MODULES}   # per-dim per-task: True if score rests on REAL (reportable) evidence
     ctx_t, ver_t, tool_t = {}, {}, {}
@@ -505,6 +527,9 @@ def _experimental_evaluators(agent_dir, bench):
         dp = _sub.dimension_policy(task, plugin)
         if dp.get("score_eligible") is False:
             continue        # fail-closed: missing/invalid dimension policy -> no score for this task
+        _qualified.add(tid)  # task item 6: a task that QUALIFIED (valid dim policy) joins the common
+        #                       7-dim denominator. EVERY of its 7 dims is always-present; a per-task dim
+        #                       that ends N/A still counts here as a miss (never deletes the task).
         manifest = _sub.capability_manifest(prov)
         ev = _sub.evidence_view(evs, plugin)
         # SYSTEM RULE 1: a qualified run outputs ALL 7 ETCLOVG scores. We store every dimension score
@@ -523,128 +548,80 @@ def _experimental_evaluators(agent_dir, bench):
                 cx = _dctx.context(sem, ev, dp, task_instruction=instr, judge_model=None)
                 if isinstance(cx.get("score"), (int, float)): ctx_t[tid] = cx["score"]; _rep["Context"][tid] = bool(cx.get("reportable"))
                 if not cx.get("reportable"): _cov_low.setdefault("Context", []).append(tid)
-            except Exception: pass
+            except Exception as _e:                                  # task item 7: record, never swallow silently
+                _eval_errors.append({"dimension": "Context", "task_id": tid,
+                                     "exception_type": type(_e).__name__, "failure_stage": "dim_context.context"})
         if _dver is not None:
             try:
                 vfa = [s for s in sem if s.get("event_role") == "verify"]
                 vr = _dver.verification(ev, vfa, _dver.extract_claims(sem), conflicts=None, policy=dp, judge_fn=None, sem_trace=sem)
                 if isinstance(vr.get("score"), (int, float)): ver_t[tid] = vr["score"]; _rep["Verification"][tid] = bool(vr.get("reportable"))
                 if not vr.get("reportable"): _cov_low.setdefault("Verification", []).append(tid)
-            except Exception: pass
+            except Exception as _e:                                  # task item 7: record, never swallow silently
+                _eval_errors.append({"dimension": "Verification", "task_id": tid,
+                                     "exception_type": type(_e).__name__, "failure_stage": "dim_verification.verification"})
         if _dtool is not None:
             try:
                 tr = _dtool.tooling(sem, dp, manifest, available_tools=task.get("available_tools"), task=task, plugin=plugin)
                 if isinstance(tr.get("score"), (int, float)): tool_t[tid] = tr["score"]; _rep["Tooling"][tid] = bool(tr.get("reportable"))
                 if not tr.get("reportable"): _cov_low.setdefault("Tooling", []).append(tid)
-            except Exception: pass
-        # Governance: prefer the benchmark REAL governance checkpoints (admin_compliance_core / drug_safety /
-        # governance_4rule) already scored in this task's result; the substrate G1/G2 is only a non-reportable
-        # fallback (its image-claim/tool-lie rules do not apply to every benchmark -> a vacuous 1.0 otherwise).
-        # INTEGRATION: for HAB admin_compliance_core we RE-RUN the (now scope-aware) core verifier over the
-        # saved trajectory instead of trusting the run-time checkpoint score, because pre-fix bundles stored a
-        # vacuous 1.0 from the old commit-only rules. The new core's SCOPE_AND_RISK_BOUNDARY rule is ALWAYS
-        # applicable for a navigation-only agent -> real discriminating score; and its boundary_opportunity
-        # flag (covered_evidence) drives reportable/confidence HONESTLY: a task on which the agent took no
-        # case-scoped action had NO governance opportunity -> not reportable (lowers confidence), never a
-        # vacuous reportable 1.0.
+            except Exception as _e:                                  # task item 7: record, never swallow silently
+                _eval_errors.append({"dimension": "Tooling", "task_id": tid,
+                                     "exception_type": type(_e).__name__, "failure_stage": "dim_tooling.tooling"})
+        # GOVERNANCE = PURE READ of the SHARED CONTRACT (task items 1 + 2). The judge-backed Governance
+        # score + full audit (components / submetrics G1-G4 / judge raw+parsed / scoring_config /
+        # branch / critical) are produced UPSTREAM by runner/rescore_judges.py and persisted to
+        # <task>/result.rescored.json as the self-describing "Governance" block. The aggregate makes NO
+        # model call: it reads that block, takes its score + reportable + critical, and surfaces the audit.
+        #   * block present + score numeric -> use it (reportable/critical/components straight from disk).
+        #   * block present but evaluation_error / score null -> N/A: score=None, reportable=False, the
+        #     evaluation_error propagates (JUDGE-FAILURE never falls back to a scope-only construct here).
+        #   * no result.rescored.json / no Governance block -> N/A, evaluation_error="not_rescored"
+        #     (the task simply has not been rescored yet), NEVER a live judge call.
         try:
-            _res = json.load(open(os.path.join(os.path.dirname(tp), "result.json")))
-            _admin_cp = next((c for c in (_res.get("checkpoints") or [])
-                              if c.get("evaluator_kind") == "admin_compliance_core"), None)
-            if _admin_cp is not None:
-                import scoring as _scoring
-                _cpdef = next((c for c in (task.get("checkpoints") or [])
-                               if (c.get("check") or {}).get("verifier", "").endswith("admin_compliance_core")
-                               or ((c.get("check") or {}).get("criteria") or {}).get("forbidden_actions")), None) or {}
-                _ctx = {"trajectory": evs, "task": task, "source_benchmark": "HealthAdminBench"}
-                _gr = _scoring._verify_admin_compliance_core(_cpdef, _ctx, {"id": "cp_admin", "dimension": "Governance"})
-                if isinstance(_gr.get("score"), (int, float)):
-                    # P0-1 (HAB admin-core branch): apply the SAME hard-veto canonical math. The admin core
-                    # already averages its APPLICABLE rules, but a critical breach (cross-subject access, or a
-                    # checkpoint flagged critical) must VETO -> 0.0, not be diluted by passing rules. We treat
-                    # the admin-core checkpoint as the benchmark governance component and the canonical
-                    # subject-scope verdict as the second; _canonical_task_governance applies the veto and the
-                    # weighted mean uniformly with the PB/MedCTA branch.
-                    _det = _gr.get("detail") or {}
-                    _sb = _det.get("scope_boundary") or {}
-                    _rules = _det.get("rules") or {}
-                    _committed_rule = _rules.get("complete_task_without_required_evidence") or {}
-                    _any_violation = any(v.get("violated") for v in _rules.values())
-                    _scope_canon = _scoring.governance_subject_scope(evs, dp, task)
-                    # reportable ONLY when the score rests on a REAL governance opportunity (case-scoped action,
-                    # commit, real violation, or a canonical scope verdict). A navigation-only agent that never
-                    # entered a case and never committed has NO governance opportunity -> not reportable.
-                    _has_opportunity = (bool(_scope_canon.get("reportable"))
-                                        or bool(_sb.get("covered_evidence"))
-                                        or bool(_committed_rule.get("applicable"))
-                                        or bool(_any_violation))
-                    # the admin-core cp, re-cast as a critical-aware governance checkpoint for _gcrit/aggregate.
-                    _admin_as_cp = {"id": "cp_admin", "dimension": "Governance", "score": _gr["score"],
-                                    "score_eligible": True,
-                                    "checkpoint_status": _gr.get("checkpoint_status") or "failed",
-                                    "pass_status": _gr.get("pass_status") or _gr.get("checkpoint_status"),
-                                    "failure_mode": _gr.get("failure_mode"), "failure_tag": _gr.get("failure_tag"),
-                                    "critical_violation": _gr.get("critical_violation")}
-                    # UNIFIED G1-G4 + subject-scope BLEND: HAB Governance now also uses the unified
-                    # governance (G3/G4 judge reads the agent's SUBMITTED triageNotes + scope_constraints)
-                    # BLENDED with the deterministic subject-scope CRITICAL VETO -- no longer saturated at
-                    # the admin-core/scope-only 1.0. cross-subject breach still hard-vetoes to 0.0.
-                    _gov_uni = _unified_governance(evs, bench, task, prov, dp, manifest, bdir)
-                    _gsc, _grep, _gcritical, _gcomp = _blend_governance(_gov_uni, _scope_canon, [_admin_as_cp])
-                    if _gsc is not None:
-                        gov_t[tid] = _gsc
-                    _rep["Governance"][tid] = bool(_grep and _has_opportunity)
-                    _gov_canon[tid] = {"score": _gsc, "reportable": bool(_grep and _has_opportunity),
-                                       "critical": _gcritical, "components": _gcomp, "branch": "hab_unified_g1g4_blend"}
-                    if not (_grep and _has_opportunity): _cov_low.setdefault("Governance", []).append(tid)
+            _gblk, _gerr = _read_dim_block(bdir, "Governance")
+            if _gblk is not None and isinstance(_gblk.get("score"), (int, float)) and not _gerr:
+                _gsc = float(_gblk["score"])
+                _grep = bool(_gblk.get("reportable"))
+                _gcritical = bool(_gblk.get("critical"))
+                gov_t[tid] = _gsc
+                _rep["Governance"][tid] = _grep
+                _gov_canon[tid] = {"score": _gsc, "reportable": _grep, "critical": _gcritical,
+                                   "components": (_gblk.get("components") or _gblk.get("submetrics")),
+                                   "branch": _gblk.get("branch")}
+                _gov_audit[tid] = {
+                    "score": _gsc, "reportable": _grep, "critical": _gcritical,
+                    "evidence_tier": _gblk.get("evidence_tier"),
+                    "formal_analysis_eligible": _gblk.get("formal_analysis_eligible"),
+                    "deterministic": _gblk.get("deterministic"),
+                    "branch": _gblk.get("branch"),
+                    "components": _gblk.get("components"), "submetrics": _gblk.get("submetrics"),
+                    "judge_model": (_gblk.get("judge") or {}).get("model"),
+                    "prompt_version": (_gblk.get("judge") or {}).get("prompt_version"),
+                    "prompt_hash": (_gblk.get("judge") or {}).get("prompt_hash"),
+                    "scoring_version": (_gblk.get("scoring_config") or {}).get("scoring_version"),
+                    "code_sha": (_gblk.get("scoring_config") or {}).get("code_sha"),
+                    "g14_weight": (_gblk.get("scoring_config") or {}).get("g14_weight"),
+                    "evaluation_error": None}
+                if not _grep: _cov_low.setdefault("Governance", []).append(tid)
             else:
-                # No admin_compliance_core checkpoint (e.g. PhysicianBench/MedCTA). Compute the SAME
-                # benchmark-agnostic SUBJECT-SCOPE signal deterministically from the SemanticTrace +
-                # dimension_policy.expected_subject. For PB this fires whenever the agent queried FHIR for
-                # the assigned patient -> a REAL, discriminating Governance number (cross-patient access ->
-                # adherence < 1.0), never the vacuous substrate G1/G2 fallback. It is consistent with the
-                # run-time admin core, which calls the same helper. Combined with any REAL benchmark
-                # governance checkpoints already in result.json (drug_safety / governance_4rule).
-                import scoring as _scoring
-                _scope = _scoring.governance_subject_scope(evs, dp, task)
-                _gcps = [c for c in (_res.get("checkpoints") or []) if c.get("dimension") == "Governance"
-                         and c.get("checkpoint_status") in ("passed", "failed") and c.get("score_eligible")]
-                # P0-1 + P0-2 (PB/MedCTA branch): ONE canonical governance math. Benchmark cps are aggregated
-                # by scoring.aggregate_dimension (weighted continuous, never re-binarized); a CRITICAL breach
-                # (critical_violation / failure_mode / failure_tag == critical_policy_violation, OR a
-                # cross-subject scope access) HARD-VETOES the task to 0.0 instead of being averaged with the
-                # passing rules. A never-established subject stays a normal 0.0 scope miss (not a veto).
-                #
-                # PhysicianBench: this branch has NO benchmark governance checkpoints (_gcps == []), so the
-                # canonical value was the SUBJECT-SCOPE signal alone -> saturated at 1.0. PB now BLENDS the
-                # unified G1-G4 governance (G3/G4 judge reads the WORKSPACE deliverable + scope_constraints)
-                # with the subject-scope CRITICAL VETO, so two models with different deliverables differ and
-                # a cross-subject FHIR breach still hard-vetoes to 0.0.
-                # MedCTA: UNCHANGED -- it already carries discriminating governance_4rule checkpoints in
-                # _gcps, so it keeps the existing _canonical_task_governance path (no unified re-judge).
-                if bench == "PhysicianBench":
-                    _gov_uni = _unified_governance(evs, bench, task, prov, dp, manifest, bdir)
-                    _gsc, _grep, _gcritical, _gcomp = _blend_governance(_gov_uni, _scope, _gcps)
-                    _branch = "pb_unified_g1g4_blend"
-                else:
-                    _gsc, _grep, _gcritical, _gcomp = _canonical_task_governance(
-                        _gcps, _scope if isinstance(_scope.get("score"), (int, float)) else None)
-                    _branch = "pb_medcta_subject_scope"
-                if _gsc is not None and (_gcps or isinstance(_scope.get("score"), (int, float))
-                                         or _branch == "pb_unified_g1g4_blend"):
-                    gov_t[tid] = _gsc
-                    _rep["Governance"][tid] = _grep
-                    _gov_canon[tid] = {"score": _gsc, "reportable": _grep, "critical": _gcritical,
-                                       "components": _gcomp, "branch": _branch}
-                    if not _grep: _cov_low.setdefault("Governance", []).append(tid)
-                else:
-                    import governance as _gov
-                    gr = _gov.governance(evs, policy=task.get("source_benchmark"), provenance=prov.get("prompt_provenance"),
-                                         dimension_policy=dp, manifest=manifest, use_judge=False)
-                    if isinstance(gr.get("score"), (int, float)):
-                        gov_t[tid] = gr["score"]; _rep["Governance"][tid] = bool(gr.get("reportable_score"))
-                        if not gr.get("reportable_score"): _cov_low.setdefault("Governance", []).append(tid)
-        except Exception: pass
+                # honest N/A: NOT rescored (or judge failed / score null). NO score enters gov_t -> the dim
+                # mean is unaffected; the task still counts in the denominator as a Governance miss (item 6).
+                _err = _gerr or ("score_null" if _gblk is not None else "not_rescored")
+                _gov_canon[tid] = {"score": None, "reportable": False, "critical": None,
+                                   "components": None, "branch": (_gblk or {}).get("branch"),
+                                   "evaluation_error": _err}
+                _gov_audit[tid] = {"score": None, "reportable": False,
+                                   "evidence_tier": (_gblk or {}).get("evidence_tier") or "experimental_hybrid",
+                                   "evaluation_error": _err}
+                _cov_low.setdefault("Governance", []).append(tid)
+        except Exception as _e:
+            _eval_errors.append({"dimension": "Governance", "task_id": tid,
+                                 "exception_type": type(_e).__name__,
+                                 "failure_stage": "read_result_rescored_governance_block"})
+            _gov_canon[tid] = {"score": None, "reportable": False, "critical": None,
+                               "components": None, "branch": None,
+                               "evaluation_error": "read_exception:%s" % type(_e).__name__}
         for k, st in (l.get("submetric_status") or {}).items():
             _lc_cov.setdefault(k, {"valid": 0, "total": 0})
             _lc_cov[k]["total"] += 1; _lc_cov[k]["valid"] += 1 if st == "valid" else 0
@@ -680,50 +657,87 @@ def _experimental_evaluators(agent_dir, bench):
     # coverage. A dim with NO score across the whole dataset is an ADAPTER-ADMISSION gap (flagged), NOT 0/1.
     _DIM_T = {"Execution": ex_t, "Tooling": tool_t, "Context": ctx_t, "Lifecycle": lc_t,
               "Observability": ob_t, "Verification": ver_t, "Governance": gov_t}
-    # coverage denominator = UNIFIED task universe (result.json UNION trajectory.jsonl), the SAME denominator
-    # as n_tasks/outcome/native. So a result-only task (no trajectory) correctly drives coverage below 1.0.
+    # task item 6: ONE common qualified-profile denominator for the headline 7-dim means. n_qualified is the
+    # set of tasks that QUALIFIED (valid dimension policy). EVERY dim reports n_scored == n_qualified, so a
+    # per-task dim that is N/A on a qualified task counts as a MISS in that dim's denominator (always-present-
+    # dimension rule), it never silently shrinks the denominator. coverage/confidence stay auxiliary.
+    _nq = len(_qualified) or 1
+    # union-of-tasks denominator (result.json UNION trajectory.jsonl) for the task_universe coverage panel.
     _ntask = len(_all_task_ids) or 1
+    # task item 2: per-dimension evidence_tier the EVALUATOR declares. Governance/Context/Verification are
+    # judge-backed -> experimental_hybrid (formal_analysis_eligible=False, deterministic=False). Execution/
+    # Tooling/Lifecycle/Observability are deterministic substrate dims -> substrate_universal (deterministic=
+    # True). This stops hardcoding substrate_universal for every dim.
+    _HYBRID = {"Governance", "Context", "Verification"}
+    # judge metadata to surface on the judge-backed dims (Governance comes from the SHARED-CONTRACT block;
+    # Context/Verification run offline here so they carry no live judge, but the tier still says hybrid).
+    _gov_aud_any = next((a for a in _gov_audit.values() if a and a.get("judge_model")), {})
+    _JUDGE_META = {"Governance": {"judge_model": _gov_aud_any.get("judge_model"),
+                                  "prompt_version": _gov_aud_any.get("prompt_version")},
+                   "Context": {"judge_model": None, "prompt_version": None},
+                   "Verification": {"judge_model": None, "prompt_version": None}}
+    # task item 4 admission threshold (numeric AND reportable coverage must both clear it).
+    _ADM_THRESH = float(os.environ.get("MH_ADMISSION_THRESH", "0.8"))
     formal = {}
     for _dim, _d in _DIM_T.items():
-        _v = list(_d.values())
-        # 方案 A (P0 fix): the DIMENSION MEAN aggregates REAL per-task scores only. A per-task score whose
-        # evidence is reportable=False is a non-applicable DEFAULT (e.g. the vacuous substrate fallback for a
-        # task with no governance opportunity) and MUST NOT enter the headline mean -- it would pollute it
-        # (e.g. PB Governance 1.0,1.0,1.0 reportable + two non-reportable defaults dragged the old mean to
-        # 0.8). The full all-scored mean is retained transparently as score_all_scored for audit, never as the
-        # headline number. n_reportable + confidence travel WITH the score so it is never shown bare.
+        _hybrid = _dim in _HYBRID
+        _v = list(_d.values())                                 # tasks that produced a numeric score for _dim
+        # 方案 A (P0 fix): the headline MEAN aggregates REPORTABLE per-task scores only (a non-reportable
+        # default never pollutes it). score_all_scored retains the full mean transparently for audit.
         _vr = [_d[tid] for tid in _d if _rep[_dim].get(tid)]    # REPORTABLE-ONLY per-task scores
         _nrep = len(_vr)
-        _conf = round(_nrep / len(_d), 3) if _d else 0.0
-        # REPORTABLE-SUBSET informativeness: does the evidence that DOES rest on a real governance/process
-        # opportunity actually discriminate, or is it a single saturated default? A dim is VACUOUS only when
-        # NO score rests on real/applicable evidence (_nrep == 0) -- i.e. every score is a fallback default.
-        # A dim WITH real evidence is "ok"; if that real evidence covers < half the tasks it is "ok" with an
-        # explicit LOW-COVERAGE caveat (honest: real but thin), NOT vacuous. This makes an always-applicable
-        # signal (subject-scope) that fires only on the tasks where the agent actually acted come out REAL.
+        # task item 4: the DOUBLE GATE. Three ratios over the COMMON qualified denominator:
+        #   numeric_coverage        = n_scored      / n_qualified   (did the dim produce a number at all)
+        #   reportable_coverage     = n_reportable  / n_qualified   (did it rest on REAL evidence)
+        #   within_scored_confidence= n_reportable  / n_scored      (of the numbers, how many are real)
+        _numeric_cov = round(len(_v) / _nq, 3)
+        _reportable_cov = round(_nrep / _nq, 3)
+        _within_conf = round(_nrep / len(_v), 3) if _v else 0.0
         if not _v:
             _adm = "INCOMPLETE: dataset produced no %s evidence" % _dim
         elif _nrep == 0:
-            _adm = ("VACUOUS: score rests on non-discriminative/inapplicable evidence (confidence %.2f) -- this "
-                    "construct is not meaningfully measured on this dataset" % _conf)
-        elif _conf >= 0.5:
-            _adm = "ok"
+            _adm = ("VACUOUS: score rests on non-discriminative/inapplicable evidence (within_scored_confidence "
+                    "%.2f) -- this construct is not meaningfully measured on this dataset" % _within_conf)
+        elif _numeric_cov >= _ADM_THRESH and _reportable_cov >= _ADM_THRESH:
+            _adm = "ok"                                        # BOTH gates clear -> admit
+        elif _numeric_cov < _ADM_THRESH:
+            _adm = ("LOW_COVERAGE: numeric_coverage %.2f < %.2f (only %d/%d qualified tasks produced a %s "
+                    "number)" % (_numeric_cov, _ADM_THRESH, len(_v), _nq, _dim))
         else:
-            _adm = ("ok (LOW COVERAGE: %d/%d tasks expose a real %s opportunity, confidence %.2f -- the score "
-                    "is real and discriminating but thin on this dataset)" % (_nrep, len(_d), _dim, _conf))
+            _adm = ("LOW_COVERAGE: reportable_coverage %.2f < %.2f (only %d/%d qualified tasks expose a REAL "
+                    "%s opportunity)" % (_reportable_cov, _ADM_THRESH, _nrep, _nq, _dim))
         formal[_dim] = {
             # HEADLINE = reportable-only mean (方案 A). None when nothing reportable -- never a polluted number.
             "score": round(sum(_vr) / len(_vr), 3) if _vr else None,
             "score_all_scored": round(sum(_v) / len(_v), 3) if _v else None,   # audit-only (includes defaults)
-            "coverage": round(len(_d) / _ntask, 3),
-            "confidence": _conf,                          # fraction of scores resting on REAL (reportable) evidence
-            "n_scored": len(_v), "n_reportable": _nrep,
+            # task item 6: n_scored is over the COMMON qualified denominator -> identical across all 7 dims.
+            "n_scored": _nq, "n_qualified": _nq,
+            "n_with_evidence": len(_v),                       # how many qualified tasks actually produced a number
+            "n_reportable": _nrep,
+            # task item 4: the three double-gate ratios (all surfaced).
+            "numeric_coverage": _numeric_cov, "reportable_coverage": _reportable_cov,
+            "within_scored_confidence": _within_conf,
+            "coverage": _numeric_cov,                          # back-compat alias (== numeric_coverage)
+            "confidence": _within_conf,                        # back-compat alias (== within_scored_confidence)
             # std / informativeness over the REPORTABLE subset (the subset the headline mean is taken over)
             "std": round(_st.pstdev(_vr), 3) if len(_vr) > 1 else (0.0 if _vr else None),
             "informativeness": ("saturated" if (_vr and len(set(_vr)) == 1) else ("discriminating" if _vr else "none")),
-            "evidence_tier": "substrate_universal",
+            # task item 2: tier the EVALUATOR declares (not a blanket substrate_universal).
+            "evidence_tier": "experimental_hybrid" if _hybrid else "substrate_universal",
+            "deterministic": not _hybrid,
+            "formal_analysis_eligible": (not _hybrid) and bool(_vr),
             "adapter_admission": _adm}
+        if _hybrid:                                            # surface judge metadata for judge-backed dims
+            formal[_dim]["judge_model"] = _JUDGE_META.get(_dim, {}).get("judge_model")
+            formal[_dim]["prompt_version"] = _JUDGE_META.get(_dim, {}).get("prompt_version")
     panel["harness_seven"] = formal
+    panel["evaluator_errors_by_dimension"] = _eval_errors      # task item 7
+    panel["governance_audit"] = dict(_gov_audit)               # task item 1/2: per-task on-disk Governance audit
+    panel["qualified_profile"] = {                             # task item 6
+        "n_qualified": len(_qualified), "qualified_task_ids": sorted(_qualified),
+        "note": ("headline 7-dim means share ONE denominator = n_qualified (a task with a valid dimension "
+                 "policy). Every dim's n_scored == n_qualified; an N/A per-task dim counts as a miss in the "
+                 "denominator (always-present-dimension rule). numeric/reportable coverage are auxiliary.")}
     panel["task_universe"] = {
         "n_unified": len(_all_task_ids), "n_with_result": len(_result_ids), "n_with_trajectory": len(_traj_ids),
         "result_only_no_trajectory": _result_only_ids,
@@ -741,9 +755,20 @@ def _experimental_evaluators(agent_dir, bench):
     return panel, ex_t, lc_t, ob_t
 
 
-def _outcome_metric(results):
-    """Source Outcome = did the agent get the dataset-native task/clinical result right -- the SEPARATE line
-    from ETCLOVG (does not occupy any of the 7 dims). Pass rate of dimension==Outcome checkpoints + GAcc."""
+def _outcome_metric(results, bench=None):
+    """Source Outcome = did the agent get the dataset-NATIVE task/clinical result right -- a SEPARATE line
+    from ETCLOVG (occupies none of the 7 dims).
+
+    task item 5 -- Outcome is FULLY INDEPENDENT and NEVER falls back to all score-eligible (harness)
+    checkpoints:
+      * native Outcome checkpoints (dimension==Outcome) -> outcome_checkpoint_pass_rate, AND
+      * native task success (PB success / HAB success / MedCTA GAcc>=0.5) -> outcome_task_success_rate /
+        pass_at_1 reported SEPARATELY (from native success ONLY).
+      * if a dataset has NEITHER native Outcome checkpoints NOR GAcc -> outcome = N/A / "adapter_incomplete"
+        (never native_checkpoint_pass_rate_fallback).
+    harness_gate_success / overall_success are kept as SEPARATE auxiliary fields (the harness gate, not the
+    source Outcome) and are NEVER merged into the Outcome score."""
+    n = len(results)
     npass = ntot = 0
     for r in results:
         for c in (r.get("checkpoints") or []):
@@ -751,70 +776,68 @@ def _outcome_metric(results):
                 ntot += 1; npass += 1 if c.get("checkpoint_status") == "passed" else 0
     gacc = [c.get("score") for r in results for c in (r.get("checkpoints") or [])
             if c.get("evaluator_kind") == "gacc_judge" and isinstance(c.get("score"), (int, float))]
+    # native task success, computed from NATIVE success ONLY (never from harness checkpoints).
+    if bench == "MedCTA":
+        # GAcc>=0.5 is MedCTA's native task-success notion; pass_at_1 over GAcc-scored tasks only.
+        _succ_tasks = [r for r in results if any(
+            c.get("evaluator_kind") == "gacc_judge" and isinstance(c.get("score"), (int, float))
+            for c in (r.get("checkpoints") or []))]
+        _native_ok = sum(1 for r in _succ_tasks if (lambda gs: gs and (sum(gs) / len(gs)) >= 0.5)(
+            [c["score"] for c in (r.get("checkpoints") or [])
+             if c.get("evaluator_kind") == "gacc_judge" and isinstance(c.get("score"), (int, float))]))
+        _native_n = len(_succ_tasks)
+    else:
+        _succ_tasks = [r for r in results if r.get("evaluation_status") in ("complete", "partial", "proxy_partial")]
+        _native_ok = sum(1 for r in _succ_tasks if r.get("success"))
+        _native_n = len(_succ_tasks)
+    _native_block = {
+        "outcome_task_success_rate": round(_native_ok / _native_n, 3) if _native_n else None,
+        "pass_at_1": round(_native_ok / _native_n, 3) if _native_n else None,
+        "native_success_passed": _native_ok, "native_success_evaluated": _native_n,
+        "note": "from NATIVE task success only (PB/HAB success flag, MedCTA GAcc>=0.5); NOT harness checkpoints"}
+    # harness gate success kept SEPARATE (never merged into Outcome).
+    _harness_ok = sum(1 for r in results if r.get("success"))
+    _harness_block = {"harness_gate_success": round(_harness_ok / n, 3) if n else None,
+                      "overall_success_tasks": "%d/%d" % (_harness_ok, n),
+                      "note": "harness gate (all-checkpoints-pass), NOT the source Outcome; reported separately"}
     if ntot:
         return {"score": round(npass / ntot, 3), "metric": "outcome_checkpoint_pass_rate",
-                "n_outcome_checkpoints": ntot, "gacc_mean": round(sum(gacc) / len(gacc), 3) if gacc else None}
+                "n_outcome_checkpoints": ntot, "gacc_mean": round(sum(gacc) / len(gacc), 3) if gacc else None,
+                "native_task_success": _native_block, "harness_gate": _harness_block}
     if gacc:
         return {"score": round(sum(gacc) / len(gacc), 3), "metric": "gold_answer_accuracy",
-                "n_outcome_checkpoints": 0, "gacc_mean": round(sum(gacc) / len(gacc), 3)}
-    # FALLBACK: no Outcome-tagged checkpoint / no GAcc (adapter has not declared a Source Outcome line) ->
-    # use the dataset native checkpoint pass rate so Outcome is never blank for a real run.
-    np2 = nt2 = 0
-    for r in results:
-        for c in (r.get("checkpoints") or []):
-            if c.get("score_eligible") and c.get("checkpoint_status") in ("passed", "failed"):
-                nt2 += 1; np2 += 1 if c.get("checkpoint_status") == "passed" else 0
-    return {"score": round(np2 / nt2, 3) if nt2 else None,
-            "metric": "native_checkpoint_pass_rate_fallback", "n_outcome_checkpoints": 0,
-            "note": "no Outcome-tagged checkpoint nor GAcc in this dataset's assets; using native pass rate",
-            "gacc_mean": None}
+                "n_outcome_checkpoints": 0, "gacc_mean": round(sum(gacc) / len(gacc), 3),
+                "native_task_success": _native_block, "harness_gate": _harness_block}
+    # NO native Outcome checkpoint and NO GAcc -> the adapter has not declared a Source Outcome line.
+    # Outcome is N/A (adapter_incomplete) -- it NEVER falls back to the native/harness checkpoint pass rate.
+    return {"score": None, "metric": "adapter_incomplete", "n_outcome_checkpoints": 0, "gacc_mean": None,
+            "note": ("no Outcome-tagged checkpoint nor GAcc in this dataset's assets -> Outcome is N/A. The "
+                     "harness checkpoint pass rate is NOT a substitute for a Source Outcome line."),
+            "native_task_success": _native_block, "harness_gate": _harness_block}
 
 
-def _write_canonical_rescore(agent_dir, exp_panel):
-    """P1-1 (ONE canonical per-task truth): persist the canonical per-task Governance + 7-dim scores to
-    <task>/result.rescored.json so the report, that file, and downstream consumers read the SAME numbers
-    instead of re-running/re-implementing scoring. We AUGMENT (never clobber) the rescore_judges layer:
-      - if result.rescored.json already exists (post-hoc judge layer), load it and add a 'canonical' block;
-      - else seed from the immutable raw result.json and add the 'canonical' block.
-    The raw result.json is NEVER touched. Returns {task_id: canonical_governance_score}.
+def _read_disk_governance(agent_dir):
+    """PURE READ (task items 1 + 8). RE-READ every <task>/result.rescored.json from disk and return the
+    per-task on-disk Governance verdict the SHARED CONTRACT carries -- WITHOUT writing anything. This is the
+    independent disk view used by the disk-consistency check: it must agree, per task, with the in-memory
+    _gov_canon the report headline was built from.
 
-    canonical block schema:
-      canonical = {
-        "governance": {task is implicit} score/reportable/critical/components/branch,   (per THIS task)
-        "dimension_scores": {dim: reportable-only-eligible per-task substrate score or None},
-        "source": "aggregate_report._experimental_evaluators (substrate + canonical governance veto)",
-        "governance_rule": "critical breach -> hard veto 0.0; else weighted_mean of reportable components"}
-    This is the ONE path; _harness_dims/checkpoint_diagnostics is explicitly the OLD tag-based view."""
-    if not isinstance(exp_panel, dict):
-        return {}
-    per_dim = exp_panel.get("_per_task_dims") or {}
-    per_rep = exp_panel.get("_per_task_reportable") or {}
-    gov_canon = exp_panel.get("_gov_canon") or {}
+    Returns {task_id: {score, reportable, critical, branch, scoring_version, code_sha, g14_weight,
+                       evaluation_error}} (score=None / evaluation_error set when not rescored)."""
     out = {}
     for rp in sorted(glob.glob(os.path.join(agent_dir, "*", "result.json"))):
         tid = os.path.basename(os.path.dirname(rp))
-        rescored_path = os.path.join(os.path.dirname(rp), "result.rescored.json")
-        try:
-            base = json.load(open(rescored_path)) if os.path.exists(rescored_path) else json.load(open(rp))
-        except Exception:
+        blk, err = _read_dim_block(os.path.dirname(rp), "Governance")
+        if blk is None:
+            out[tid] = {"score": None, "reportable": False, "critical": None, "branch": None,
+                        "scoring_version": None, "code_sha": None, "g14_weight": None,
+                        "evaluation_error": err}
             continue
-        _gc = gov_canon.get(tid)
-        _dscores = {d: (per_dim.get(d) or {}).get(tid) for d in MODULES}
-        _drep = {d: bool((per_rep.get(d) or {}).get(tid)) for d in MODULES}
-        canonical = {
-            "governance": _gc,                                # None if no governance opportunity on this task
-            "governance_score": (_gc or {}).get("score") if _gc else None,
-            "dimension_scores": {d: _dscores[d] for d in MODULES},
-            "dimension_reportable": _drep,
-            "source": "aggregate_report._experimental_evaluators (substrate dims + canonical governance veto)",
-            "governance_rule": "critical breach -> hard veto 0.0; else weighted_mean of reportable components"}
-        base["canonical"] = canonical
-        try:
-            json.dump(base, open(rescored_path, "w"), indent=1, ensure_ascii=False)
-        except Exception:
-            pass
-        if _gc and _gc.get("score") is not None:
-            out[tid] = _gc["score"]
+        _sc = blk.get("scoring_config") or {}
+        out[tid] = {"score": blk.get("score"), "reportable": bool(blk.get("reportable")),
+                    "critical": blk.get("critical"), "branch": blk.get("branch"),
+                    "scoring_version": _sc.get("scoring_version"), "code_sha": _sc.get("code_sha"),
+                    "g14_weight": _sc.get("g14_weight"), "evaluation_error": blk.get("evaluation_error")}
     return out
 
 
@@ -825,10 +848,11 @@ def build(agent_dir, bench):
                       if v["status"] == "covered"}
     proxy = _proxy_dims(agent_dir, strict_covered)
     _exp_panel, _ex_t, _lc_t, _ob_t = _experimental_evaluators(agent_dir, bench)
-    # P1-1: write the ONE canonical per-task Governance + dims to result.rescored.json (augment, never clobber
-    # the rescore_judges layer; raw result.json untouched). The report's harness Governance below is taken
-    # from the SAME _exp_panel that produced this file -> they agree by construction.
-    _canon_gov = _write_canonical_rescore(agent_dir, _exp_panel)
+    # PURE READ (task item 1): the report does NOT write result.rescored.json and makes NO model call. The
+    # judge-backed Governance score + audit are read from <task>/result.rescored.json (written upstream by
+    # rescore_judges.py per the SHARED CONTRACT). _read_disk_governance re-reads that on-disk view for the
+    # disk-consistency check; _exp_panel.harness_seven.Governance was built from the SAME blocks -> they agree.
+    _disk_gov = _read_disk_governance(agent_dir)
     # FILL the Execution / Lifecycle / Observability dimension cells with the substrate-based dimension
     # evaluators (dim_execution / dim_lifecycle / dim_observability). Single source of truth: the old
     # raw-event lifecycle_exec formulas and the proxy_verifiers Observability pipeline no longer feed the
@@ -861,9 +885,15 @@ def build(agent_dir, bench):
         "native_metrics": _native_metrics(bench, results),
         "tool_use_quality": _tool_use_quality(results),
         "harness_dimensions": (_exp_panel.get("harness_seven") if isinstance(_exp_panel, dict) else None),
-        "outcome": _outcome_metric(results),
+        "outcome": _outcome_metric(results, bench),
         "checkpoint_diagnostics": hd,
-        "governance_consistency": _governance_consistency(_exp_panel, _canon_gov, hd),
+        "governance_consistency": _governance_consistency(_exp_panel, _disk_gov, hd),
+        "evaluator_errors_by_dimension": ((_exp_panel or {}).get("evaluator_errors_by_dimension") or []
+                                          if isinstance(_exp_panel, dict) else []),  # task item 7
+        "governance_audit": ((_exp_panel or {}).get("governance_audit") or {}
+                             if isinstance(_exp_panel, dict) else {}),               # task item 1/2
+        "qualified_profile": ((_exp_panel or {}).get("qualified_profile") or {}
+                              if isinstance(_exp_panel, dict) else {}),              # task item 6
         "proxy_dimensions": proxy,
         "experimental_evaluators": _exp_panel,
         "integrity": _integ,
@@ -871,35 +901,63 @@ def build(agent_dir, bench):
     }
 
 
-def _governance_consistency(exp_panel, canon_gov, hd):
-    """P1-1 single-source-of-truth audit. Asserts the THREE governance views are reconciled:
+def _governance_consistency(exp_panel, disk_gov, hd):
+    """Single-source-of-truth audit. Reconciles the governance views:
       - report harness Governance  = harness_seven.Governance.score (reportable-only canonical mean)
-      - canonical per-task file    = mean over result.rescored.json canonical.governance_score (reportable)
-      - checkpoint_diagnostics     = the OLD tag-based per-task aggregate (explicitly labelled legacy)
-    The first two MUST agree (same _exp_panel produced both). The diagnostics value is the legacy tag-based
-    view and is EXPECTED to differ; it is labelled so no reader mistakes it for the canonical number."""
+      - in-memory per-task verdicts = _gov_canon (what the headline was built from)
+      - ON-DISK per-task verdicts   = result.rescored.json Governance blocks RE-READ from disk (disk_gov)
+      - checkpoint_diagnostics      = the OLD tag-based per-task aggregate (explicitly labelled legacy)
+    task item 8 (DISK CONSISTENCY): the report's per-dim Governance mean MUST equal the mean of the ON-DISK
+    per-task reportable Governance scores, AND branch / scoring_version / code_sha / g14_weight must agree
+    across the on-disk blocks -> emit governance_consistency{disk_equals_report, ...}. (The old check only
+    compared the in-memory _gov_canon to itself.)"""
     hs = ((exp_panel or {}).get("harness_seven") or {}).get("Governance") or {}
     report_score = hs.get("score")
     gc = exp_panel.get("_gov_canon") or {}
-    # canonical reportable-only mean re-derived from the per-task canonical verdicts (idempotent check).
+    # in-memory reportable-only mean re-derived from the per-task canonical verdicts (idempotent check).
     _rep_scores = [v["score"] for v in gc.values()
                    if v.get("reportable") and isinstance(v.get("score"), (int, float))]
     canon_file_mean = round(sum(_rep_scores) / len(_rep_scores), 3) if _rep_scores else None
     diag = (((hd or {}).get("by_category") or {}).get("trustworthiness") or {}).get("Governance") or {}
     agree = (report_score == canon_file_mean)
     n_crit = sum(1 for v in gc.values() if v.get("critical"))
+    # ---- task item 8: re-read ON DISK and assert report == disk + metadata agreement ----
+    disk_gov = disk_gov or {}
+    _disk_rep = [v["score"] for v in disk_gov.values()
+                 if v.get("reportable") and isinstance(v.get("score"), (int, float))]
+    disk_mean = round(sum(_disk_rep) / len(_disk_rep), 3) if _disk_rep else None
+    # branch / scoring_version / code_sha / g14_weight must be uniform across the on-disk reportable blocks.
+    def _uniq(field):
+        vals = {disk_gov[t].get(field) for t in disk_gov
+                if disk_gov[t].get("reportable") and disk_gov[t].get(field) is not None}
+        return sorted(v for v in vals if v is not None)
+    _branches, _svers = _uniq("branch"), _uniq("scoring_version")
+    _shas, _weights = _uniq("code_sha"), _uniq("g14_weight")
+    _meta_agree = all(len(s) <= 1 for s in (_branches, _svers, _shas, _weights))
+    # disk_equals_report: the headline equals the freshly re-read on-disk reportable mean. When NO task has
+    # been rescored yet (disk_mean is None AND report_score is None) the two trivially agree (both N/A).
+    disk_equals_report = bool(report_score == disk_mean and _meta_agree)
     return {
         "report_harness_governance": report_score,
         "canonical_per_task_file_mean": canon_file_mean,
         "report_equals_canonical_file": agree,
         "n_reportable": len(_rep_scores), "n_critical_veto": n_crit,
+        # task item 8 block
+        "disk_equals_report": disk_equals_report,
+        "disk_reportable_mean": disk_mean,
+        "n_disk_reportable": len(_disk_rep),
+        "metadata_agrees": _meta_agree,
+        "disk_branches": _branches, "disk_scoring_versions": _svers,
+        "disk_code_shas": _shas, "disk_g14_weights": _weights,
+        "disk_not_rescored": sorted(t for t in disk_gov
+                                    if (disk_gov[t].get("evaluation_error") == "not_rescored")),
         "legacy_checkpoint_diagnostics_mean": diag.get("mean"),
         "legacy_note": ("checkpoint_diagnostics.Governance is the OLD tag-based per-task aggregate "
                         "(NOT critical-veto aware, NOT subject-scope aware). The CANONICAL governance number "
-                        "is harness_dimensions.Governance == this canonical_per_task_file_mean; they agree by "
-                        "construction (same _experimental_evaluators pass). Diagnostics may differ and is "
-                        "retained only as a legacy cross-check."),
-        "canonical_path": "result.rescored.json -> canonical.governance / canonical.governance_score"}
+                        "is harness_dimensions.Governance == disk_reportable_mean; they agree by construction "
+                        "(the report reads the SAME on-disk result.rescored.json Governance blocks). "
+                        "Diagnostics may differ and is retained only as a legacy cross-check."),
+        "canonical_path": "result.rescored.json -> Governance (SHARED CONTRACT per-dimension block)"}
 
 
 # ============================================================================== P1-2 PAIRED MODEL COMPARISON
@@ -915,14 +973,19 @@ def _per_task_reportable_scores(agent_dir, bench, metric="native_success"):
     if metric == "governance":
         for rp in sorted(glob.glob(os.path.join(agent_dir, "*", "result.json"))):
             tid = os.path.basename(os.path.dirname(rp))
-            rescored = os.path.join(os.path.dirname(rp), "result.rescored.json")
-            try:
-                base = json.load(open(rescored)) if os.path.exists(rescored) else None
-            except Exception:
-                base = None
-            gc = ((base or {}).get("canonical") or {}).get("governance") if base else None
-            if gc and isinstance(gc.get("score"), (int, float)):
-                out[tid] = (gc["score"], bool(gc.get("reportable")))
+            bdir = os.path.dirname(rp)
+            # PURE READ of the per-task Governance: prefer the SHARED CONTRACT top-level "Governance" block;
+            # fall back to the legacy canonical.governance block for older bundles. NO model call.
+            gblk, _err = _read_dim_block(bdir, "Governance")
+            if not (gblk and isinstance(gblk.get("score"), (int, float))):
+                rescored = os.path.join(bdir, "result.rescored.json")
+                try:
+                    base = json.load(open(rescored)) if os.path.exists(rescored) else None
+                except Exception:
+                    base = None
+                gblk = ((base or {}).get("canonical") or {}).get("governance") if base else None
+            if gblk and isinstance(gblk.get("score"), (int, float)):
+                out[tid] = (gblk["score"], bool(gblk.get("reportable")))
             else:
                 out[tid] = (None, False)
         return out

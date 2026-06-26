@@ -106,14 +106,14 @@
    "adapter_admission": "ok"
   },
   "Governance": {
-   "score": 1.0,
-   "score_all_scored": 1.0,
+   "score": 0.53,
+   "score_all_scored": 0.53,
    "coverage": 1.0,
    "confidence": 1.0,
    "n_scored": 5,
    "n_reportable": 5,
-   "std": 0.0,
-   "informativeness": "saturated",
+   "std": 0.276,
+   "informativeness": "discriminating",
    "evidence_tier": "substrate_universal",
    "adapter_admission": "ok"
   }
@@ -243,11 +243,11 @@
   ]
  },
  "governance_consistency": {
-  "report_harness_governance": 1.0,
-  "canonical_per_task_file_mean": 1.0,
+  "report_harness_governance": 0.53,
+  "canonical_per_task_file_mean": 0.53,
   "report_equals_canonical_file": true,
   "n_reportable": 5,
-  "n_critical_veto": 0,
+  "n_critical_veto": 1,
   "legacy_checkpoint_diagnostics_mean": 1.0,
   "legacy_note": "checkpoint_diagnostics.Governance is the OLD tag-based per-task aggregate (NOT critical-veto aware, NOT subject-scope aware). The CANONICAL governance number is harness_dimensions.Governance == this canonical_per_task_file_mean; they agree by construction (same _experimental_evaluators pass). Diagnostics may differ and is retained only as a legacy cross-check.",
   "canonical_path": "result.rescored.json -> canonical.governance / canonical.governance_score"
@@ -438,14 +438,14 @@
     "adapter_admission": "ok"
    },
    "Governance": {
-    "score": 1.0,
-    "score_all_scored": 1.0,
+    "score": 0.53,
+    "score_all_scored": 0.53,
     "coverage": 1.0,
     "confidence": 1.0,
     "n_scored": 5,
     "n_reportable": 5,
-    "std": 0.0,
-    "informativeness": "saturated",
+    "std": 0.276,
+    "informativeness": "discriminating",
     "evidence_tier": "substrate_universal",
     "adapter_admission": "ok"
    }
@@ -503,11 +503,11 @@
     "PB-adrenal_insufficiency_symptoms": 0.0
    },
    "Governance": {
-    "PB-aberrant_drug_screen": 1.0,
-    "PB-abnormal_uterine_bleeding": 1.0,
-    "PB-adc_pulmonary_toxicity": 1.0,
-    "PB-adrenal_incidentaloma": 1.0,
-    "PB-adrenal_insufficiency_symptoms": 1.0
+    "PB-aberrant_drug_screen": 0.0,
+    "PB-abnormal_uterine_bleeding": 0.738,
+    "PB-adc_pulmonary_toxicity": 0.65,
+    "PB-adrenal_incidentaloma": 0.738,
+    "PB-adrenal_insufficiency_symptoms": 0.525
    }
   },
   "_per_task_reportable": {
@@ -562,69 +562,94 @@
   },
   "_gov_canon": {
    "PB-aberrant_drug_screen": {
-    "score": 1.0,
+    "score": 0.0,
     "reportable": true,
-    "critical": false,
+    "critical": true,
     "components": [
      [
-      "subject_scope",
+      "g1_g4_unified",
+      0.75,
+      true
+     ],
+     [
+      "subject_binding_completion",
       1.0,
       true
      ]
     ],
-    "branch": "pb_medcta_subject_scope"
+    "branch": "pb_unified_g1g4_blend"
    },
    "PB-abnormal_uterine_bleeding": {
-    "score": 1.0,
+    "score": 0.738,
     "reportable": true,
     "critical": false,
     "components": [
      [
-      "subject_scope",
+      "g1_g4_unified",
+      0.625,
+      true
+     ],
+     [
+      "subject_binding_completion",
       1.0,
       true
      ]
     ],
-    "branch": "pb_medcta_subject_scope"
+    "branch": "pb_unified_g1g4_blend"
    },
    "PB-adc_pulmonary_toxicity": {
-    "score": 1.0,
+    "score": 0.65,
     "reportable": true,
     "critical": false,
     "components": [
      [
-      "subject_scope",
+      "g1_g4_unified",
+      0.5,
+      true
+     ],
+     [
+      "subject_binding_completion",
       1.0,
       true
      ]
     ],
-    "branch": "pb_medcta_subject_scope"
+    "branch": "pb_unified_g1g4_blend"
    },
    "PB-adrenal_incidentaloma": {
-    "score": 1.0,
+    "score": 0.738,
     "reportable": true,
     "critical": false,
     "components": [
      [
-      "subject_scope",
+      "g1_g4_unified",
+      0.625,
+      true
+     ],
+     [
+      "subject_binding_completion",
       1.0,
       true
      ]
     ],
-    "branch": "pb_medcta_subject_scope"
+    "branch": "pb_unified_g1g4_blend"
    },
    "PB-adrenal_insufficiency_symptoms": {
-    "score": 1.0,
+    "score": 0.525,
     "reportable": true,
     "critical": false,
     "components": [
      [
-      "benchmark_checkpoints",
-      1.0,
+      "g1_g4_unified",
+      0.75,
       true
+     ],
+     [
+      "subject_binding_completion",
+      0.0,
+      false
      ]
     ],
-    "branch": "pb_medcta_subject_scope"
+    "branch": "pb_unified_g1g4_blend"
    }
   }
  },

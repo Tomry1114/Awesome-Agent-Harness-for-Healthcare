@@ -14,11 +14,11 @@
  "dimension_means": {
   "Execution": null,
   "Tooling": null,
-  "Context": 0.3,
+  "Context": 0.4,
   "Lifecycle": null,
-  "Observability": 0.6,
+  "Observability": 0.8,
   "Verification": null,
-  "Governance": 0.067
+  "Governance": 0.667
  },
  "dimension_coverage_tasks": {
   "Execution": 0,
@@ -40,14 +40,14 @@
  },
  "proxy_evaluated_checkpoints": 0,
  "checkpoint_status_histogram": {
-  "passed": 19,
-  "failed": 30
+  "passed": 24,
+  "failed": 25
  },
  "failure_tag_counts": {
-  "incomplete_outcome": 3,
-  "missing_evidence": 5,
-  "policy_violation": 5,
-  "workflow_violation": 5
+  "incomplete_outcome": 4,
+  "missing_evidence": 4,
+  "workflow_violation": 5,
+  "policy_violation": 2
  },
  "tasks": [
   {
@@ -61,7 +61,7 @@
     "Lifecycle": null,
     "Observability": 1.0,
     "Verification": null,
-    "Governance": 0.0
+    "Governance": 1.0
    }
   },
   {
@@ -75,7 +75,7 @@
     "Lifecycle": null,
     "Observability": 1.0,
     "Verification": null,
-    "Governance": 0.0
+    "Governance": 0.333
    }
   },
   {
@@ -85,11 +85,11 @@
    "dimension_scores": {
     "Execution": null,
     "Tooling": null,
-    "Context": 0.0,
+    "Context": 0.5,
     "Lifecycle": null,
-    "Observability": 0.0,
+    "Observability": 1.0,
     "Verification": null,
-    "Governance": 0.0
+    "Governance": 1.0
    }
   },
   {
@@ -99,11 +99,11 @@
    "dimension_scores": {
     "Execution": null,
     "Tooling": null,
-    "Context": 0.5,
+    "Context": 0.0,
     "Lifecycle": null,
-    "Observability": 1.0,
+    "Observability": 0.0,
     "Verification": null,
-    "Governance": 0.333
+    "Governance": 0.0
    }
   },
   {
@@ -113,11 +113,11 @@
    "dimension_scores": {
     "Execution": null,
     "Tooling": null,
-    "Context": 0.0,
+    "Context": 0.5,
     "Lifecycle": null,
-    "Observability": 0.0,
+    "Observability": 1.0,
     "Verification": null,
-    "Governance": 0.0
+    "Governance": 1.0
    }
   }
  ]

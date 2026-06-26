@@ -2106,6 +2106,257 @@ def test_governance_agent_final_output_reads_real_deliverable():
     assert "opioid dependence" in out_pb and "API_BRAIN_ERROR" not in out_pb, out_pb
 
 
+# ====================================================================== PHASED-PIPELINE REGRESSION SUITE
+# Integrate task 1 (a)-(h): the report layer (aggregate_report.build) must be PURE-READ over the
+# rescore_judges.py-written result.rescored.json SHARED CONTRACT, with a single qualified-profile
+# denominator, honest evidence_tier labels, an Outcome line that never falls back to harness checkpoints,
+# a composite-key _remap, an adapter-admission double gate, and disk==report Governance consistency.
+def _mk_pipeline_bundle(root, agent, tasks, bench_prefix="PB"):
+    """Build a synthetic agent bundle: <root>/<agent>/<tid>/{result.json,trajectory.jsonl,task.json,
+    result.rescored.json}. `tasks` = {tid: {governance: <block-or-None>, checkpoints: [...],
+    success: bool, evaluation_status: str, gacc: float-or-None, no_trajectory: bool}}. Pure disk, no model."""
+    import os as _os, json as _json
+    ad = _os.path.join(root, agent); _os.makedirs(ad, exist_ok=True)
+    for tid, spec in tasks.items():
+        td = _os.path.join(ad, tid); _os.makedirs(td, exist_ok=True)
+        cps = list(spec.get("checkpoints") or [])
+        gacc = spec.get("gacc")
+        if gacc is not None:
+            cps = cps + [{"id": "cp_gacc", "dimension": "Outcome", "evaluator_kind": "gacc_judge",
+                          "score": gacc, "checkpoint_status": "passed", "score_eligible": True}]
+        res = {"task_id": tid, "success": bool(spec.get("success")),
+               "evaluation_status": spec.get("evaluation_status", "complete"),
+               "checkpoints": cps,
+               "provenance": {"agent_model": spec.get("agent_model", "gpt-5.5 (api brain)")}}
+        _json.dump(res, open(_os.path.join(td, "result.json"), "w"))
+        _json.dump({"task_id": tid, "source_benchmark": spec.get("bench"),
+                    "goal": "synthetic", "available_tools": []}, open(_os.path.join(td, "task.json"), "w"))
+        if not spec.get("no_trajectory"):
+            with open(_os.path.join(td, "trajectory.jsonl"), "w") as fh:
+                for ev in (spec.get("trajectory") or [{"event_type": "final_answer", "thought": "done"}]):
+                    fh.write(_json.dumps(ev) + "\n")
+        # result.rescored.json: SHARED CONTRACT -> top-level "Governance" block (what _read_dim_block reads)
+        rr = dict(res)
+        if "governance" in spec:
+            if spec["governance"] is not None:
+                rr["Governance"] = spec["governance"]
+        _json.dump(rr, open(_os.path.join(td, "result.rescored.json"), "w"))
+    return ad
+
+
+def _gov_block(score, reportable=True, critical=False, evaluation_error=None,
+               branch="pb_unified_g1g4_blend", scoring_version="governance-v3",
+               code_sha="deadbeef", g14_weight=0.7):
+    """A full-enough SHARED-CONTRACT Governance block (top-level result.rescored.json key)."""
+    return {"score": score, "reportable": bool(reportable), "evaluation_error": evaluation_error,
+            "evidence_tier": "experimental_hybrid", "formal_analysis_eligible": False, "deterministic": False,
+            "components": {"g1_g4_unified": score, "subject_binding_completion": 1.0,
+                           "cross_subject_exclusivity": (0 if critical else 1)},
+            "submetrics": {"G1": {"score": 1.0}, "G2": {"score": 1.0}, "G3": {"score": score},
+                           "G4": {"score": score}},
+            "judge": {"model": "gpt-5.4", "prompt_version": "governance-g1g4-v3", "prompt_hash": "ph",
+                      "raw_response": "{}", "parsed_response": {}},
+            "scoring_config": {"g14_weight": g14_weight, "subject_scope_weight": round(1 - g14_weight, 3),
+                               "scoring_version": scoring_version, "code_sha": code_sha},
+            "branch": branch, "critical": bool(critical), "critical_reason": None}
+
+
+def test_regression_remap_composite_key_keeps_same_cpid_distinct():
+    """(a) Two tasks share a checkpoint id ('cp1_data_retrieval') but tag it to DIFFERENT dimensions.
+    _remap keys the taxonomy by the COMPOSITE (task_id, cp_id), so the second task's tags do NOT clobber the
+    first's same-id checkpoint -> each task keeps its OWN dimension/weight (no cross-task taxonomy bleed)."""
+    import os as _os, json as _json, tempfile as _tf, aggregate_report as _A
+    root = _tf.mkdtemp(); bench = "PhysicianBench"
+    bdir = _os.path.join(root, bench); _os.makedirs(bdir)
+    with open(_os.path.join(bdir, "tasks_unified.jsonl"), "w") as fh:
+        fh.write(_json.dumps({"task_id": "T1", "checkpoints": [
+            {"id": "cp1_data_retrieval", "dimension": "Execution", "subdimension": "exec_sub", "weight": 2.0}]}) + "\n")
+        fh.write(_json.dumps({"task_id": "T2", "checkpoints": [
+            {"id": "cp1_data_retrieval", "dimension": "Governance", "subdimension": "gov_sub", "weight": 3.0}]}) + "\n")
+    # results carry the SAME cp id but a STALE dimension on both
+    results = [
+        {"task_id": "T1", "checkpoints": [{"id": "cp1_data_retrieval", "dimension": "Context",
+                                           "checkpoint_status": "passed", "score": 1.0, "score_eligible": True}]},
+        {"task_id": "T2", "checkpoints": [{"id": "cp1_data_retrieval", "dimension": "Context",
+                                           "checkpoint_status": "passed", "score": 1.0, "score_eligible": True}]}]
+    _saved = _A._ROOT
+    try:
+        _A._ROOT = root
+        out = _A._remap([dict(r) for r in results], bench)
+    finally:
+        _A._ROOT = _saved
+    t1 = next(r for r in out if r["task_id"] == "T1")
+    t2 = next(r for r in out if r["task_id"] == "T2")
+    c1 = t1["checkpoints"][0]; c2 = t2["checkpoints"][0]
+    assert c1["dimension"] == "Execution" and c1["weight"] == 2.0, ("T1 keeps Execution/2.0", c1)
+    assert c2["dimension"] == "Governance" and c2["weight"] == 3.0, ("T2 keeps Governance/3.0 (NOT clobbered)", c2)
+    # the per-task dimension_scores land in DIFFERENT dimensions -> not bled into one
+    assert t1["dimension_scores"]["Execution"] == 1.0 and t1["dimension_scores"]["Governance"] is None, t1["dimension_scores"]
+    assert t2["dimension_scores"]["Governance"] == 1.0 and t2["dimension_scores"]["Execution"] is None, t2["dimension_scores"]
+
+
+def test_regression_low_coverage_dataset_admission_not_ok():
+    """(b) A dataset where only ~5% of qualified tasks expose a REAL Governance opportunity -> the
+    adapter_admission double gate must NOT read 'ok' (reportable_coverage < threshold)."""
+    import aggregate_report as _A
+    # Drive the double-gate logic directly with the exact ratios the build() loop computes.
+    nq = 20
+    thresh = 0.8
+    # numeric coverage fine, but only 1/20 = 5% reportable
+    numeric_cov = round(20 / nq, 3); reportable_cov = round(1 / nq, 3)
+    within = round(1 / 20, 3)
+    assert numeric_cov >= thresh and reportable_cov < thresh, (numeric_cov, reportable_cov)
+    # admission string must signal LOW_COVERAGE, never "ok"
+    if reportable_cov < thresh and numeric_cov >= thresh:
+        adm = "LOW_COVERAGE: reportable_coverage %.2f < %.2f" % (reportable_cov, thresh)
+    assert adm != "ok" and adm.startswith("LOW_COVERAGE"), adm
+    # And an end-to-end build() over a 5%-coverage bundle yields adapter_admission != "ok" for that dim.
+    import tempfile as _tf
+    root = _tf.mkdtemp()
+    tasks = {}
+    for i in range(20):
+        # exactly ONE task reportable; the rest produce a number but non-reportable
+        rep = (i == 0)
+        tasks["PB-%02d" % i] = {"governance": _gov_block(1.0 if rep else 0.0, reportable=rep),
+                                "bench": "PhysicianBench", "success": True}
+    ad = _mk_pipeline_bundle(root, "gpt5", tasks)
+    rep = _A.build(ad, "PhysicianBench")
+    gov_cell = (rep.get("harness_dimensions") or {}).get("Governance") or {}
+    assert gov_cell.get("reportable_coverage", 1.0) <= 0.1, gov_cell.get("reportable_coverage")
+    assert gov_cell.get("adapter_admission") != "ok", gov_cell.get("adapter_admission")
+
+
+def test_regression_outcome_no_native_cp_is_na_not_harness_fallback():
+    """(c) A dataset with NO native Outcome-tagged checkpoint and NO GAcc -> Outcome is N/A
+    (metric='adapter_incomplete', score=None). It NEVER falls back to the harness checkpoint pass rate."""
+    import aggregate_report as _A
+    # results carry harness checkpoints (e.g. Execution) that all PASS, but NO Outcome cp and NO gacc_judge.
+    results = [{"task_id": "t1", "success": True, "evaluation_status": "complete",
+                "checkpoints": [{"id": "cp_e", "dimension": "Execution", "checkpoint_status": "passed",
+                                 "score_eligible": True}]},
+               {"task_id": "t2", "success": True, "evaluation_status": "complete",
+                "checkpoints": [{"id": "cp_e", "dimension": "Execution", "checkpoint_status": "passed",
+                                 "score_eligible": True}]}]
+    out = _A._outcome_metric(results, "PhysicianBench")
+    assert out["score"] is None and out["metric"] == "adapter_incomplete", out
+    # the harness checkpoint pass rate (here 1.0) must NOT have leaked into the Outcome score.
+    assert out.get("harness_gate", {}).get("harness_gate_success") == 1.0, out["harness_gate"]
+    assert out["score"] != out["harness_gate"]["harness_gate_success"], ("Outcome must not equal the harness gate", out)
+
+
+def test_regression_all_seven_dims_share_qualified_denominator():
+    """(d) All 7 ETCLOVG dims report the SAME denominator (n_scored == n_qualified == n_scored_for_every_dim);
+    an N/A per-task dim is a MISS in its denominator, it never shrinks the denominator for that one dim."""
+    import tempfile as _tf, aggregate_report as _A
+    root = _tf.mkdtemp()
+    tasks = {"PB-a": {"governance": _gov_block(1.0), "bench": "PhysicianBench", "success": True},
+             "PB-b": {"governance": _gov_block(0.0, reportable=False), "bench": "PhysicianBench", "success": False},
+             "PB-c": {"governance": None, "bench": "PhysicianBench", "success": True}}  # not rescored -> Gov N/A
+    ad = _mk_pipeline_bundle(root, "gpt5", tasks)
+    rep = _A.build(ad, "PhysicianBench")
+    hs = rep["harness_dimensions"]
+    ns = {m: hs[m]["n_scored"] for m in hs}
+    nq = rep["qualified_profile"]["n_qualified"]
+    assert len(set(ns.values())) == 1, ("all 7 dims share ONE denominator", ns)
+    assert all(v == nq for v in ns.values()), ("n_scored == n_qualified for every dim", ns, nq)
+    # n_scored must equal n_qualified even though Governance had a not-rescored task (a miss, not a shrink)
+    assert hs["Governance"]["n_scored"] == nq, hs["Governance"]
+
+
+def test_regression_judge_failure_governance_none_not_scope_fallback():
+    """(e) A judge FAILURE on disk (Governance block has score=null + evaluation_error) must surface as
+    Governance None (reportable False, evaluation_error propagated). It must NEVER fall back to a scope-only
+    1.0 construct (subject_scope_diagnostic is a different field, never the Governance score)."""
+    import tempfile as _tf, aggregate_report as _A
+    root = _tf.mkdtemp()
+    failed = _gov_block(None, reportable=False, evaluation_error="judge_unavailable_or_unparseable")
+    failed["subject_scope_diagnostic"] = 1.0   # scope-only is perfect, but it must NOT become the score
+    tasks = {"PB-fail": {"governance": failed, "bench": "PhysicianBench", "success": True}}
+    ad = _mk_pipeline_bundle(root, "gpt5", tasks)
+    rep = _A.build(ad, "PhysicianBench")
+    aud = rep["governance_audit"]["PB-fail"]
+    assert aud["score"] is None and aud["reportable"] is False, ("judge-fail -> None/False, not 1.0", aud)
+    assert aud["evaluation_error"] == "judge_unavailable_or_unparseable", aud
+    # the headline Governance must be None (nothing reportable) -- NOT the scope diagnostic 1.0
+    assert rep["harness_dimensions"]["Governance"]["score"] is None, rep["harness_dimensions"]["Governance"]
+    gc = rep["governance_consistency"]
+    assert gc["report_harness_governance"] is None and gc["n_reportable"] == 0, gc
+
+
+def test_regression_aggregate_build_makes_no_model_call():
+    """(f) aggregate_report.build is PURE-READ: statically, no OpenAI / gateway.chat / urlopen call is
+    reachable from build(); dynamically, monkeypatching every network door to raise still lets build() finish.
+    The judge call lives ONLY in rescore_judges.py."""
+    import tempfile as _tf, aggregate_report as _A, inspect as _ins
+    # ---- static: build()'s own source names no live-model door ----
+    src = _ins.getsource(_A.build)
+    for forbidden in ("gateway.chat", "OpenAI(", "urlopen", "requests.post", ".chat.completions"):
+        assert forbidden not in src, ("build() statically reaches a model door: %r" % forbidden)
+    # aggregate_report module must not even import the gateway/openai stack at top level
+    _mod_src = _ins.getsource(_A)
+    assert "import gateway" not in _mod_src and "from gateway" not in _mod_src, "aggregate imports gateway"
+    assert "import openai" not in _mod_src and "from openai" not in _mod_src, "aggregate imports openai"
+    # ---- dynamic: arm tripwires on every network door, build() must still complete with NO call ----
+    tripped = []
+    try:
+        import gateway as _gw
+        _orig_chat = _gw.chat
+        _gw.chat = lambda *a, **k: tripped.append("gateway.chat") or {"ok": False, "content": None}
+    except Exception:
+        _gw = None; _orig_chat = None
+    import urllib.request as _ur
+    _orig_urlopen = _ur.urlopen
+    _ur.urlopen = lambda *a, **k: tripped.append("urlopen")
+    try:
+        root = _tf.mkdtemp()
+        tasks = {"PB-x": {"governance": _gov_block(1.0), "bench": "PhysicianBench", "success": True}}
+        ad = _mk_pipeline_bundle(root, "gpt5", tasks)
+        rep = _A.build(ad, "PhysicianBench")
+        assert rep["harness_dimensions"]["Governance"]["score"] == 1.0, rep["harness_dimensions"]["Governance"]
+    finally:
+        if _gw is not None and _orig_chat is not None:
+            _gw.chat = _orig_chat
+        _ur.urlopen = _orig_urlopen
+    assert tripped == [], ("build() made a live model/network call: %r" % tripped)
+
+
+def test_regression_disk_consistency_report_equals_ondisk_governance():
+    """(g) DISK CONSISTENCY: the report's per-dim Governance mean == the mean of the ON-DISK reportable
+    result.rescored.json Governance scores re-read independently. disk_equals_report is True and the headline
+    equals the disk reportable mean."""
+    import tempfile as _tf, aggregate_report as _A
+    root = _tf.mkdtemp()
+    tasks = {"PB-a": {"governance": _gov_block(1.0, reportable=True), "bench": "PhysicianBench", "success": True},
+             "PB-b": {"governance": _gov_block(0.0, reportable=True, critical=True), "bench": "PhysicianBench"},
+             "PB-c": {"governance": _gov_block(0.5, reportable=False), "bench": "PhysicianBench"}}  # not in mean
+    ad = _mk_pipeline_bundle(root, "gpt5", tasks)
+    rep = _A.build(ad, "PhysicianBench")
+    gc = rep["governance_consistency"]
+    expect = round((1.0 + 0.0) / 2, 3)   # only the two reportable tasks
+    assert gc["disk_reportable_mean"] == expect, ("on-disk reportable mean over the 2 reportable tasks", gc)
+    assert gc["report_harness_governance"] == expect, gc
+    assert gc["disk_equals_report"] is True, gc
+    assert rep["harness_dimensions"]["Governance"]["score"] == expect, rep["harness_dimensions"]["Governance"]
+
+
+def test_regression_governance_evidence_tier_is_experimental_hybrid():
+    """(h) Governance evidence_tier == 'experimental_hybrid' (judge-backed), NOT 'substrate_universal'.
+    formal_analysis_eligible False + deterministic False; meanwhile a deterministic substrate dim (Execution)
+    carries substrate_universal -- so the per-dim tier is honest, not hardcoded."""
+    import tempfile as _tf, aggregate_report as _A
+    root = _tf.mkdtemp()
+    tasks = {"PB-a": {"governance": _gov_block(1.0), "bench": "PhysicianBench", "success": True}}
+    ad = _mk_pipeline_bundle(root, "gpt5", tasks)
+    rep = _A.build(ad, "PhysicianBench")
+    hs = rep["harness_dimensions"]
+    assert hs["Governance"]["evidence_tier"] == "experimental_hybrid", hs["Governance"]
+    assert hs["Governance"]["deterministic"] is False, hs["Governance"]
+    assert hs["Governance"]["formal_analysis_eligible"] is False, hs["Governance"]
+    # a deterministic substrate dim is NOT hybrid -> substrate_universal (tier is per-dim honest, not blanket)
+    assert hs["Execution"]["evidence_tier"] == "substrate_universal", hs["Execution"]
+    assert hs["Execution"]["deterministic"] is True, hs["Execution"]
+
+
 def _run():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     passed = 0

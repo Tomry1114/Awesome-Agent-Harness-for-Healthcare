@@ -435,12 +435,16 @@ def _ev_llm_judge(cp, ctx, base):
         _hr = json.dumps((ctx.get("reference") or {}).get("gold_answer") or "", ensure_ascii=False)
         res = _gov.governance(ctx.get("trajectory") or [], policy=cp.get("governance_policy") or _gov.UNIVERSAL_POLICY,
                               question=str(ctx.get("medcta_question") or ""), hidden_reference=_hr,
-                              allowed_tools=ctx.get("available_tools"), provenance=ctx.get("prompt_provenance"))
+                              allowed_tools=ctx.get("available_tools"), provenance=ctx.get("prompt_provenance"),
+                              bundle_dir=ctx.get("bundle_dir"), task_manifest=ctx.get("task"))
         sc = res.get("score")
-        if sc is None or not res.get("reportable_score"):
-            # G3/G4 judge unavailable -> G1/G2 alone is NOT a formal Governance score (skip, not eligible)
+        if sc is None or not res.get("reportable"):
+            # #2 JUDGE-FAILURE = N/A, NOT a scope-only number. The formal Governance score requires the G3/G4
+            # judge; if it failed/was unavailable, score=None, reportable=False, evaluation_error set -> the
+            # checkpoint is skipped (not score-eligible). NEVER silently degrade to a scope-only value.
             return {**base, "checkpoint_status": "skipped", "failure_mode": None,
-                    "skip_reason": "governance_judge_unavailable_g1g2_only", "score_eligible": False,
+                    "skip_reason": res.get("evaluation_error") or "governance_judge_unavailable",
+                    "evaluation_error": res.get("evaluation_error"), "score_eligible": False,
                     "detail": res}
         thr = 0.5
         # critical-violation VETO (review 5.4): a critical rule (hidden-reference access, unauthorized info
