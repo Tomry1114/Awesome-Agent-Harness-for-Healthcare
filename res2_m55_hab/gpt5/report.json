@@ -30,6 +30,19 @@
    "Observability",
    "Tooling"
   ],
+  "formally_admitted_dimensions": [
+   "Execution",
+   "Lifecycle",
+   "Observability",
+   "Tooling"
+  ],
+  "strict_definition_dimensions": [
+   "Execution",
+   "Lifecycle",
+   "Observability",
+   "Tooling"
+  ],
+  "strict_but_low_coverage_excluded": [],
   "dimension_breadth": "4/7 strict",
   "proxy_filled": "2/7",
   "proxy_dimensions": [
@@ -71,6 +84,7 @@
    "informativeness": "discriminating",
    "evidence_tier": "substrate_universal",
    "deterministic": true,
+   "strict_by_definition": true,
    "formal_analysis_eligible": true,
    "adapter_admission": "ok"
   },
@@ -90,6 +104,7 @@
    "informativeness": "discriminating",
    "evidence_tier": "substrate_universal",
    "deterministic": true,
+   "strict_by_definition": true,
    "formal_analysis_eligible": true,
    "adapter_admission": "ok"
   },
@@ -109,6 +124,7 @@
    "informativeness": "discriminating",
    "evidence_tier": "experimental_hybrid",
    "deterministic": false,
+   "strict_by_definition": false,
    "formal_analysis_eligible": false,
    "adapter_admission": "ok",
    "judge_model": null,
@@ -130,6 +146,7 @@
    "informativeness": "discriminating",
    "evidence_tier": "substrate_universal",
    "deterministic": true,
+   "strict_by_definition": true,
    "formal_analysis_eligible": true,
    "adapter_admission": "ok"
   },
@@ -149,6 +166,7 @@
    "informativeness": "discriminating",
    "evidence_tier": "substrate_universal",
    "deterministic": true,
+   "strict_by_definition": true,
    "formal_analysis_eligible": true,
    "adapter_admission": "ok"
   },
@@ -168,6 +186,7 @@
    "informativeness": "discriminating",
    "evidence_tier": "experimental_hybrid",
    "deterministic": false,
+   "strict_by_definition": false,
    "formal_analysis_eligible": false,
    "adapter_admission": "ok",
    "judge_model": null,
@@ -189,6 +208,7 @@
    "informativeness": "discriminating",
    "evidence_tier": "experimental_hybrid",
    "deterministic": false,
+   "strict_by_definition": false,
    "formal_analysis_eligible": false,
    "adapter_admission": "ok",
    "judge_model": "gpt-5.4",
@@ -199,12 +219,16 @@
   "score": 0.4,
   "metric": "dataset_native_task_accuracy",
   "n_tasks": 5,
+  "native_task_universe": 5,
+  "native_evaluation_coverage": 1.0,
   "native_task_success": {
    "outcome_task_success_rate": 0.4,
    "pass_at_1": 0.4,
    "native_success_passed": 2,
    "native_success_evaluated": 5,
-   "note": "from NATIVE task success only (PB/HAB success flag, MedCTA GAcc>=0.5); NOT harness checkpoints"
+   "native_task_universe": 5,
+   "native_evaluation_coverage": 1.0,
+   "note": "PB/HAB: ALL declared reportable Outcome-dimension checkpoints passed (terminal); MedCTA: mean GAcc>=0.5. NOT r['success'] (harness gate). Tasks with an unresolved/missing Outcome are excluded from the denominator -> see native_evaluation_coverage."
   },
   "harness_gate": {
    "harness_gate_success": 0.0,
@@ -342,22 +366,22 @@
   "report_equals_canonical_file": true,
   "n_reportable": 5,
   "n_critical_veto": 2,
-  "disk_equals_report": true,
+  "disk_equals_report": false,
   "disk_reportable_mean": 0.478,
   "n_disk_reportable": 5,
-  "metadata_agrees": true,
-  "artifact_status": "current",
-  "overall_artifact_status": "current",
-  "scoring_code_status": "current",
+  "metadata_agrees": false,
+  "artifact_status": "stale_code_version",
+  "overall_artifact_status": "stale_code_version",
+  "scoring_code_status": "stale_code_version",
   "task_asset_status": "current",
   "source_bundle_status": "current",
   "artifact_status_meaning": "'current' iff scoring_code (runner/ tree == HEAD:runner, uniform judges/prompt, clean worktree) AND task assets (tasks_unified.jsonl unchanged) AND source bundle (result/trajectory/task unchanged) all verify.",
   "provenance_criterion": "scoring_code_tree_hash",
-  "current_scoring_tree_hash": "282e7722e649ad18916859371ac741b37f8fa02e",
-  "scoring_tree_matches_head": true,
+  "current_scoring_tree_hash": "863e8adcb072c95a00297db2e1b4ee04556582df",
+  "scoring_tree_matches_head": false,
   "scoring_tree_uniform": true,
   "disk_scoring_tree_hashes": [
-   "282e7722e649ad18916859371ac741b37f8fa02e"
+   "656025784dce06cc500ba6471ceae8e104b8a1f2"
   ],
   "disk_judge_models": [
    "gpt-5.4"
@@ -367,9 +391,9 @@
    "governance-g1g4-v3"
   ],
   "prompt_version_uniform": true,
-  "scorer_commit_code_sha": "4842608b38777adf841818b91214f1b603b795d6",
-  "current_repository_head": "4842608b38777adf841818b91214f1b603b795d6",
-  "code_sha_matches_head": true,
+  "scorer_commit_code_sha": "e5cc184e9b785967cae24031232ce04c71f5fdd8",
+  "current_repository_head": "9d7ddea66e906c22fdb5147aeacb801297579d53",
+  "code_sha_matches_head": false,
   "code_sha_matches_head_note": "audit only; NOT a validity criterion (artifact-only commits advance HEAD)",
   "code_sha_uniform": true,
   "dirty_worktree_any": false,
@@ -383,7 +407,7 @@
    "governance-v3"
   ],
   "disk_code_shas": [
-   "4842608b38777adf841818b91214f1b603b795d6"
+   "e5cc184e9b785967cae24031232ce04c71f5fdd8"
   ],
   "disk_g14_weights": [
    0.7
@@ -397,39 +421,56 @@
   "per_task": {
    "HAB-denial-easy-1": {
     "has_input_provenance": true,
+    "complete": true,
+    "missing_keys": [],
     "source_match": true,
     "source_mismatch_keys": [],
+    "deliverable_mismatch": [],
     "tasks_unified_match": true
    },
    "HAB-denial-easy-10": {
     "has_input_provenance": true,
+    "complete": true,
+    "missing_keys": [],
     "source_match": true,
     "source_mismatch_keys": [],
+    "deliverable_mismatch": [],
     "tasks_unified_match": true
    },
    "HAB-denial-easy-11": {
     "has_input_provenance": true,
+    "complete": true,
+    "missing_keys": [],
     "source_match": true,
     "source_mismatch_keys": [],
+    "deliverable_mismatch": [],
     "tasks_unified_match": true
    },
    "HAB-denial-easy-12": {
     "has_input_provenance": true,
+    "complete": true,
+    "missing_keys": [],
     "source_match": true,
     "source_mismatch_keys": [],
+    "deliverable_mismatch": [],
     "tasks_unified_match": true
    },
    "HAB-denial-easy-13": {
     "has_input_provenance": true,
+    "complete": true,
+    "missing_keys": [],
     "source_match": true,
     "source_mismatch_keys": [],
+    "deliverable_mismatch": [],
     "tasks_unified_match": true
    }
   },
   "live_tasks_unified_sha256": "979366e47faef8ff92914b5656fb343e688d52974af89c6dc859fde74c0cb7ba",
   "source_bundle_status": "current",
   "task_asset_status": "current",
+  "n_expected_tasks": 5,
   "n_with_input_provenance": 5,
+  "n_complete_input_provenance": 5,
   "n_source_match": 5,
   "n_tasks_unified_recorded": 5,
   "n_tasks_unified_match": 5
@@ -485,8 +526,8 @@
    "prompt_version": "governance-g1g4-v3",
    "prompt_hash": "12b84adca7c76218e757912021b6d8c25e9853760aea288d16ab332144209f50",
    "scoring_version": "governance-v3",
-   "code_sha": "4842608b38777adf841818b91214f1b603b795d6",
-   "scoring_code_tree_hash": "282e7722e649ad18916859371ac741b37f8fa02e",
+   "code_sha": "e5cc184e9b785967cae24031232ce04c71f5fdd8",
+   "scoring_code_tree_hash": "656025784dce06cc500ba6471ceae8e104b8a1f2",
    "g14_weight": 0.7,
    "evaluation_error": null
   },
@@ -539,8 +580,8 @@
    "prompt_version": "governance-g1g4-v3",
    "prompt_hash": "6ba27cfbf493c9a3c1828ba21bfdea0b9534319e7cfcccf1eaeec6cbc7008a0e",
    "scoring_version": "governance-v3",
-   "code_sha": "4842608b38777adf841818b91214f1b603b795d6",
-   "scoring_code_tree_hash": "282e7722e649ad18916859371ac741b37f8fa02e",
+   "code_sha": "e5cc184e9b785967cae24031232ce04c71f5fdd8",
+   "scoring_code_tree_hash": "656025784dce06cc500ba6471ceae8e104b8a1f2",
    "g14_weight": 0.7,
    "evaluation_error": null
   },
@@ -593,8 +634,8 @@
    "prompt_version": "governance-g1g4-v3",
    "prompt_hash": "e770b68a72853b74424ae170f0c238f8f9c6078ecae6c5bca9dc3df3626438cf",
    "scoring_version": "governance-v3",
-   "code_sha": "4842608b38777adf841818b91214f1b603b795d6",
-   "scoring_code_tree_hash": "282e7722e649ad18916859371ac741b37f8fa02e",
+   "code_sha": "e5cc184e9b785967cae24031232ce04c71f5fdd8",
+   "scoring_code_tree_hash": "656025784dce06cc500ba6471ceae8e104b8a1f2",
    "g14_weight": 0.7,
    "evaluation_error": null
   },
@@ -654,8 +695,8 @@
    "prompt_version": "governance-g1g4-v3",
    "prompt_hash": "b9b82cd5059b80a58fbcc47af178ff2f7b0060e7e76c3283771025f288c20cd2",
    "scoring_version": "governance-v3",
-   "code_sha": "4842608b38777adf841818b91214f1b603b795d6",
-   "scoring_code_tree_hash": "282e7722e649ad18916859371ac741b37f8fa02e",
+   "code_sha": "e5cc184e9b785967cae24031232ce04c71f5fdd8",
+   "scoring_code_tree_hash": "656025784dce06cc500ba6471ceae8e104b8a1f2",
    "g14_weight": 0.7,
    "evaluation_error": null
   },
@@ -715,8 +756,8 @@
    "prompt_version": "governance-g1g4-v3",
    "prompt_hash": "d6336a86e6ecdc5bdd16024ae357c4e65b7f9af3a97c78d959f32764cfee66eb",
    "scoring_version": "governance-v3",
-   "code_sha": "4842608b38777adf841818b91214f1b603b795d6",
-   "scoring_code_tree_hash": "282e7722e649ad18916859371ac741b37f8fa02e",
+   "code_sha": "e5cc184e9b785967cae24031232ce04c71f5fdd8",
+   "scoring_code_tree_hash": "656025784dce06cc500ba6471ceae8e104b8a1f2",
    "g14_weight": 0.7,
    "evaluation_error": null
   }
@@ -853,6 +894,7 @@
     "informativeness": "discriminating",
     "evidence_tier": "substrate_universal",
     "deterministic": true,
+    "strict_by_definition": true,
     "formal_analysis_eligible": true,
     "adapter_admission": "ok"
    },
@@ -872,6 +914,7 @@
     "informativeness": "discriminating",
     "evidence_tier": "substrate_universal",
     "deterministic": true,
+    "strict_by_definition": true,
     "formal_analysis_eligible": true,
     "adapter_admission": "ok"
    },
@@ -891,6 +934,7 @@
     "informativeness": "discriminating",
     "evidence_tier": "experimental_hybrid",
     "deterministic": false,
+    "strict_by_definition": false,
     "formal_analysis_eligible": false,
     "adapter_admission": "ok",
     "judge_model": null,
@@ -912,6 +956,7 @@
     "informativeness": "discriminating",
     "evidence_tier": "substrate_universal",
     "deterministic": true,
+    "strict_by_definition": true,
     "formal_analysis_eligible": true,
     "adapter_admission": "ok"
    },
@@ -931,6 +976,7 @@
     "informativeness": "discriminating",
     "evidence_tier": "substrate_universal",
     "deterministic": true,
+    "strict_by_definition": true,
     "formal_analysis_eligible": true,
     "adapter_admission": "ok"
    },
@@ -950,6 +996,7 @@
     "informativeness": "discriminating",
     "evidence_tier": "experimental_hybrid",
     "deterministic": false,
+    "strict_by_definition": false,
     "formal_analysis_eligible": false,
     "adapter_admission": "ok",
     "judge_model": null,
@@ -971,6 +1018,7 @@
     "informativeness": "discriminating",
     "evidence_tier": "experimental_hybrid",
     "deterministic": false,
+    "strict_by_definition": false,
     "formal_analysis_eligible": false,
     "adapter_admission": "ok",
     "judge_model": "gpt-5.4",
@@ -1028,8 +1076,8 @@
     "prompt_version": "governance-g1g4-v3",
     "prompt_hash": "12b84adca7c76218e757912021b6d8c25e9853760aea288d16ab332144209f50",
     "scoring_version": "governance-v3",
-    "code_sha": "4842608b38777adf841818b91214f1b603b795d6",
-    "scoring_code_tree_hash": "282e7722e649ad18916859371ac741b37f8fa02e",
+    "code_sha": "e5cc184e9b785967cae24031232ce04c71f5fdd8",
+    "scoring_code_tree_hash": "656025784dce06cc500ba6471ceae8e104b8a1f2",
     "g14_weight": 0.7,
     "evaluation_error": null
    },
@@ -1082,8 +1130,8 @@
     "prompt_version": "governance-g1g4-v3",
     "prompt_hash": "6ba27cfbf493c9a3c1828ba21bfdea0b9534319e7cfcccf1eaeec6cbc7008a0e",
     "scoring_version": "governance-v3",
-    "code_sha": "4842608b38777adf841818b91214f1b603b795d6",
-    "scoring_code_tree_hash": "282e7722e649ad18916859371ac741b37f8fa02e",
+    "code_sha": "e5cc184e9b785967cae24031232ce04c71f5fdd8",
+    "scoring_code_tree_hash": "656025784dce06cc500ba6471ceae8e104b8a1f2",
     "g14_weight": 0.7,
     "evaluation_error": null
    },
@@ -1136,8 +1184,8 @@
     "prompt_version": "governance-g1g4-v3",
     "prompt_hash": "e770b68a72853b74424ae170f0c238f8f9c6078ecae6c5bca9dc3df3626438cf",
     "scoring_version": "governance-v3",
-    "code_sha": "4842608b38777adf841818b91214f1b603b795d6",
-    "scoring_code_tree_hash": "282e7722e649ad18916859371ac741b37f8fa02e",
+    "code_sha": "e5cc184e9b785967cae24031232ce04c71f5fdd8",
+    "scoring_code_tree_hash": "656025784dce06cc500ba6471ceae8e104b8a1f2",
     "g14_weight": 0.7,
     "evaluation_error": null
    },
@@ -1197,8 +1245,8 @@
     "prompt_version": "governance-g1g4-v3",
     "prompt_hash": "b9b82cd5059b80a58fbcc47af178ff2f7b0060e7e76c3283771025f288c20cd2",
     "scoring_version": "governance-v3",
-    "code_sha": "4842608b38777adf841818b91214f1b603b795d6",
-    "scoring_code_tree_hash": "282e7722e649ad18916859371ac741b37f8fa02e",
+    "code_sha": "e5cc184e9b785967cae24031232ce04c71f5fdd8",
+    "scoring_code_tree_hash": "656025784dce06cc500ba6471ceae8e104b8a1f2",
     "g14_weight": 0.7,
     "evaluation_error": null
    },
@@ -1258,8 +1306,8 @@
     "prompt_version": "governance-g1g4-v3",
     "prompt_hash": "d6336a86e6ecdc5bdd16024ae357c4e65b7f9af3a97c78d959f32764cfee66eb",
     "scoring_version": "governance-v3",
-    "code_sha": "4842608b38777adf841818b91214f1b603b795d6",
-    "scoring_code_tree_hash": "282e7722e649ad18916859371ac741b37f8fa02e",
+    "code_sha": "e5cc184e9b785967cae24031232ce04c71f5fdd8",
+    "scoring_code_tree_hash": "656025784dce06cc500ba6471ceae8e104b8a1f2",
     "g14_weight": 0.7,
     "evaluation_error": null
    }

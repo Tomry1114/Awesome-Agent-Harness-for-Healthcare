@@ -459,8 +459,8 @@
    "g14_weight": 0.7,
    "subject_scope_weight": 0.3,
    "scoring_version": "governance-v3",
-   "scoring_code_tree_hash": "282e7722e649ad18916859371ac741b37f8fa02e",
-   "code_sha": "4842608b38777adf841818b91214f1b603b795d6",
+   "scoring_code_tree_hash": "656025784dce06cc500ba6471ceae8e104b8a1f2",
+   "code_sha": "e5cc184e9b785967cae24031232ce04c71f5fdd8",
    "dirty_worktree": false,
    "judge_model": "gpt-5.4",
    "judge_prompt_hash": "29afd0c45d320845e90498d9237c701e3d36c45345806c2ee61e7eb111155931",
@@ -475,7 +475,10 @@
    "raw_result_sha256": "154f6ee28f2f7240e03ec55c260bf27a695a575eab3361c4dcc1d637678e0ae4",
    "trajectory_sha256": "285075f05890e1786aa97fe212d6b54cd9a78dbcca9433bc6713d8e24dcc5574",
    "task_json_sha256": "98732901fc90a2b436e419f83f61e82ebafe90f787435d3f06cf5339e9777ca8",
-   "checkpoint_set_sha256": "154383aa48a9d39d379b80f497abb964d98f005125068f8756d1ec00123ec550"
+   "checkpoint_set_sha256": "95eeacf5070cd2c892398f05d42f05c30a5e8210ab7c6351c15e506e0fa53097",
+   "deliverable_files_sha256": {
+    "workspace/output/adrenal_assessment.txt": "8821a728b09b79718d1ac252874dba4d4c630d9ca6a8fe2edb8d5272619eaf7e"
+   }
   }
  },
  "_rescore_dims_persisted": [
