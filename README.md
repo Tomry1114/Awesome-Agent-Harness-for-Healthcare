@@ -11,17 +11,13 @@ run on two parallel lines:
 
 Outcome never occupies any of the 7; the 7 never absorb clinical correctness. Both are always reported.
 
-## Portfolio — 3 non-overlapping agentic benchmarks → one schema
+## Benchmarks
 
-| Benchmark | Environment | Modality | Stresses |
-|---|---|---|---|
-| **PhysicianBench** | FHIR EHR (HAPI R4, real de-identified data) via API tools | structured clinical | Execution / Tooling / Context / Verification / Governance |
-| **HealthAdminBench** | **Real Next.js admin portal** driven by Playwright (real DOM, real localStorage state) | GUI admin (prior-auth / appeals) | Lifecycle / Governance(compliance) / Verification |
-| **MedCTA** | Multimodal tool sandbox (image description / region / OCR / search / calc) | medical images (CT/X-ray/path/…) | Tooling / Context(image) / Observability / Verification |
-
-All three convert into one **unified task schema** and run through one runner that emits one **result
-schema** carrying the 7-dimension scores + the Outcome line. `TASK_MANIFEST.json` pins the task
-universe and upstream revisions.
+| Benchmark | Modality | Scenario |
+|---|---|---|
+| **PhysicianBench** | structured clinical | real FHIR EHR (HAPI R4, de-identified) via API tools |
+| **HealthAdminBench** | GUI admin | real Next.js portal (prior-auth / appeals) driven by Playwright |
+| **MedCTA** | medical images (CT / X-ray / path / …) | multimodal tool sandbox (image description / region / OCR / search / calc) |
 
 ## Architecture — one loop, two convergence points, three roles
 
