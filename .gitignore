@@ -60,3 +60,13 @@ runner/medcta_profile*.json
 /results_*/
 results_*.done
 results_*.log
+
+# Per-run EXPERIMENT output dirs (res_/res2_/res3_ generations) — regenerable bundles
+# like results_*; were committed by mistake (naming did not match the results_* rule).
+res_*/
+res2_*/
+res3_*/
+# stray per-run stderr / stdout / report dumps
+*.err
+*.out
+*.stdout
