@@ -2614,6 +2614,129 @@ def test_item_h_coverage_strict_dimensions_are_the_4_deterministic_not_context_g
     assert "7/7" != cs["formal_coverage"], "formal coverage must never be reported as 7/7"
 
 
+def _stamp_full_provenance(agent_dir, bench, tu_path):
+    """Inject MATCHING input_provenance + tasks_unified_sha256 + scoring_code_tree_hash into every synthetic
+    bundle's Governance block so the source/asset audit reads it as CURRENT (the baseline for tamper tests)."""
+    import aggregate_report as _A, governance_contract as _gc, json as _j, os as _o, glob as _g
+    tu_sha = _A._sha_file(tu_path)
+    for rp in _g.glob(_o.path.join(agent_dir, "*", "result.json")):
+        bdir = _o.path.dirname(rp); rr = _o.path.join(bdir, "result.rescored.json")
+        d = _j.load(open(rr)); g = d.get("Governance")
+        if not g:
+            continue
+        g["input_provenance"] = {
+            "raw_result_sha256": _A._sha_file(_o.path.join(bdir, "result.json")),
+            "trajectory_sha256": _A._sha_file(_o.path.join(bdir, "trajectory.jsonl")),
+            "task_json_sha256": _A._sha_file(_o.path.join(bdir, "task.json")),
+            "checkpoint_set_sha256": _gc.checkpoint_set_sha(d.get("checkpoints")),
+            "deliverable_files_sha256": {},
+        }
+        g.setdefault("scoring_config", {})
+        g["scoring_config"]["tasks_unified_sha256"] = tu_sha
+        g["scoring_config"]["scoring_code_tree_hash"] = _A._current_scoring_tree_hash()
+        _j.dump(d, open(rr, "w"))
+
+
+def test_native_task_outcome_nonterminal_outcome_is_unresolved():
+    """P0-B: an Outcome-dimension checkpoint that did NOT reach a terminal verdict (error/skipped) makes
+    native success UNRESOLVED (None) -- it is NOT silently dropped so the survivors all() to a false pass."""
+    import aggregate_report as _A
+    r_err = {"checkpoints": [{"dimension": "Outcome", "checkpoint_status": "passed"},
+                             {"dimension": "Outcome", "checkpoint_status": "error"}]}
+    assert _A.native_task_outcome(r_err, "PhysicianBench") is None, "non-terminal -> unresolved"
+    r_ok = {"checkpoints": [{"dimension": "Outcome", "checkpoint_status": "passed"},
+                            {"dimension": "Outcome", "checkpoint_status": "passed"}]}
+    assert _A.native_task_outcome(r_ok, "PhysicianBench") is True
+    r_fail = {"checkpoints": [{"dimension": "Outcome", "checkpoint_status": "failed"},
+                              {"dimension": "Outcome", "checkpoint_status": "passed"}]}
+    assert _A.native_task_outcome(r_fail, "PhysicianBench") is False
+    assert _A.native_task_outcome({"checkpoints": []}, "PhysicianBench") is None     # no signal -> None
+
+
+def test_native_task_outcome_medcta_missing_gacc_is_unresolved():
+    """P0-B (MedCTA): a declared GAcc checkpoint that produced NO numeric score makes the task unresolved
+    (None), not a pass over the scored subset."""
+    import aggregate_report as _A
+    r_missing = {"checkpoints": [{"evaluator_kind": "gacc_judge", "score": 0.8},
+                                 {"evaluator_kind": "gacc_judge"}]}            # 2nd has no number
+    assert _A.native_task_outcome(r_missing, "MedCTA") is None
+    r_ok = {"checkpoints": [{"evaluator_kind": "gacc_judge", "score": 0.8},
+                            {"evaluator_kind": "gacc_judge", "score": 0.6}]}   # mean 0.7 >= 0.5
+    assert _A.native_task_outcome(r_ok, "MedCTA") is True
+
+
+def _prov_bundle(root, bench="PhysicianBench"):
+    import os as _o, json as _j, aggregate_report as _A
+    bdp = _o.path.join(root, "bdp", bench); _o.makedirs(bdp)
+    tu = _o.path.join(bdp, "tasks_unified.jsonl")
+    open(tu, "w").write(_j.dumps({"task_id": "PB-a", "checkpoints": []}) + "\n")
+    tasks = {"PB-a": {"governance": _gov_block(0.7), "bench": bench, "success": True,
+                      "checkpoints": [{"id": "o1", "dimension": "Outcome", "checkpoint_status": "passed",
+                                       "score_eligible": True}]}}
+    ad = _mk_pipeline_bundle(root, "gpt5", tasks)
+    _stamp_full_provenance(ad, bench, tu)
+    return ad, _o.path.join(root, "bdp")
+
+
+def test_source_provenance_complete_is_current_then_stale_on_raw_edit():
+    """P1: a fully-stamped bundle reads source/asset CURRENT; editing the raw result.json AFTER stamping
+    (without re-rescore) flips source_bundle_status -> stale_input_artifact and overall -> stale."""
+    import tempfile as _tf, os as _o, json as _j, aggregate_report as _A
+    root = _tf.mkdtemp(); bench = "PhysicianBench"
+    ad, root_for_tu = _prov_bundle(root, bench)
+    _saved = _A._ROOT; _A._ROOT = root_for_tu
+    try:
+        gc = _A.build(ad, bench)["governance_consistency"]
+        assert gc["source_bundle_status"] == "current", gc["source_bundle_status"]
+        assert gc["task_asset_status"] == "current", gc["task_asset_status"]
+        assert gc["overall_artifact_status"] == "current", gc["overall_artifact_status"]
+        rp = _o.path.join(ad, "PB-a", "result.json")
+        d = _j.load(open(rp)); d["_tamper"] = 1; _j.dump(d, open(rp, "w"))
+        gc2 = _A.build(ad, bench)["governance_consistency"]
+        assert gc2["source_bundle_status"] == "stale_input_artifact", gc2["source_bundle_status"]
+        assert gc2["overall_artifact_status"] == "stale_input_artifact", gc2["overall_artifact_status"]
+    finally:
+        _A._ROOT = _saved
+
+
+def test_source_provenance_incomplete_when_required_key_missing():
+    """P1: a bundle missing a REQUIRED input-hash key (here trajectory_sha256) is incomplete_input_provenance
+    -> overall incomplete_provenance, NOT current. Absence is 'unverified', never 'verified'."""
+    import tempfile as _tf, os as _o, json as _j, glob as _g, aggregate_report as _A
+    root = _tf.mkdtemp(); bench = "PhysicianBench"
+    ad, root_for_tu = _prov_bundle(root, bench)
+    rr = _g.glob(_o.path.join(ad, "*", "result.rescored.json"))[0]
+    d = _j.load(open(rr)); d["Governance"]["input_provenance"].pop("trajectory_sha256", None)
+    _j.dump(d, open(rr, "w"))
+    _saved = _A._ROOT; _A._ROOT = root_for_tu
+    try:
+        gc = _A.build(ad, bench)["governance_consistency"]
+        assert gc["source_bundle_status"] == "incomplete_input_provenance", gc["source_bundle_status"]
+        assert gc["overall_artifact_status"] == "incomplete_provenance", gc["overall_artifact_status"]
+    finally:
+        _A._ROOT = _saved
+
+
+def test_compare_models_stale_artifact_voids_paired_governance():
+    """P1: compare_models(governance) requires BOTH bundles source/asset CURRENT. One stale side ->
+    comparison_status='stale_or_incomplete_artifact', paired score VOID, all_task descriptive-only."""
+    import tempfile as _tf, os as _o, json as _j, aggregate_report as _A
+    root = _tf.mkdtemp(); bench = "PhysicianBench"
+    adA, root_tu = _prov_bundle(root + "/A", bench)
+    adB, _ = _prov_bundle(root + "/B", bench)
+    # tamper B's raw result -> B source stale
+    rp = _o.path.join(adB, "PB-a", "result.json"); d = _j.load(open(rp)); d["_x"] = 1; _j.dump(d, open(rp, "w"))
+    _saved = _A._ROOT; _A._ROOT = root_tu
+    try:
+        cmp = _A.compare_models(adA, adB, bench, label_a="A", label_b="B", metric="governance")
+        assert cmp["comparison_status"] != "compatible", cmp["comparison_status"]
+        assert cmp["all_task_score_descriptive_only"] is True, cmp
+        assert cmp["paired_common_task_score"] == {"A": None, "B": None}, cmp["paired_common_task_score"]
+    finally:
+        _A._ROOT = _saved
+
+
+
 def _run():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     passed = 0
