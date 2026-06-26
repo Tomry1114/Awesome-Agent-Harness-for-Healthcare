@@ -239,6 +239,31 @@ def test_p2_healthadminbench_real_pack():
     assert eff3.type == D.REVISE, eff3.type
 
 
+def test_p3_medcta_real_pack():
+    """P3 (deterministic layer): the REAL medcta.yaml grounding gate. The final answer (a commit point)
+    requires image-derived evidence; grounding is satisfied by ANY perception tool (tool_any), so the
+    agent's tool path is free. (The SEMANTIC claim<->evidence support check is the judge-backed extension
+    via engines.semantic / verify_commit.before_final.)"""
+    from harness.engines.policy import load_policy
+    from harness.risk import classify_risk
+    pol = load_policy(bench="MedCTA", env_type="tool_sandbox")
+    assert pol.get("_pack_name") == "medcta", pol.get("_pack_name")
+    task = {"task_id": "m", "goal": "What is the finding in the chest CT?", "context": {},
+            "environment": {"type": "tool_sandbox"}, "source_benchmark": "MedCTA"}
+    contract = build_contract(task, env_type="tool_sandbox", policy=pol)
+    k = HarnessKernel(contract, [ScopeEvidenceBinding(), ObligationLifecycle(), VerifyAndCommit()],
+                      mode="enforce", policy=pol, env_type="tool_sandbox",
+                      risk_of=lambda a: classify_risk(a, contract, pol))
+    # answer with NO image perception -> ungrounded -> REVISE
+    assert k.before_final("a 3 cm mass", step=0).type == D.REVISE
+    # ground via RegionAttributeDescription (NOT ImageDescription) -> tool_any still satisfies grounding
+    region = {"type": "tool", "tool": "RegionAttributeDescription", "args": {}}
+    k.after_action(region, "spiculated RUL nodule", None, None, step=1)
+    assert k.ledger.obligation_state("image_derived_evidence") == "SATISFIED"
+    assert k.ledger.obligation_state("grounded_reasoning") == "SATISFIED"
+    assert k.before_final("a 3 cm mass", step=2).type == D.ALLOW
+
+
 def _run():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     passed = 0

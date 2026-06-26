@@ -14,8 +14,9 @@ reversible_actions: []
 commit_actions: []           # MedCTA's only commit is the final answer
 
 evidence_obligations:
-  - id: image_derived_evidence            # at least one perception tool produced image evidence
-    satisfied_by: {tool: ImageDescription}
+  # grounding = the agent used ANY image-perception capability (not a specific hard-coded tool).
+  - id: image_derived_evidence
+    satisfied_by: {tool_any: [ImageDescription, RegionAttributeDescription, OCR]}
 
 workflow_obligations:
   - id: grounded_reasoning

@@ -122,13 +122,21 @@ def _expand_missing(ledger, missing):
 
 
 def _sb_tool_matches(sb, name):
-    """satisfied_by matches the executed tool by exact `tool` OR substring `tool_pattern` of the tool name
-    (the tool name is the structured resource/op identity, e.g. 'fhir_allergy_intolerance_search_active')."""
+    """satisfied_by matches the executed tool by:
+       exact `tool`  ·  substring `tool_pattern`  ·  membership in `tool_any` (any of several tools).
+    The tool name is the structured resource/op identity. `tool_any` lets an obligation be satisfied by
+    ANY of a capability CLASS (e.g. image grounding via ImageDescription OR RegionAttributeDescription OR
+    OCR) without hard-coding one tool — general, not an over-narrow trick."""
     name = name or ""
     if sb.get("tool") and sb["tool"] == name:
         return True
     pat = sb.get("tool_pattern")
-    return bool(pat and pat in name)
+    if pat and pat in name:
+        return True
+    for t in (sb.get("tool_any") or []):
+        if t == name or (t and t in name):
+            return True
+    return False
 
 
 def _request_targets(action, resource_type):
