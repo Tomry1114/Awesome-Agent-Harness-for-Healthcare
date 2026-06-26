@@ -26,18 +26,19 @@ def classify_risk(action, contract=None, policy=None):
     # final answer is always a commit point (R2) unless policy escalates it.
     if action.get("type") == "final":
         return policy.get("final_risk", R2)
-    # explicit contract commit point?
-    for cp in (getattr(contract, "commit_points", None) or []):
-        if cp.get("action") and cp["action"] == name:
+    # explicit contract commit point (exact or action_pattern on the tool name) -> authoritative.
+    if contract is not None:
+        cp = contract.commit_point_for(name)
+        if cp:
             return cp.get("risk", R2)
-    # policy-pack explicit lists
-    if name in set(policy.get("commit_actions", [])):
+    # policy-pack action classes (each entry may be an exact name or a substring pattern of the tool name).
+    if _matches_any(name, policy.get("commit_actions", [])):
         return R2
-    if name in set(policy.get("reversible_actions", [])):
+    if _matches_any(name, policy.get("reversible_actions", [])):
         return R1
-    if name in set(policy.get("read_actions", [])):
+    if _matches_any(name, policy.get("read_actions", [])):
         return R0
-    # keyword fallback
+    # keyword fallback (last resort; NEVER overrides a declared commit). conservative: unknown -> R0.
     low = (name or "").lower()
     if any(h in low for h in _COMMIT_HINTS):
         return R2
@@ -52,6 +53,16 @@ def _action_name(action):
     if action.get("type") == "final":
         return "final"
     return action.get("tool") or action.get("action") or action.get("type") or ""
+
+
+def _matches_any(name, entries):
+    """An entry matches if it equals the tool name OR is a substring of it (structured tool-name pattern,
+    e.g. 'medication_request_create' matches 'fhir_medication_request_create')."""
+    name = name or ""
+    for e in (entries or []):
+        if e and (e == name or e in name):
+            return True
+    return False
 
 
 def at_least(risk, threshold):

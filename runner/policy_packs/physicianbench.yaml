@@ -1,37 +1,37 @@
-# PhysicianBench policy pack (P1 target — deterministic-heavy).
-# NOTE: action/tool names below are TEMPLATES; P1 verifies them against the real PB tool schema and
-# the FHIR resource.subject path before enabling enforce mode on PB.
+# PhysicianBench policy pack (P1) — built on the REAL structured runtime signals, no keyword tricks:
+#   assigned subject  = task.context.patient_ref            (task-visible operand, MRN; NOT a gold answer)
+#   operated subject  = action.args.patient / subject / ... (the same _SUBJECT_KEYS the scorer uses)
+#   tool identity      = the resource-specific FHIR tool name (fhir_<resource>_<op>_<view>)
+# Verified against real PB traces: tools fhir_<r>_search_*, fhir_medication_request_create, args.patient=MRN.
 
 subject:
   type: patient
-  id_context_keys: [patient_ref, patient_id, patient, subject]
+  id_context_keys: [patient_ref, patient_id, patient, subject_ref]
 
-# args that carry the operated-on patient id -> Module A scope check (wrong-patient BLOCK)
-subject_arg_keys: [patient, subject, patient_id, subject_id]
+# Module A scope check: the operated-on patient id lives in these structured action args.
+subject_arg_keys: [patient, subject, subject_ref, patient_ref, patient_id, subject_id]
 
-read_actions:
-  - fhir_search
-  - fhir_read
-  - fhir_observation_search_labs
-reversible_actions:
-  - write_file
-commit_actions:
-  - create_medication_request
-  - fhir_create
-  - fhir_update
+# R0 read / R1 reversible / R2 commit — declared by tool-name pattern (the tool name IS the structured
+# resource+operation identity). Declared commits are authoritative; keyword fallback never decides these.
+read_actions: [fhir_search, fhir_read, _search_, get_lab_reference_range]
+reversible_actions: [write_file]
+commit_actions: [_create, fhir_create]
 
 evidence_obligations:
   - id: check_allergies
-    satisfied_by: {tool: fhir_search, resource_type: AllergyIntolerance}
+    satisfied_by: {tool_pattern: allergy}                 # fhir_allergy_intolerance_search_*
   - id: check_current_medications
-    satisfied_by: {tool: fhir_search, resource_type: MedicationRequest}
+    satisfied_by: {tool_pattern: medication_request_search}
 
 workflow_obligations:
   - id: medication_safety_review
     requires: [check_allergies, check_current_medications]
 
 commit_points:
-  - action: create_medication_request
+  # creating a medication order is the high-risk commit: requires the safety review first, and the
+  # created resource must be read back (postcondition verified deterministically + by read-back in P1).
+  - action_pattern: medication_request_create
     risk: R2
     requires: [medication_safety_review]
+    requires_rule: medication_requires_safety_review
     postcondition: created_resource_read_back

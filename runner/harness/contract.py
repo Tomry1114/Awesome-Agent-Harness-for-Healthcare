@@ -26,8 +26,16 @@ class ClinicalProcessContract:
                 [o.get("id") for o in self.workflow_obligations if o.get("id")])
 
     def commit_point_for(self, action_name):
+        """Match a commit point by exact `action` OR by `action_pattern` (a substring of the tool NAME —
+        the tool name IS the structured resource/operation identity, e.g. 'fhir_medication_request_create').
+        Exact match wins over pattern."""
+        name = action_name or ""
         for cp in self.commit_points:
-            if cp.get("action") == action_name:
+            if cp.get("action") and cp["action"] == name:
+                return cp
+        for cp in self.commit_points:
+            pat = cp.get("action_pattern")
+            if pat and pat in name:
                 return cp
         return None
 

@@ -37,17 +37,12 @@ class ObligationLifecycle(Capability):
             return None
         missing = ctx.ledger.pending_prerequisites(cp.get("requires", []))
         if missing:
-            sugg = []
-            for oid in missing:
-                ob = ctx.ledger.obligations.get(oid) or {}
-                sb = ob.get("satisfied_by") or {}
-                if sb.get("tool"):
-                    sugg.append(sb["tool"] + ("." + sb["resource_type"] if sb.get("resource_type") else ""))
+            leaves, sugg = _expand_missing(ctx.ledger, missing)
             return self._decide(
                 D.REVISE, rule_id=cp.get("requires_rule", "commit_requires_obligations"),
-                deterministic=True, missing_obligations=missing, suggested_capabilities=sugg,
-                reason="commit '%s' requires unmet obligations: %s" % (name, ", ".join(missing)),
-                feedback="Before '%s', complete: %s." % (name, ", ".join(missing)))
+                deterministic=True, missing_obligations=leaves, suggested_capabilities=sugg,
+                reason="commit '%s' requires unmet obligations: %s" % (name, ", ".join(leaves)),
+                feedback="Before '%s', complete: %s." % (name, ", ".join(leaves)))
         return None
 
     def before_final(self, answer, ctx):
@@ -58,11 +53,12 @@ class ObligationLifecycle(Capability):
             return None
         missing = ctx.ledger.pending_prerequisites(cp.get("requires", []))
         if missing:
+            leaves, sugg = _expand_missing(ctx.ledger, missing)
             return self._decide(
                 D.REVISE, rule_id=cp.get("requires_rule", "final_requires_obligations"),
-                deterministic=True, missing_obligations=missing,
-                reason="final answer requires unmet obligations: %s" % ", ".join(missing),
-                feedback="Before answering, complete: %s." % ", ".join(missing))
+                deterministic=True, missing_obligations=leaves, suggested_capabilities=sugg,
+                reason="final answer requires unmet obligations: %s" % ", ".join(leaves),
+                feedback="Before answering, complete: %s." % ", ".join(leaves))
         return None
 
     def after_action(self, action, result, before_state, after_state, ctx):
@@ -74,7 +70,7 @@ class ObligationLifecycle(Capability):
             if ob.get("state") in (SATISFIED, WAIVED):
                 continue
             sb = ob.get("satisfied_by") or {}
-            if sb.get("tool") and sb["tool"] == name and _ok(result):
+            if _sb_tool_matches(sb, name) and _ok(result):
                 rt = sb.get("resource_type")
                 if rt is None or _request_targets(action, rt):
                     ctx.ledger.set_obligation(oid, SATISFIED, note="matched %s" % name,
@@ -100,6 +96,39 @@ def _final_cp(contract):
         if cp.get("action") in ("final", "final_answer", "final_clinical_decision"):
             return cp
     return None
+
+
+def _expand_missing(ledger, missing):
+    """Turn a list of unmet obligation ids into the ACTIONABLE leaf set + tool suggestions: a workflow
+    obligation is expanded to its own unmet prerequisites (so the agent is told 'check allergies' rather
+    than the abstract 'medication_safety_review'). Returns (leaf_ids, suggested_tools)."""
+    leaves, seen = [], set()
+    for oid in missing:
+        ob = ledger.obligations.get(oid) or {}
+        if ob.get("kind") == "workflow" and ob.get("requires"):
+            sub = ledger.pending_prerequisites(ob["requires"]) or [oid]
+        else:
+            sub = [oid]
+        for s in sub:
+            if s not in seen:
+                seen.add(s); leaves.append(s)
+    sugg = []
+    for oid in leaves:
+        sb = (ledger.obligations.get(oid) or {}).get("satisfied_by") or {}
+        t = sb.get("tool") or sb.get("tool_pattern")
+        if t:
+            sugg.append(t + ("." + sb["resource_type"] if sb.get("resource_type") else ""))
+    return leaves, sugg
+
+
+def _sb_tool_matches(sb, name):
+    """satisfied_by matches the executed tool by exact `tool` OR substring `tool_pattern` of the tool name
+    (the tool name is the structured resource/op identity, e.g. 'fhir_allergy_intolerance_search_active')."""
+    name = name or ""
+    if sb.get("tool") and sb["tool"] == name:
+        return True
+    pat = sb.get("tool_pattern")
+    return bool(pat and pat in name)
 
 
 def _request_targets(action, resource_type):

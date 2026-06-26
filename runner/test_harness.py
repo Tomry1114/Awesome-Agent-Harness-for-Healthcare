@@ -169,6 +169,43 @@ def test_capability_error_does_not_crash():
     assert k.before_action({"type": "tool", "tool": "fhir_search", "args": {}}, step=0).type == D.ALLOW
 
 
+def test_p1_physicianbench_real_pack():
+    """P1: the REAL physicianbench.yaml on real-shaped PB actions (no synthetic inline policy).
+    Exercises wrong-patient BLOCK, medication-safety prerequisite REVISE -> satisfy -> ALLOW, and
+    pattern-based risk (fhir_medication_request_create = R2; a search = R0)."""
+    from harness.engines.policy import load_policy
+    from harness.risk import classify_risk
+    pol = load_policy(bench="PhysicianBench", env_type="fhir")
+    assert pol.get("_pack_name") == "physicianbench", pol.get("_pack_name")
+    task = {"task_id": "pb", "goal": "manage aberrant UDS",
+            "context": {"patient_ref": "MRN6025656705"}, "environment": {"type": "fhir"},
+            "source_benchmark": "PhysicianBench"}
+    contract = build_contract(task, env_type="fhir", policy=pol)
+    assert contract.subject == {"type": "patient", "id": "MRN6025656705"}, contract.subject
+    k = HarnessKernel(contract, [ScopeEvidenceBinding(), ObligationLifecycle(), VerifyAndCommit()],
+                      mode="enforce", policy=pol, env_type="fhir",
+                      risk_of=lambda a: classify_risk(a, contract, pol))
+    own = {"type": "tool", "tool": "fhir_observation_search_labs", "args": {"patient": "MRN6025656705"}}
+    wrong = {"type": "tool", "tool": "fhir_observation_search_labs", "args": {"patient": "MRN9999999999"}}
+    create = {"type": "tool", "tool": "fhir_medication_request_create",
+              "args": {"patient": "MRN6025656705", "medication": "amoxicillin"}}
+    assert k.before_action(wrong, step=0).type == D.BLOCK, "wrong patient must BLOCK"
+    assert k.before_action(own, step=1).type == D.ALLOW, "own patient read ok"
+    eff = k.before_action(create, step=2)
+    assert eff.type == D.REVISE and "check_allergies" in str(eff.feedback), eff.feedback
+    # satisfy the safety review with the real resource-specific tools
+    allergy = {"type": "tool", "tool": "fhir_allergy_intolerance_search_active", "args": {"patient": "MRN6025656705"}}
+    meds = {"type": "tool", "tool": "fhir_medication_request_search_orders", "args": {"patient": "MRN6025656705"}}
+    k.after_action(allergy, "AllergyIntolerance: penicillin", {"x": 0}, {"x": 1}, step=3)
+    k.after_action(meds, "MedicationRequest: lisinopril", {"x": 1}, {"x": 2}, step=4)
+    assert k.ledger.obligation_state("check_allergies") == "SATISFIED"
+    assert k.ledger.obligation_state("check_current_medications") == "SATISFIED"
+    assert k.ledger.obligation_state("medication_safety_review") == "SATISFIED"
+    assert k.before_action(create, step=5).type == D.ALLOW, "prerequisites met -> commit allowed"
+    assert classify_risk(create, contract, pol) == "R2"
+    assert classify_risk(own, contract, pol) == "R0"
+
+
 def _run():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     passed = 0
