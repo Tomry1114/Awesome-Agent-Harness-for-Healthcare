@@ -76,3 +76,6 @@ docs/CHANGELOG.md
 docs/STATUS.md
 /ALIGNMENT.md
 /CLAUDE.md
+res4_*/
+res_harness_smoke/
+res3_dsk_smoke/
