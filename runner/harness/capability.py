@@ -38,7 +38,7 @@ class Capability:
 
 class HarnessContext:
     """What every capability + the kernel share for one task."""
-    __slots__ = ("ledger", "contract", "policy", "mode", "step", "env_type", "risk_of")
+    __slots__ = ("ledger", "contract", "policy", "mode", "step", "env_type", "risk_of", "observation")
 
     def __init__(self, ledger, contract, policy, mode, env_type=None, risk_of=None):
         self.ledger = ledger
@@ -48,3 +48,4 @@ class HarnessContext:
         self.step = 0
         self.env_type = env_type
         self.risk_of = risk_of      # callable(action) -> "R0".."R3"
+        self.observation = None     # canonical_observation of the most recent action (after_action only)

@@ -116,7 +116,9 @@ class HarnessKernel:
         eff.feedback = _feedback(winner) if eff.type != D.ALLOW else None
         return eff
 
-    def after_action(self, action, result, before_state, after_state, step=0):
+    def after_action(self, action, result, before_state, after_state, step=0, canonical_observation=None):
+        self.ctx.step = step
+        self.ctx.observation = canonical_observation
         decisions = []
         for cap in self.capabilities:
             try:

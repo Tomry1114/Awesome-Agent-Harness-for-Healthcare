@@ -95,6 +95,14 @@ class ContractCompiler:
             for ev in inputs.observed:
                 if isinstance(ev, dict) and ev.get("assigned_subject"):
                     sid = ev["assigned_subject"]; break
+        if sid is None and spec.get("id_goal_regex"):
+            # declared extraction of the ASSIGNED operand from task-visible goal/context text (e.g. the
+            # case id 'DEN-001' a HAB task names). This reads the operand, never a gold answer.
+            import re
+            hay = " ".join(str(x) for x in (inputs.goal, ctx.get("text")) if x)
+            m = re.search(spec["id_goal_regex"], hay)
+            if m:
+                sid = m.group(1) if m.groups() else m.group(0)
         return {"type": stype, "id": sid} if (stype or sid) else None
 
 

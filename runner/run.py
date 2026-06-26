@@ -201,7 +201,8 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
         _hpost = None
         if _harness is not None:
             try:
-                _hpost = _harness.after_action(action, res, _state_before, _state_after, step=step)
+                _hpost = _harness.after_action(action, res, _state_before, _state_after, step=step,
+                                               canonical_observation=_canon.canonical_observation(res, env_type))
             except Exception:
                 _hpost = None
         _src_full = json.dumps(res, ensure_ascii=False)

@@ -28,8 +28,19 @@ class ScopeEvidenceBinding(Capability):
         return None
 
     def after_action(self, action, result, before_state, after_state, ctx):
-        # bind read-derived evidence to the active subject (lightweight, generic for P0)
         active = ctx.ledger.subject_id()
+        # OBSERVATION-based scope (GUI / route substrates like HAB): the case actually DISPLAYED after this
+        # action, read from canonical_observation via the SAME structured keys the scorer uses
+        # (case_identity / patient_id / subject_token). A foreign displayed case -> REVISE (go back).
+        if active and ctx.observation and ctx.policy.get("subject_observation_keys"):
+            shown = _displayed_subject(ctx.observation, ctx.policy["subject_observation_keys"])
+            if shown is not None and _norm(shown) != _norm(active):
+                return self._decide(
+                    D.REVISE, rule_id="subject_scope_mismatch", deterministic=True,
+                    reason="page now shows %s but the assigned subject is %s" % (shown, active),
+                    feedback="You are viewing %s; the assigned case is %s — return to it." % (shown, active),
+                    extra={"shown": shown, "active_subject": active})
+        # bind read-derived evidence to the active subject
         name = action.get("tool") if isinstance(action, dict) else None
         if name and active and _looks_read(name, ctx.policy):
             ctx.ledger.add_evidence(type=name, value=_summarize(result), subject_id=active,
@@ -48,6 +59,24 @@ class ScopeEvidenceBinding(Capability):
             if v:
                 return str(v)
         return None
+
+
+def _displayed_subject(observation, keys):
+    """The subject currently DISPLAYED, from canonical_observation. Structured-first: top-level keys
+    (case_identity / patient_id / subject_token), then page_state.<section>.patient_id — mirrors the
+    scorer's _page_disclosed_subjects so the harness and the scorer read the SAME signal."""
+    if not isinstance(observation, dict):
+        return None
+    for k in keys:
+        v = observation.get(k)
+        if v:
+            return str(v)
+    ps = observation.get("page_state")
+    if isinstance(ps, dict):
+        for sect in ps.values():
+            if isinstance(sect, dict) and sect.get("patient_id"):
+                return str(sect["patient_id"])
+    return None
 
 
 def _looks_read(name, policy):

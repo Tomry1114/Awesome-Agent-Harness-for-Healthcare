@@ -206,6 +206,39 @@ def test_p1_physicianbench_real_pack():
     assert classify_risk(own, contract, pol) == "R0"
 
 
+def test_p2_healthadminbench_real_pack():
+    """P2: the REAL healthadminbench.yaml. HAB is observation/route-based — the operated case is the one
+    DISPLAYED (canonical_observation), the assigned case is named in the goal. Exercises wrong-case REVISE
+    (foreign displayed case), correct-case ALLOW, and submit (R2) post-commit state-change check."""
+    from harness.engines.policy import load_policy
+    from harness.risk import classify_risk
+    pol = load_policy(bench="HealthAdminBench", env_type="gui")
+    assert pol.get("_pack_name") == "healthadminbench", pol.get("_pack_name")
+    task = {"task_id": "hab", "goal": "Open denial DEN-001 for Martinez, Carlos. Triage it.",
+            "context": {"text": "Open denial DEN-001 and document a triage note."},
+            "environment": {"type": "gui"}, "source_benchmark": "HealthAdminBench"}
+    contract = build_contract(task, env_type="gui", policy=pol)
+    assert contract.subject == {"type": "admin_case", "id": "DEN-001"}, contract.subject
+    k = HarnessKernel(contract, [ScopeEvidenceBinding(), ObligationLifecycle(), VerifyAndCommit()],
+                      mode="enforce", policy=pol, env_type="gui",
+                      risk_of=lambda a: classify_risk(a, contract, pol))
+    click = {"type": "tool", "tool": "click", "args": {}}
+    # the page now DISPLAYS a foreign case -> REVISE (go back to the assigned case)
+    eff = k.after_action(click, "ok", {"x": 0}, {"x": 1}, step=0,
+                         canonical_observation={"case_identity": "DEN-999"})
+    assert eff.type == D.REVISE and "DEN-999" in str(eff.feedback), eff.feedback
+    # back on the assigned case -> no scope intervention
+    eff2 = k.after_action(click, "ok", {"x": 1}, {"x": 2}, step=1,
+                          canonical_observation={"case_identity": "DEN-001"})
+    assert eff2.type == D.ALLOW, eff2.type
+    # submit is the R2 commit; a submit that left case status unchanged (Draft->Draft) -> post-commit REVISE
+    submit = {"type": "tool", "tool": "submit", "args": {}}
+    assert classify_risk(submit, contract, pol) == "R2"
+    eff3 = k.after_action(submit, "submitted", {"status": "Draft"}, {"status": "Draft"}, step=2,
+                          canonical_observation={"case_identity": "DEN-001"})
+    assert eff3.type == D.REVISE, eff3.type
+
+
 def _run():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     passed = 0
