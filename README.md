@@ -78,17 +78,6 @@ agent model and another serves the judge:
 `MH_OPENAI_KEY` / `OPENAI_API_KEY`. Set just `OPENAI_API_KEY` for a single-key run, or add
 `MH_JUDGE_KEY` / `MH_VLM_API_KEY` to split roles across keys.
 
-## Phased scoring — judge calls are isolated, the report is pure-read
-
-| Stage | File | Model calls? |
-|---|---|---|
-| 1. Run the agent | `run.py` / `run_batch.py` | agent + tool backend (+ in-run judges) → `result.json` + `trajectory.jsonl` |
-| 2. Post-hoc judge | `rescore_judges.py` | **the ONLY judge caller for Governance.** Caches per `(task, output, judge, prompt)`; writes `result.rescored.json` (top-level `Governance` + audit) |
-| 3. Aggregate | `aggregate_report.py` | **PURE-READ — zero model calls.** Reads the persisted blocks → `report.json` |
-
-`governance_contract.py` is the single source of truth for the governance blend / critical veto /
-`scoring_config`. The aggregate holds no scoring math — there is exactly one blend implementation.
-
 ## Metrics — the 7 ETCLOVG dimensions, in two panels
 
 Every qualified run is scored on the same 7 dimensions in [0,1], grouped into two panels:
@@ -150,15 +139,3 @@ python runner/aggregate_report.py results/gpt5                       # pure-read
 Key env vars: `MH_API_MODEL` (agent model) + `OPENAI_API_KEY` + `MH_OPENAI_BASE` (gateway),
 `MH_JUDGE_MODEL` / `MH_JUDGE_KEY` (judge), `MH_VLM_API_MODEL` / `MH_VLM_API_KEY` (image perception),
 `MH_GUI_MODE` (`real`|`mock` for HealthAdminBench), `MH_GATEWAY_TIMEOUT` / `MH_GATEWAY_RETRIES`.
-
-## Not in this repo (re-fetch separately)
-
-`benchmark/` holds vendored upstream repos and multi-GB container images / databases (FHIR `.sif`,
-H2 DB, OCI layers, parquet, images). They are git-ignored; restore them from the upstream revisions
-pinned in `TASK_MANIFEST.json` and the deployment notes in `docs/`.
-
-## Status
-
-All scorer methods are wired; the three substrates are real (live HAPI FHIR · real Playwright portal ·
-real VLM tool sandbox); the phased judge + pure-read report + provenance integrity are in place;
-conformance is 109/109.
