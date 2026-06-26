@@ -447,6 +447,7 @@ def _experimental_evaluators(agent_dir, bench):
                     "prompt_hash": (_gblk.get("judge") or {}).get("prompt_hash"),
                     "scoring_version": (_gblk.get("scoring_config") or {}).get("scoring_version"),
                     "code_sha": (_gblk.get("scoring_config") or {}).get("code_sha"),
+                    "scoring_code_tree_hash": (_gblk.get("scoring_config") or {}).get("scoring_code_tree_hash"),
                     "g14_weight": (_gblk.get("scoring_config") or {}).get("g14_weight"),
                     "evaluation_error": None}
                 if not _grep: _cov_low.setdefault("Governance", []).append(tid)
@@ -685,13 +686,15 @@ def _read_disk_governance(agent_dir):
         blk, err = _read_dim_block(os.path.dirname(rp), "Governance")
         if blk is None:
             out[tid] = {"score": None, "reportable": False, "critical": None, "branch": None,
-                        "scoring_version": None, "code_sha": None, "dirty_worktree": None,
+                        "scoring_version": None, "code_sha": None, "scoring_code_tree_hash": None,
+                        "dirty_worktree": None,
                         "g14_weight": None, "evaluation_error": err}
             continue
         _sc = blk.get("scoring_config") or {}
         out[tid] = {"score": blk.get("score"), "reportable": bool(blk.get("reportable")),
                     "critical": blk.get("critical"), "branch": blk.get("branch"),
                     "scoring_version": _sc.get("scoring_version"), "code_sha": _sc.get("code_sha"),
+                    "scoring_code_tree_hash": _sc.get("scoring_code_tree_hash"),
                     "dirty_worktree": _sc.get("dirty_worktree"),
                     "g14_weight": _sc.get("g14_weight"), "evaluation_error": blk.get("evaluation_error")}
     return out
@@ -795,6 +798,21 @@ def _current_git_head():
         return None
 
 
+def _current_scoring_tree_hash():
+    """PURE READ: the git TREE object hash of runner/ at HEAD (`git rev-parse HEAD:runner`). This is the
+    provenance GUARD key -- a content hash of the scoring code ONLY, invariant under commits that touch
+    anything outside runner/ (committing res2_* artifacts, docs, etc.). Comparing this instead of full-repo
+    HEAD breaks the code_sha==HEAD self-reference loop: an artifact-only commit advances HEAD but leaves the
+    runner/ tree unchanged, so an artifact scored at this tree stays 'current'."""
+    try:
+        import subprocess
+        out = subprocess.run(["git", "rev-parse", "HEAD:runner"], capture_output=True, text=True,
+                             cwd=os.path.dirname(os.path.abspath(__file__)), timeout=10)
+        return out.stdout.strip() or None if out.returncode == 0 else None
+    except Exception:
+        return None
+
+
 def _governance_consistency(exp_panel, disk_gov, hd):
     """Single-source-of-truth audit. Reconciles the governance views:
       - report harness Governance  = harness_seven.Governance.score (reportable-only canonical mean)
@@ -827,29 +845,40 @@ def _governance_consistency(exp_panel, disk_gov, hd):
         return sorted(v for v in vals if v is not None)
     _branches, _svers = _uniq("branch"), _uniq("scoring_version")
     _shas, _weights = _uniq("code_sha"), _uniq("g14_weight")
-    # ---- task item 2: PROVENANCE GUARD. Every reportable bundle must have been scored under the CURRENT
-    # code (scoring_config.code_sha == git HEAD) AND a clean worktree (dirty_worktree not True). A bundle
-    # scored under a different code_sha (or any dirty_worktree True) is a STALE artifact: artifact_status
-    # = stale_code_version (NOT green), and metadata_agrees must additionally require code_sha == HEAD. ----
+    _trees = _uniq("scoring_code_tree_hash")
+    # ---- task item 2: PROVENANCE GUARD (P0-2 fix). The staleness criterion is the SCORING-CODE TREE HASH
+    # (git rev-parse HEAD:runner), NOT the full-repo HEAD. The tree hash is a content hash of runner/ only,
+    # so it is INVARIANT under artifact-only commits (committing res2_* result.rescored.json does not touch
+    # runner/). This breaks the old code_sha==HEAD self-reference loop where every artifact-only commit
+    # advanced HEAD and re-marked all committed artifacts stale. code_sha / _head are kept for human audit
+    # (which commit produced the artifact) but no longer gate artifact_status. A clean worktree is still
+    # required. Legacy artifacts that predate the tree hash fall back to the old code_sha==HEAD check. ----
     _head = _current_git_head()
+    _tree_head = _current_scoring_tree_hash()
     _dirty_flags = sorted({bool(disk_gov[t].get("dirty_worktree")) for t in disk_gov
                            if disk_gov[t].get("reportable") and disk_gov[t].get("dirty_worktree") is not None})
     _any_dirty = any(_dirty_flags)
-    # code_sha must (a) be uniform across reportable blocks AND (b) equal the current HEAD. _head is None ->
-    # git unavailable -> we cannot verify against HEAD (treated as a mismatch unless there are no shas at all).
-    _sha_uniform = len(_shas) <= 1
+    _sha_uniform = len(_shas) <= 1                              # reported for audit; no longer gating
     _sha_matches_head = bool(_head) and bool(_shas) and _shas == [_head]
-    _code_current = (not _shas) or _sha_matches_head            # no shas (nothing rescored) -> vacuously current
-    # metadata_agrees now REQUIRES code_sha == HEAD (not just uniformity) in addition to branch/version/weight.
-    _meta_agree = bool(all(len(s) <= 1 for s in (_branches, _svers, _shas, _weights))
-                       and _code_current and not _any_dirty)
-    # artifact_status: green ONLY when the (uniform) on-disk code_sha equals HEAD and no worktree was dirty.
-    if _shas and not _sha_matches_head:
-        _artifact_status = "stale_code_version"
+    if _trees:                                                 # new-style artifacts carry the tree hash
+        _tree_uniform = len(_trees) <= 1
+        _tree_matches_head = bool(_tree_head) and _trees == [_tree_head]
+        _code_current = _tree_matches_head                    # tree hash is the criterion
+    else:                                                      # legacy artifacts -> fall back to code_sha==HEAD
+        _tree_uniform = True
+        _tree_matches_head = None
+        _code_current = (not _shas) or _sha_matches_head
+    # metadata_agrees: branch/version/weight uniform + tree hash uniform + scored under current code tree +
+    # clean worktree. (code_sha intentionally dropped from the gating set so a re-stamp can't false-flag.)
+    _meta_agree = bool(all(len(s) <= 1 for s in (_branches, _svers, _weights))
+                       and _tree_uniform and _code_current and not _any_dirty)
+    # artifact_status: green ONLY when the on-disk scoring-code tree equals HEAD:runner and no worktree dirty.
+    if not _shas and not _trees:
+        _artifact_status = "no_rescored_artifact"             # nothing to verify yet
     elif _any_dirty:
         _artifact_status = "stale_code_version"
-    elif not _shas:
-        _artifact_status = "no_rescored_artifact"             # nothing to verify yet
+    elif not _code_current:
+        _artifact_status = "stale_code_version"
     else:
         _artifact_status = "current"
     # disk_equals_report: the headline equals the freshly re-read on-disk reportable mean. When NO task has
@@ -865,8 +894,13 @@ def _governance_consistency(exp_panel, disk_gov, hd):
         "disk_reportable_mean": disk_mean,
         "n_disk_reportable": len(_disk_rep),
         "metadata_agrees": _meta_agree,
-        # task item 2: provenance guard outputs.
+        # task item 2: provenance guard outputs (P0-2: tree hash is the criterion; code_sha is audit-only).
         "artifact_status": _artifact_status,
+        "provenance_criterion": "scoring_code_tree_hash" if _trees else "code_sha_legacy_fallback",
+        "current_scoring_tree_hash": _tree_head,
+        "scoring_tree_matches_head": _tree_matches_head,
+        "scoring_tree_uniform": _tree_uniform,
+        "disk_scoring_tree_hashes": _trees,
         "current_code_sha": _head,
         "code_sha_matches_head": _sha_matches_head,
         "code_sha_uniform": _sha_uniform,

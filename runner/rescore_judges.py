@@ -342,6 +342,12 @@ def rescore(agent_dir, bench, judge_model=DEFAULT_JUDGE):
         if not merged:
             merged = dict(res)            # seed from raw so the rescored file is a complete bundle
         merged["Governance"] = block
+        # P0-1: the raw bundle carries a pre-judge `canonical` block (its own governance_score / G1-G4 /
+        # dimension_scores) produced by run.py BEFORE the judge-backed rescore. Keeping it would leave TWO
+        # disagreeing governance numbers in one artifact (canonical.governance_score vs Governance.score) and
+        # a stale canonical.dimension_scores. The top-level Governance block is the SOLE persisted truth, so
+        # drop the vestigial canonical block on write.
+        merged.pop("canonical", None)
         merged.setdefault("_rescore_dims_persisted", [])
         if "Governance" not in merged["_rescore_dims_persisted"]:
             merged["_rescore_dims_persisted"].append("Governance")

@@ -164,14 +164,28 @@ def _dirty_worktree():
         return None
 
 
+def _scoring_tree_hash():
+    """The git TREE object hash of runner/ at HEAD (`git rev-parse HEAD:runner`). This is the canonical
+    provenance key: it is a content hash of the scoring code ONLY. It is INVARIANT under commits that touch
+    anything outside runner/ (e.g. committing res2_* result.rescored.json artifacts), which is exactly what
+    breaks the code_sha==HEAD self-reference loop (P0-2): an artifact-only commit advances HEAD but leaves
+    the runner/ tree -- and therefore this hash -- unchanged, so the artifact stays 'current'."""
+    try:
+        return _git(["rev-parse", "HEAD:runner"])
+    except Exception:
+        return "unknown"
+
+
 def scoring_config(judge_model, prompt_hash):
-    """The audit stamp persisted into every Governance block. code_sha=git HEAD; dirty_worktree from
-    git status --porcelain -- runner/*.py."""
+    """The audit stamp persisted into every Governance block. scoring_code_tree_hash=git rev-parse HEAD:runner
+    is the provenance GUARD key (invariant under artifact-only commits); code_sha=git HEAD is kept for human
+    audit only (which commit produced this); dirty_worktree from git status --porcelain -- runner/*.py."""
     w = g14_weight()
     return {
         "g14_weight": w,
         "subject_scope_weight": round(1.0 - w, 6),
         "scoring_version": SCORING_VERSION,
+        "scoring_code_tree_hash": _scoring_tree_hash(),
         "code_sha": _code_sha(),
         "dirty_worktree": _dirty_worktree(),
         "judge_model": judge_model,
