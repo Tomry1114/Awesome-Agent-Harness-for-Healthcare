@@ -1,0 +1,99 @@
+Adrenal Incidentaloma Assessment and Management Plan
+
+Patient: MRN6756332150
+Age/Sex: 72-year-old male
+Date: 2024-03-11
+
+Clinical summary
+- Incidental left adrenal lesion identified on noncontrast CT chest dated 12/18/2023.
+- Imaging description in the available report: left adrenal adenoma measuring 1.4 cm (noted in upper abdomen section of CT chest report).
+- Current problem list includes: adrenal nodule / other specified adrenal disorder / adenoma of left adrenal gland.
+- Relevant comorbidities:
+  - Hypertension (on amlodipine 2.5 mg daily and irbesartan 75 mg nightly)
+  - Supraventricular tachycardia / palpitations
+  - Prediabetes (A1c 6.2%)
+  - Atherosclerotic cardiovascular disease markers on CT (mild coronary calcification, aortic atherosclerosis)
+- Recent blood pressures: 177/70, 145/69, 134/69, 124/60. Overall BP control is variable and at times above goal.
+- Recent labs:
+  - Sodium 136.85 mmol/L
+  - Potassium 4.4 mmol/L
+  - CO2 28 mmol/L
+  - Creatinine 0.74 mg/dL, eGFR 97 mL/min/1.73 m2
+  - Calcium 10.1 mg/dL
+  - Glucose 87 mg/dL (fasting status noted as no)
+  - No hypokalemia documented.
+
+Assessment
+1) Left adrenal incidentaloma, 1.4 cm, presumed adenoma but incompletely characterized on the available noncontrast chest CT.
+2) Hypertension with episodes of elevated systolic BP and concomitant palpitations/SVT.
+3) Prediabetes and cardiovascular comorbidity, which increase the importance of evaluating for mild autonomous cortisol secretion.
+
+Recommended hormonal evaluation
+A. Screen for autonomous cortisol secretion in all adrenal incidentalomas
+- Order: 1 mg overnight dexamethasone suppression test with 8 AM serum cortisol.
+- Preparation/instructions:
+  - Take dexamethasone 1 mg orally once at 11:00 PM the night before the blood draw.
+  - Obtain serum cortisol at 8:00 AM the next morning.
+  - If available at your institution, a concurrent serum dexamethasone level can be helpful when results are equivocal or if adherence is uncertain.
+
+B. Screen for pheochromocytoma
+- Order: plasma free metanephrines.
+- Rationale: adrenal mass plus palpitations/SVT and hypertension; lesion is not yet fully characterized with adrenal protocol imaging.
+- Preparation/instructions:
+  - Prefer fasting morning draw if feasible.
+  - Rest supine quietly for 20–30 minutes before blood draw.
+  - Avoid caffeine, nicotine, vigorous exercise, and acute stress/illness before testing if possible.
+  - If clinically feasible, review medications that can interfere with interpretation; if not possible, interpret results with caution.
+
+C. Screen for primary aldosteronism
+- Order: plasma aldosterone concentration and plasma renin activity or direct renin with aldosterone/renin ratio.
+- Rationale: hypertension requiring 2 agents, with intermittent elevated readings. Normal potassium does not exclude primary aldosteronism.
+- Preparation/instructions:
+  - Draw in the morning after the patient has been ambulatory for a period and seated per local lab protocol.
+  - Ensure adequate/normal sodium intake before testing.
+  - Correct hypokalemia before testing if present (not currently present).
+  - Interfering antihypertensives can alter results; the patient is currently on irbesartan and amlodipine. If BP allows, medication adjustment may improve test accuracy, but if washout is unsafe, testing can still be obtained and interpreted cautiously.
+  - If ARR is positive, proceed with confirmatory testing per local protocol unless clinical phenotype is clearly diagnostic.
+
+Imaging plan
+- MRI abdomen adrenal protocol with and without contrast ordered, to be completed within 1–2 months, for definitive lesion characterization.
+- If MRI demonstrates benign adenoma features, no immediate intervention is likely needed given the small size (1.4 cm), but follow-up should be guided by hormonal results and imaging phenotype.
+- If MRI is indeterminate or suspicious, consider dedicated adrenal CT washout or referral to endocrine surgery/adrenal tumor board.
+
+Orders placed today
+- 1 mg overnight dexamethasone suppression test: dexamethasone 1 mg tablet, take once at 11 PM before 8 AM cortisol.
+- Adrenal hormonal evaluation panel:
+  - Plasma free metanephrines
+  - Aldosterone / renin with ratio
+  - Basic metabolic panel
+- MRI abdomen adrenal protocol with and without contrast, requested within 1–2 months.
+
+Contingency plan / interpretation guidance
+1) If plasma free metanephrines are elevated
+- Repeat/confirm as needed depending on degree of elevation and pretest conditions.
+- Urgent endocrinology follow-up and adrenal imaging review.
+- If markedly elevated, treat as possible pheochromocytoma; initiate appropriate alpha blockade and coordinate specialty referral before any invasive procedure.
+
+2) If aldosterone/renin ratio is elevated
+- Review potassium, sodium intake, and medication effects.
+- Proceed with confirmatory testing if indicated.
+- If primary aldosteronism is confirmed, manage with mineralocorticoid receptor antagonist or subtype evaluation (adrenal venous sampling if surgical candidacy and lateralization are being considered).
+
+3) If 1 mg DST cortisol is not suppressed
+- Evaluate for mild autonomous cortisol secretion (MACS): check ACTH, consider repeat DST or additional cortisol assessment per local protocol.
+- Assess and optimize cortisol-related comorbidities (hypertension, glucose intolerance, bone health).
+- Consider adrenalectomy only if there is convincing biochemical autonomy and clinically meaningful comorbidity burden, especially if imaging remains unilateral and surgical risk is acceptable.
+
+4) If MRI confirms benign adenoma and hormonal testing is negative
+- Conservative management with interval clinical follow-up.
+- Repeat imaging only if recommended by the imaging phenotype or if there is interval hormonal change/symptom evolution.
+
+Additional clinical considerations
+- Blood pressure is not fully controlled on current regimen; if persistent elevation continues after endocrine workup, primary care/cardiology optimization of antihypertensive therapy is warranted.
+- The patient has prediabetes, so a finding of MACS would be especially relevant and may support more active management.
+
+Plan summary for patient communication
+- The adrenal nodule is small, but because of the lesion and the patient’s hypertension/palpitations, we are checking for excess hormone production from the adrenal gland.
+- He has been ordered to take one dexamethasone tablet at 11 PM and obtain an 8 AM cortisol the next morning.
+- Additional blood tests for pheochromocytoma and primary aldosteronism have been ordered.
+- MRI of the adrenal glands has been ordered for the next 1–2 months to better characterize the lesion.

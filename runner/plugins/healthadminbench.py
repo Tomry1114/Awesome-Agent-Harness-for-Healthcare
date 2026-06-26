@@ -107,6 +107,15 @@ def _resolve_submit(event, prev_state):
         return {"role": "commit", "status": "success", "milestones_added": ["form_submitted"],
                 "obligation_id": "form_submitted",
                 "progress_token": "state:submitted=%s" % _hash8((url or "") + "|" + page)}
+    # REAL PORTAL: the NextJS SPA often re-renders the case page IN PLACE after a submit (no textual
+    # confirmation surface), but the authoritative localStorage state diff (state_record.state_changed --
+    # the same signal substrate.map_trace trusts) proves the submission COMMITTED (disposition/appeal
+    # recorded). Honor it as a completed submission so a real submit is not mis-scored partial.
+    _sr = event.get("state_record") or {}
+    if _sr.get("state_changed"):
+        return {"role": "commit", "status": "success", "milestones_added": ["form_submitted"],
+                "obligation_id": "form_submitted", "state_changed": True,
+                "progress_token": "state:submitted=%s" % _hash8(str(_sr.get("state_after_hash") or url or "x"))}
     return {"role": "commit", "status": "partial", "milestones_added": [],
             "obligation_id": "form_submitted", "state_changed": False, "progress_token": None}
 

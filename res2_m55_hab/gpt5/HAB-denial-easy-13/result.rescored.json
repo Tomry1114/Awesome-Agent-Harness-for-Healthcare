@@ -525,7 +525,7 @@
   "dimension_scores": {
    "Execution": 0.75,
    "Tooling": 0.667,
-   "Context": 0.583,
+   "Context": 0.333,
    "Lifecycle": 0.5,
    "Observability": 1.0,
    "Verification": 0.25,

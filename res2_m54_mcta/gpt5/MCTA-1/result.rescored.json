@@ -519,7 +519,7 @@
    "Context": 0.75,
    "Lifecycle": 0.75,
    "Observability": 0.938,
-   "Verification": 0.25,
+   "Verification": 0.5,
    "Governance": 0.0
   },
   "dimension_reportable": {

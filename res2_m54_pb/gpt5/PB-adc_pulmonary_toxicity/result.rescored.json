@@ -1,0 +1,431 @@
+{
+ "task_id": "PB-adc_pulmonary_toxicity",
+ "success": false,
+ "evaluation_status": "complete",
+ "unsupported_checkpoints": 0,
+ "proxy_evaluated_checkpoints": 0,
+ "checkpoints": [
+  {
+   "id": "cp1_data_retrieval",
+   "checkpoint_status": "failed",
+   "failure_mode": "agent_failure",
+   "dimension": "Context",
+   "subdimension": "context_grounding",
+   "evaluator_type": "native_pytest",
+   "evaluator_version": "2026.06.24",
+   "weight": 1.0,
+   "pass_status": "failed",
+   "score": 0.0,
+   "score_eligible": true
+  },
+  {
+   "id": "cp2_enhertu_identification",
+   "checkpoint_status": "passed",
+   "failure_mode": null,
+   "dimension": "Outcome",
+   "subdimension": "source_outcome:reasoning",
+   "evaluator_type": "native_pytest",
+   "evaluator_version": "2026.06.24",
+   "weight": 1.0,
+   "pass_status": "passed",
+   "score": 1.0,
+   "score_eligible": true
+  },
+  {
+   "id": "cp3_ild_assessment",
+   "checkpoint_status": "failed",
+   "failure_mode": "agent_failure",
+   "dimension": "Outcome",
+   "subdimension": "source_outcome:reasoning",
+   "evaluator_type": "native_pytest",
+   "evaluator_version": "2026.06.24",
+   "weight": 1.0,
+   "pass_status": "failed",
+   "score": 0.0,
+   "score_eligible": true
+  },
+  {
+   "id": "cp4_infection_assessment",
+   "checkpoint_status": "failed",
+   "failure_mode": "agent_failure",
+   "dimension": "Outcome",
+   "subdimension": "source_outcome:reasoning",
+   "evaluator_type": "native_pytest",
+   "evaluator_version": "2026.06.24",
+   "weight": 1.0,
+   "pass_status": "failed",
+   "score": 0.0,
+   "score_eligible": true
+  },
+  {
+   "id": "cp5_chemotherapy_recommendation",
+   "checkpoint_status": "passed",
+   "failure_mode": null,
+   "dimension": "Outcome",
+   "subdimension": "source_outcome:reasoning",
+   "evaluator_type": "native_pytest",
+   "evaluator_version": "2026.06.24",
+   "weight": 1.0,
+   "pass_status": "passed",
+   "score": 1.0,
+   "score_eligible": true
+  },
+  {
+   "id": "cp6_followup_plan",
+   "checkpoint_status": "passed",
+   "failure_mode": null,
+   "dimension": "Outcome",
+   "subdimension": "source_outcome:documentation",
+   "evaluator_type": "native_pytest",
+   "evaluator_version": "2026.06.24",
+   "weight": 1.0,
+   "pass_status": "passed",
+   "score": 1.0,
+   "score_eligible": true
+  },
+  {
+   "id": "cp7_documentation",
+   "checkpoint_status": "passed",
+   "failure_mode": null,
+   "dimension": "Outcome",
+   "subdimension": "source_outcome:documentation",
+   "evaluator_type": "native_pytest",
+   "evaluator_version": "2026.06.24",
+   "weight": 1.0,
+   "pass_status": "passed",
+   "score": 1.0,
+   "score_eligible": true
+  }
+ ],
+ "dimension_scores": {
+  "Execution": null,
+  "Tooling": null,
+  "Context": 0.0,
+  "Lifecycle": null,
+  "Observability": null,
+  "Verification": null,
+  "Governance": null
+ },
+ "dimension_coverage": {
+  "Execution": 0,
+  "Tooling": 0,
+  "Context": 1,
+  "Lifecycle": 0,
+  "Observability": 0,
+  "Verification": 0,
+  "Governance": 0
+ },
+ "proxy_dimension_scores": {
+  "Execution": null,
+  "Tooling": null,
+  "Context": null,
+  "Lifecycle": null,
+  "Observability": null,
+  "Verification": null,
+  "Governance": null
+ },
+ "proxy_dimension_coverage": {
+  "Execution": 0,
+  "Tooling": 0,
+  "Context": 0,
+  "Lifecycle": 0,
+  "Observability": 0,
+  "Verification": 0,
+  "Governance": 0
+ },
+ "dimension_status": {
+  "Execution": "not_applicable",
+  "Tooling": "not_applicable",
+  "Context": "valid_score",
+  "Lifecycle": "not_applicable",
+  "Observability": "not_applicable",
+  "Verification": "not_applicable",
+  "Governance": "not_applicable"
+ },
+ "dimension_status_reason": {
+  "Execution": "no_checkpoint_for_dimension",
+  "Tooling": "no_checkpoint_for_dimension",
+  "Lifecycle": "no_checkpoint_for_dimension",
+  "Observability": "no_checkpoint_for_dimension",
+  "Verification": "no_checkpoint_for_dimension",
+  "Governance": "no_checkpoint_for_dimension"
+ },
+ "dimension_pass_rate": {
+  "Execution": null,
+  "Tooling": null,
+  "Context": 0.0,
+  "Lifecycle": null,
+  "Observability": null,
+  "Verification": null,
+  "Governance": null
+ },
+ "dimension_stats": {
+  "Execution": {
+   "score_mean": null,
+   "pass_rate": null,
+   "n_scored": 0,
+   "n_applicable": 0,
+   "std": null,
+   "min": null,
+   "max": null,
+   "zero_variance": null
+  },
+  "Tooling": {
+   "score_mean": null,
+   "pass_rate": null,
+   "n_scored": 0,
+   "n_applicable": 0,
+   "std": null,
+   "min": null,
+   "max": null,
+   "zero_variance": null
+  },
+  "Context": {
+   "score_mean": 0.0,
+   "pass_rate": 0.0,
+   "n_scored": 1,
+   "n_applicable": 1,
+   "std": 0.0,
+   "min": 0.0,
+   "max": 0.0,
+   "zero_variance": true
+  },
+  "Lifecycle": {
+   "score_mean": null,
+   "pass_rate": null,
+   "n_scored": 0,
+   "n_applicable": 0,
+   "std": null,
+   "min": null,
+   "max": null,
+   "zero_variance": null
+  },
+  "Observability": {
+   "score_mean": null,
+   "pass_rate": null,
+   "n_scored": 0,
+   "n_applicable": 0,
+   "std": null,
+   "min": null,
+   "max": null,
+   "zero_variance": null
+  },
+  "Verification": {
+   "score_mean": null,
+   "pass_rate": null,
+   "n_scored": 0,
+   "n_applicable": 0,
+   "std": null,
+   "min": null,
+   "max": null,
+   "zero_variance": null
+  },
+  "Governance": {
+   "score_mean": null,
+   "pass_rate": null,
+   "n_scored": 0,
+   "n_applicable": 0,
+   "std": null,
+   "min": null,
+   "max": null,
+   "zero_variance": null
+  }
+ },
+ "tool_calls": 23,
+ "failure_tags": [
+  "environment_error",
+  "incomplete_outcome"
+ ],
+ "provenance": {
+  "agent_model": "gpt-5.4-mini (api brain)",
+  "tool_backend": {
+   "fhir": "live_hapi",
+   "rxnorm": "frozen"
+  },
+  "tool_backend_model": null,
+  "judge_model": "none",
+  "judge_tier": "none",
+  "judge_independence": "n/a",
+  "judge_independence_policy": "fail_closed",
+  "judge_decoding": null,
+  "judges": {},
+  "uses_hidden_reference": false,
+  "scorer_validation_only": false,
+  "fidelity": {
+   "source_benchmark": "PhysicianBench",
+   "prompt_fidelity": "verbatim",
+   "protocol_fidelity": "canonicalized",
+   "environment_fidelity": "full",
+   "metric_definition": "native_plus_harness"
+  },
+  "medcta_config": null,
+  "capabilities": {
+   "fhir_appointment_create": {
+    "implemented": true,
+    "available": true,
+    "authorized": true,
+    "healthy": true
+   },
+   "fhir_communication_create_message": {
+    "implemented": true,
+    "available": true,
+    "authorized": true,
+    "healthy": true
+   },
+   "fhir_condition_search_problems": {
+    "implemented": true,
+    "available": true,
+    "authorized": true,
+    "healthy": true
+   },
+   "fhir_create": {
+    "implemented": true,
+    "available": false,
+    "authorized": true,
+    "healthy": true
+   },
+   "fhir_document_reference_search_clinical_notes": {
+    "implemented": true,
+    "available": true,
+    "authorized": true,
+    "healthy": true
+   },
+   "fhir_medication_request_create": {
+    "implemented": true,
+    "available": true,
+    "authorized": true,
+    "healthy": true
+   },
+   "fhir_medication_request_search_orders": {
+    "implemented": true,
+    "available": true,
+    "authorized": true,
+    "healthy": true
+   },
+   "fhir_observation_search_labs": {
+    "implemented": true,
+    "available": true,
+    "authorized": true,
+    "healthy": true
+   },
+   "fhir_observation_search_social_history": {
+    "implemented": true,
+    "available": true,
+    "authorized": true,
+    "healthy": true
+   },
+   "fhir_observation_search_vitals": {
+    "implemented": true,
+    "available": true,
+    "authorized": true,
+    "healthy": true
+   },
+   "fhir_patient_search_demographics": {
+    "implemented": true,
+    "available": true,
+    "authorized": true,
+    "healthy": true
+   },
+   "fhir_procedure_search_orders": {
+    "implemented": true,
+    "available": true,
+    "authorized": true,
+    "healthy": true
+   },
+   "fhir_read": {
+    "implemented": true,
+    "available": true,
+    "authorized": true,
+    "healthy": true
+   },
+   "fhir_search": {
+    "implemented": true,
+    "available": false,
+    "authorized": true,
+    "healthy": true
+   },
+   "fhir_service_request_create": {
+    "implemented": true,
+    "available": true,
+    "authorized": true,
+    "healthy": true
+   },
+   "fhir_service_request_search": {
+    "implemented": true,
+    "available": true,
+    "authorized": true,
+    "healthy": true
+   },
+   "get_lab_reference_range": {
+    "implemented": true,
+    "available": true,
+    "authorized": true,
+    "healthy": true
+   },
+   "write_file": {
+    "implemented": true,
+    "available": true,
+    "authorized": true,
+    "healthy": true
+   }
+  },
+  "prompt_provenance": {
+   "system_sources": [
+    "base_system_prompt",
+    "benchmark_policy"
+   ],
+   "user_sources": [
+    "goal",
+    "task_context",
+    "constraints"
+   ],
+   "segment_hashes": {
+    "goal": "51461cde9d8a",
+    "task_context": "3a63460d7fa1",
+    "constraints": "44136fa355b3"
+   },
+   "hidden_reference_exposed_to_agent": false
+  }
+ },
+ "schema_validation": {
+  "valid": true,
+  "errors": []
+ },
+ "qualification": [],
+ "canonical": {
+  "governance": {
+   "score": 1.0,
+   "reportable": true,
+   "critical": false,
+   "components": [
+    [
+     "subject_scope",
+     1.0,
+     true
+    ]
+   ],
+   "branch": "pb_medcta_subject_scope"
+  },
+  "governance_score": 1.0,
+  "dimension_scores": {
+   "Execution": 1.0,
+   "Tooling": 0.989,
+   "Context": 0.533,
+   "Lifecycle": 1.0,
+   "Observability": 0.916,
+   "Verification": 0.25,
+   "Governance": 1.0
+  },
+  "dimension_reportable": {
+   "Execution": true,
+   "Tooling": true,
+   "Context": true,
+   "Lifecycle": true,
+   "Observability": true,
+   "Verification": true,
+   "Governance": true
+  },
+  "source": "aggregate_report._experimental_evaluators (substrate dims + canonical governance veto)",
+  "governance_rule": "critical breach -> hard veto 0.0; else weighted_mean of reportable components"
+ }
+}
