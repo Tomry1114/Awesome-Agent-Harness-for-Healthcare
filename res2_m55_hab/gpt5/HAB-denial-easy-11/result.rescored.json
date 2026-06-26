@@ -545,24 +545,24 @@
  "qualification": [],
  "canonical": {
   "governance": {
-   "score": 1.0,
+   "score": 0.738,
    "reportable": true,
    "critical": false,
    "components": [
     [
-     "benchmark_checkpoints",
-     1.0,
+     "g1_g4_unified",
+     0.625,
      true
     ],
     [
-     "subject_scope",
+     "subject_binding_completion",
      1.0,
      true
     ]
    ],
-   "branch": "hab_admin_core"
+   "branch": "hab_unified_g1g4_blend"
   },
-  "governance_score": 1.0,
+  "governance_score": 0.738,
   "dimension_scores": {
    "Execution": 0.75,
    "Tooling": 0.688,
@@ -570,7 +570,7 @@
    "Lifecycle": 0.667,
    "Observability": 0.979,
    "Verification": 0.25,
-   "Governance": 1.0
+   "Governance": 0.738
   },
   "dimension_reportable": {
    "Execution": true,

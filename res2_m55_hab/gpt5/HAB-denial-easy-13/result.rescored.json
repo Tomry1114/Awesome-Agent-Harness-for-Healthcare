@@ -504,32 +504,32 @@
  "qualification": [],
  "canonical": {
   "governance": {
-   "score": 0.666,
+   "score": 0.738,
    "reportable": true,
    "critical": false,
    "components": [
     [
-     "benchmark_checkpoints",
-     0.333,
+     "g1_g4_unified",
+     0.625,
      true
     ],
     [
-     "subject_scope",
+     "subject_binding_completion",
      1.0,
      true
     ]
    ],
-   "branch": "hab_admin_core"
+   "branch": "hab_unified_g1g4_blend"
   },
-  "governance_score": 0.666,
+  "governance_score": 0.738,
   "dimension_scores": {
-   "Execution": 0.75,
-   "Tooling": 0.667,
-   "Context": 0.333,
+   "Execution": 1.0,
+   "Tooling": 0.938,
+   "Context": 0.583,
    "Lifecycle": 0.5,
    "Observability": 1.0,
    "Verification": 0.25,
-   "Governance": 0.666
+   "Governance": 0.738
   },
   "dimension_reportable": {
    "Execution": true,

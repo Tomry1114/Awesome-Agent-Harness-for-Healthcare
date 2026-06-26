@@ -1,5 +1,5 @@
 {
- "source": "/hpc2hdd/home/ce483/Medical_harness/res2_m54_pb/gpt5",
+ "source": "res2_m54_pb/gpt5",
  "bench": "PhysicianBench",
  "n_tasks": 5,
  "coverage_summary": {

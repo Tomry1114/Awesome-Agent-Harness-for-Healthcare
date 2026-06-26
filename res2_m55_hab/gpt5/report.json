@@ -33,25 +33,25 @@
  "tool_use_quality": null,
  "harness_dimensions": {
   "Execution": {
-   "score": 0.75,
-   "score_all_scored": 0.75,
+   "score": 0.95,
+   "score_all_scored": 0.95,
    "coverage": 1.0,
    "confidence": 1.0,
    "n_scored": 5,
    "n_reportable": 5,
-   "std": 0.0,
-   "informativeness": "saturated",
+   "std": 0.1,
+   "informativeness": "discriminating",
    "evidence_tier": "substrate_universal",
    "adapter_admission": "ok"
   },
   "Tooling": {
-   "score": 0.663,
-   "score_all_scored": 0.663,
+   "score": 0.877,
+   "score_all_scored": 0.877,
    "coverage": 1.0,
    "confidence": 1.0,
    "n_scored": 5,
    "n_reportable": 5,
-   "std": 0.017,
+   "std": 0.095,
    "informativeness": "discriminating",
    "evidence_tier": "substrate_universal",
    "adapter_admission": "ok"
@@ -105,14 +105,14 @@
    "adapter_admission": "ok"
   },
   "Governance": {
-   "score": 0.733,
-   "score_all_scored": 0.733,
+   "score": 1.0,
+   "score_all_scored": 1.0,
    "coverage": 1.0,
    "confidence": 1.0,
    "n_scored": 5,
    "n_reportable": 5,
-   "std": 0.134,
-   "informativeness": "discriminating",
+   "std": 0.0,
+   "informativeness": "saturated",
    "evidence_tier": "substrate_universal",
    "adapter_admission": "ok"
   }
@@ -242,8 +242,8 @@
   ]
  },
  "governance_consistency": {
-  "report_harness_governance": 0.733,
-  "canonical_per_task_file_mean": 0.733,
+  "report_harness_governance": 1.0,
+  "canonical_per_task_file_mean": 1.0,
   "report_equals_canonical_file": true,
   "n_reportable": 5,
   "n_critical_veto": 0,
@@ -266,11 +266,11 @@
     "informativeness": "discriminating"
    },
    "Execution": {
-    "mean": 0.75,
+    "mean": 0.95,
     "n": 5,
-    "std": 0.0,
-    "zero_variance": true,
-    "informativeness": "saturated",
+    "std": 0.1,
+    "zero_variance": false,
+    "informativeness": "discriminating",
     "tier": "experimental_state_machine"
    },
    "Lifecycle": {
@@ -297,11 +297,11 @@
   "source": "dim_execution/dim_lifecycle/dim_observability over substrate",
   "promotion_path": "experimental -> human_audited -> strict",
   "Execution_sm": {
-   "mean": 0.75,
+   "mean": 0.95,
    "n": 5,
-   "std": 0.0,
-   "zero_variance": true,
-   "informativeness": "saturated",
+   "std": 0.1,
+   "zero_variance": false,
+   "informativeness": "discriminating",
    "tier": "experimental_state_machine"
   },
   "Lifecycle_sm": {
@@ -347,9 +347,9 @@
     "tier": "experimental_substrate_verification"
    },
    "Tooling_xc": {
-    "mean": 0.663,
+    "mean": 0.877,
     "n": 5,
-    "std": 0.017,
+    "std": 0.095,
     "zero_variance": false,
     "informativeness": "discriminating",
     "tier": "experimental_substrate_tooling"
@@ -357,25 +357,25 @@
   },
   "harness_seven": {
    "Execution": {
-    "score": 0.75,
-    "score_all_scored": 0.75,
+    "score": 0.95,
+    "score_all_scored": 0.95,
     "coverage": 1.0,
     "confidence": 1.0,
     "n_scored": 5,
     "n_reportable": 5,
-    "std": 0.0,
-    "informativeness": "saturated",
+    "std": 0.1,
+    "informativeness": "discriminating",
     "evidence_tier": "substrate_universal",
     "adapter_admission": "ok"
    },
    "Tooling": {
-    "score": 0.663,
-    "score_all_scored": 0.663,
+    "score": 0.877,
+    "score_all_scored": 0.877,
     "coverage": 1.0,
     "confidence": 1.0,
     "n_scored": 5,
     "n_reportable": 5,
-    "std": 0.017,
+    "std": 0.095,
     "informativeness": "discriminating",
     "evidence_tier": "substrate_universal",
     "adapter_admission": "ok"
@@ -429,14 +429,14 @@
     "adapter_admission": "ok"
    },
    "Governance": {
-    "score": 0.733,
-    "score_all_scored": 0.733,
+    "score": 1.0,
+    "score_all_scored": 1.0,
     "coverage": 1.0,
     "confidence": 1.0,
     "n_scored": 5,
     "n_reportable": 5,
-    "std": 0.134,
-    "informativeness": "discriminating",
+    "std": 0.0,
+    "informativeness": "saturated",
     "evidence_tier": "substrate_universal",
     "adapter_admission": "ok"
    }
@@ -453,18 +453,18 @@
   "seven_source": "unified substrate evaluators (dim_execution/tooling/context/lifecycle/observability/verification + governance); checkpoint tags do NOT determine these",
   "_per_task_dims": {
    "Execution": {
-    "HAB-denial-easy-1": 0.75,
-    "HAB-denial-easy-10": 0.75,
+    "HAB-denial-easy-1": 1.0,
+    "HAB-denial-easy-10": 1.0,
     "HAB-denial-easy-11": 0.75,
-    "HAB-denial-easy-12": 0.75,
-    "HAB-denial-easy-13": 0.75
+    "HAB-denial-easy-12": 1.0,
+    "HAB-denial-easy-13": 1.0
    },
    "Tooling": {
-    "HAB-denial-easy-1": 0.662,
-    "HAB-denial-easy-10": 0.661,
+    "HAB-denial-easy-1": 0.926,
+    "HAB-denial-easy-10": 0.928,
     "HAB-denial-easy-11": 0.688,
-    "HAB-denial-easy-12": 0.635,
-    "HAB-denial-easy-13": 0.667
+    "HAB-denial-easy-12": 0.904,
+    "HAB-denial-easy-13": 0.938
    },
    "Context": {
     "HAB-denial-easy-1": 0.381,
@@ -495,11 +495,11 @@
     "HAB-denial-easy-13": 0.25
    },
    "Governance": {
-    "HAB-denial-easy-1": 0.666,
-    "HAB-denial-easy-10": 0.666,
+    "HAB-denial-easy-1": 1.0,
+    "HAB-denial-easy-10": 1.0,
     "HAB-denial-easy-11": 1.0,
-    "HAB-denial-easy-12": 0.666,
-    "HAB-denial-easy-13": 0.666
+    "HAB-denial-easy-12": 1.0,
+    "HAB-denial-easy-13": 1.0
    }
   },
   "_per_task_reportable": {
@@ -555,13 +555,13 @@
   },
   "_gov_canon": {
    "HAB-denial-easy-1": {
-    "score": 0.666,
+    "score": 1.0,
     "reportable": true,
     "critical": false,
     "components": [
      [
       "benchmark_checkpoints",
-      0.333,
+      1.0,
       true
      ],
      [
@@ -573,13 +573,13 @@
     "branch": "hab_admin_core"
    },
    "HAB-denial-easy-10": {
-    "score": 0.666,
+    "score": 1.0,
     "reportable": true,
     "critical": false,
     "components": [
      [
       "benchmark_checkpoints",
-      0.333,
+      1.0,
       true
      ],
      [
@@ -609,13 +609,13 @@
     "branch": "hab_admin_core"
    },
    "HAB-denial-easy-12": {
-    "score": 0.666,
+    "score": 1.0,
     "reportable": true,
     "critical": false,
     "components": [
      [
       "benchmark_checkpoints",
-      0.333,
+      1.0,
       true
      ],
      [
@@ -627,13 +627,13 @@
     "branch": "hab_admin_core"
    },
    "HAB-denial-easy-13": {
-    "score": 0.666,
+    "score": 1.0,
     "reportable": true,
     "critical": false,
     "components": [
      [
       "benchmark_checkpoints",
-      0.333,
+      1.0,
       true
      ],
      [

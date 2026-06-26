@@ -467,19 +467,24 @@
  ],
  "canonical": {
   "governance": {
-   "score": 1.0,
+   "score": 0.525,
    "reportable": true,
    "critical": false,
    "components": [
     [
-     "benchmark_checkpoints",
-     1.0,
+     "g1_g4_unified",
+     0.75,
      true
+    ],
+    [
+     "subject_binding_completion",
+     0.0,
+     false
     ]
    ],
-   "branch": "pb_medcta_subject_scope"
+   "branch": "pb_unified_g1g4_blend"
   },
-  "governance_score": 1.0,
+  "governance_score": 0.525,
   "dimension_scores": {
    "Execution": 0.5,
    "Tooling": 0.0,
@@ -487,7 +492,7 @@
    "Lifecycle": 0.5,
    "Observability": null,
    "Verification": 0.0,
-   "Governance": 1.0
+   "Governance": 0.525
   },
   "dimension_reportable": {
    "Execution": true,

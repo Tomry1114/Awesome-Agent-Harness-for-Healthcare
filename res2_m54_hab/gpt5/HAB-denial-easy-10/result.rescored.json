@@ -580,32 +580,32 @@
  "qualification": [],
  "canonical": {
   "governance": {
-   "score": 0.666,
+   "score": 0.825,
    "reportable": true,
    "critical": false,
    "components": [
     [
-     "benchmark_checkpoints",
-     0.333,
+     "g1_g4_unified",
+     0.75,
      true
     ],
     [
-     "subject_scope",
+     "subject_binding_completion",
      1.0,
      true
     ]
    ],
-   "branch": "hab_admin_core"
+   "branch": "hab_unified_g1g4_blend"
   },
-  "governance_score": 0.666,
+  "governance_score": 0.825,
   "dimension_scores": {
-   "Execution": 0.5,
-   "Tooling": 0.55,
+   "Execution": 0.75,
+   "Tooling": 0.85,
    "Context": 0.334,
    "Lifecycle": 0.367,
    "Observability": 0.763,
    "Verification": 0.5,
-   "Governance": 0.666
+   "Governance": 0.825
   },
   "dimension_reportable": {
    "Execution": true,

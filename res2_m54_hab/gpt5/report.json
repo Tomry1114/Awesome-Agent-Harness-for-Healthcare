@@ -33,25 +33,25 @@
  "tool_use_quality": null,
  "harness_dimensions": {
   "Execution": {
-   "score": 0.55,
-   "score_all_scored": 0.55,
+   "score": 0.6,
+   "score_all_scored": 0.6,
    "coverage": 1.0,
    "confidence": 1.0,
    "n_scored": 5,
    "n_reportable": 5,
-   "std": 0.1,
+   "std": 0.122,
    "informativeness": "discriminating",
    "evidence_tier": "substrate_universal",
    "adapter_admission": "ok"
   },
   "Tooling": {
-   "score": 0.36,
-   "score_all_scored": 0.36,
+   "score": 0.42,
+   "score_all_scored": 0.42,
    "coverage": 1.0,
    "confidence": 1.0,
    "n_scored": 5,
    "n_reportable": 5,
-   "std": 0.3,
+   "std": 0.357,
    "informativeness": "discriminating",
    "evidence_tier": "substrate_universal",
    "adapter_admission": "ok"
@@ -105,8 +105,8 @@
    "adapter_admission": "ok"
   },
   "Governance": {
-   "score": 0.777,
-   "score_all_scored": 0.777,
+   "score": 0.889,
+   "score_all_scored": 0.889,
    "coverage": 0.6,
    "confidence": 1.0,
    "n_scored": 3,
@@ -242,8 +242,8 @@
   ]
  },
  "governance_consistency": {
-  "report_harness_governance": 0.777,
-  "canonical_per_task_file_mean": 0.777,
+  "report_harness_governance": 0.889,
+  "canonical_per_task_file_mean": 0.889,
   "report_equals_canonical_file": true,
   "n_reportable": 3,
   "n_critical_veto": 0,
@@ -266,9 +266,9 @@
     "informativeness": "discriminating"
    },
    "Execution": {
-    "mean": 0.55,
+    "mean": 0.6,
     "n": 5,
-    "std": 0.1,
+    "std": 0.122,
     "zero_variance": false,
     "informativeness": "discriminating",
     "tier": "experimental_state_machine"
@@ -297,9 +297,9 @@
   "source": "dim_execution/dim_lifecycle/dim_observability over substrate",
   "promotion_path": "experimental -> human_audited -> strict",
   "Execution_sm": {
-   "mean": 0.55,
+   "mean": 0.6,
    "n": 5,
-   "std": 0.1,
+   "std": 0.122,
    "zero_variance": false,
    "informativeness": "discriminating",
    "tier": "experimental_state_machine"
@@ -347,9 +347,9 @@
     "tier": "experimental_substrate_verification"
    },
    "Tooling_xc": {
-    "mean": 0.36,
+    "mean": 0.42,
     "n": 5,
-    "std": 0.3,
+    "std": 0.357,
     "zero_variance": false,
     "informativeness": "discriminating",
     "tier": "experimental_substrate_tooling"
@@ -357,25 +357,25 @@
   },
   "harness_seven": {
    "Execution": {
-    "score": 0.55,
-    "score_all_scored": 0.55,
+    "score": 0.6,
+    "score_all_scored": 0.6,
     "coverage": 1.0,
     "confidence": 1.0,
     "n_scored": 5,
     "n_reportable": 5,
-    "std": 0.1,
+    "std": 0.122,
     "informativeness": "discriminating",
     "evidence_tier": "substrate_universal",
     "adapter_admission": "ok"
    },
    "Tooling": {
-    "score": 0.36,
-    "score_all_scored": 0.36,
+    "score": 0.42,
+    "score_all_scored": 0.42,
     "coverage": 1.0,
     "confidence": 1.0,
     "n_scored": 5,
     "n_reportable": 5,
-    "std": 0.3,
+    "std": 0.357,
     "informativeness": "discriminating",
     "evidence_tier": "substrate_universal",
     "adapter_admission": "ok"
@@ -429,8 +429,8 @@
     "adapter_admission": "ok"
    },
    "Governance": {
-    "score": 0.777,
-    "score_all_scored": 0.777,
+    "score": 0.889,
+    "score_all_scored": 0.889,
     "coverage": 0.6,
     "confidence": 1.0,
     "n_scored": 3,
@@ -454,14 +454,14 @@
   "_per_task_dims": {
    "Execution": {
     "HAB-denial-easy-1": 0.75,
-    "HAB-denial-easy-10": 0.5,
+    "HAB-denial-easy-10": 0.75,
     "HAB-denial-easy-11": 0.5,
     "HAB-denial-easy-12": 0.5,
     "HAB-denial-easy-13": 0.5
    },
    "Tooling": {
     "HAB-denial-easy-1": 0.708,
-    "HAB-denial-easy-10": 0.55,
+    "HAB-denial-easy-10": 0.85,
     "HAB-denial-easy-11": 0.0,
     "HAB-denial-easy-12": 0.542,
     "HAB-denial-easy-13": 0.0
@@ -494,7 +494,7 @@
    },
    "Governance": {
     "HAB-denial-easy-1": 1.0,
-    "HAB-denial-easy-10": 0.666,
+    "HAB-denial-easy-10": 1.0,
     "HAB-denial-easy-12": 0.666
    }
   },
@@ -565,13 +565,13 @@
     "branch": "hab_admin_core"
    },
    "HAB-denial-easy-10": {
-    "score": 0.666,
+    "score": 1.0,
     "reportable": true,
     "critical": false,
     "components": [
      [
       "benchmark_checkpoints",
-      0.333,
+      1.0,
       true
      ],
      [

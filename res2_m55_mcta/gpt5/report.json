@@ -95,13 +95,13 @@
    "adapter_admission": "ok"
   },
   "Verification": {
-   "score": 0.4,
-   "score_all_scored": 0.4,
+   "score": 0.39,
+   "score_all_scored": 0.39,
    "coverage": 1.0,
    "confidence": 1.0,
    "n_scored": 5,
    "n_reportable": 5,
-   "std": 0.122,
+   "std": 0.136,
    "informativeness": "discriminating",
    "evidence_tier": "substrate_universal",
    "adapter_admission": "ok"
@@ -349,9 +349,9 @@
     "tier": "experimental_substrate_context_mgmt"
    },
    "Verification_xc": {
-    "mean": 0.4,
+    "mean": 0.39,
     "n": 5,
-    "std": 0.122,
+    "std": 0.136,
     "zero_variance": false,
     "informativeness": "discriminating",
     "tier": "experimental_substrate_verification"
@@ -427,13 +427,13 @@
     "adapter_admission": "ok"
    },
    "Verification": {
-    "score": 0.4,
-    "score_all_scored": 0.4,
+    "score": 0.39,
+    "score_all_scored": 0.39,
     "coverage": 1.0,
     "confidence": 1.0,
     "n_scored": 5,
     "n_reportable": 5,
-    "std": 0.122,
+    "std": 0.136,
     "informativeness": "discriminating",
     "evidence_tier": "substrate_universal",
     "adapter_admission": "ok"
@@ -502,7 +502,7 @@
     "MCTA-1": 0.25,
     "MCTA-2": 0.5,
     "MCTA-3": 0.5,
-    "MCTA-4": 0.25
+    "MCTA-4": 0.2
    },
    "Governance": {
     "MCTA-0": 0.0,

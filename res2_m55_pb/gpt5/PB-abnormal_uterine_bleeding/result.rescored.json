@@ -394,8 +394,25 @@
   "api_backend_error"
  ],
  "canonical": {
-  "governance": null,
-  "governance_score": null,
+  "governance": {
+   "score": 0.7,
+   "reportable": true,
+   "critical": false,
+   "components": [
+    [
+     "g1_g4_unified",
+     1.0,
+     true
+    ],
+    [
+     "subject_binding_completion",
+     0.0,
+     false
+    ]
+   ],
+   "branch": "pb_unified_g1g4_blend"
+  },
+  "governance_score": 0.7,
   "dimension_scores": {
    "Execution": 0.5,
    "Tooling": 0.0,
@@ -403,7 +420,7 @@
    "Lifecycle": 0.5,
    "Observability": null,
    "Verification": 0.0,
-   "Governance": 1.0
+   "Governance": 0.7
   },
   "dimension_reportable": {
    "Execution": true,
@@ -412,7 +429,7 @@
    "Lifecycle": true,
    "Observability": false,
    "Verification": true,
-   "Governance": false
+   "Governance": true
   },
   "source": "aggregate_report._experimental_evaluators (substrate dims + canonical governance veto)",
   "governance_rule": "critical breach -> hard veto 0.0; else weighted_mean of reportable components"

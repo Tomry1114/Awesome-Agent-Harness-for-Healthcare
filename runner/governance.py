@@ -171,6 +171,60 @@ def _final_answer(trace):
     return " ".join(str(e.get("thought", "")) for e in trace if e.get("event_type") == "final_answer").strip()
 
 
+_API_ERR = re.compile(r"^\s*API_BRAIN_ERROR|TimeoutError|read operation timed out", re.I)
+
+
+def agent_final_output(trace, policy=None, bundle_dir=None, max_chars=4000):
+    """Return the agent's REAL submitted output for the G3/G4 judge -- benchmark-aware, because the
+    deliverable does NOT always live in the final_answer `thought`:
+      * PhysicianBench : the deliverable is a WORKSPACE document written via write_file. We read the
+        workspace file(s) under bundle_dir/workspace (and any write_file tool args content). The
+        final_answer is often only "Done" or an API timeout error string, so we PREFER the document.
+      * HealthAdminBench : the agent TYPES the triageNotes / disposition into the portal form. We collect
+        every `type` tool-call text (the submitted form content) PLUS the final_answer disposition summary.
+      * otherwise / fallback : the trace final_answer text (_final_answer).
+    Benchmark-agnostic shell: the per-benchmark extraction is keyed off policy['benchmark']; an unknown
+    benchmark just uses the generic final_answer. A leading API_BRAIN_ERROR/timeout final_answer is dropped
+    (it is the harness error, not the agent's content)."""
+    bench = (policy or {}).get("benchmark") if isinstance(policy, dict) else None
+    fa = _final_answer(trace)
+    fa_clean = "" if (fa and _API_ERR.search(fa)) else fa
+    parts = []
+    if bench == "PhysicianBench":
+        # workspace deliverable document(s)
+        if bundle_dir:
+            wsroot = os.path.join(bundle_dir, "workspace")
+            for root, _dirs, files in os.walk(wsroot):
+                for fn in sorted(files):
+                    try:
+                        with open(os.path.join(root, fn), "r", errors="ignore") as _f:
+                            parts.append("[deliverable %s]\n%s" % (fn, _f.read()))
+                    except Exception:
+                        pass
+        # write_file tool args content (in case the document was not persisted to disk)
+        for e in trace:
+            if e.get("event_type") == "tool_call" and str(e.get("tool", "")).startswith("write_file"):
+                a = e.get("args") or {}
+                c = a.get("content") if isinstance(a, dict) else None
+                if c:
+                    parts.append(str(c))
+        if fa_clean:
+            parts.append(fa_clean)
+    elif bench == "HealthAdminBench":
+        for e in trace:
+            if e.get("event_type") == "tool_call" and str(e.get("tool", "")) == "type":
+                a = e.get("args") or {}
+                t = a.get("text") if isinstance(a, dict) else None
+                if t and len(str(t)) > 3:
+                    parts.append("[submitted form text] %s" % t)
+        if fa_clean:
+            parts.append("[final disposition] %s" % fa_clean)
+    if not parts:
+        parts = [fa_clean or fa]      # generic fallback (keep error string only if nothing else exists)
+    out = "\n\n".join(p for p in parts if p).strip()
+    return out[:max_chars]
+
+
 def _used_tools(trace):
     return {e.get("tool") for e in trace if e.get("event_type") == "tool_call" and e.get("tool")}
 
@@ -694,7 +748,14 @@ _DISCLOSURE = re.compile(
 
 
 def governance(trace, policy=None, question="", hidden_reference=None, allowed_tools=None, use_judge=True,
-               provenance=None, dimension_policy=None, manifest=None):
+               provenance=None, dimension_policy=None, manifest=None, answer=None):
+    # `answer` OVERRIDE: by default the agent's final output is derived from the trace's final_answer
+    # event (_final_answer). For benchmarks whose real deliverable does NOT live in the final_answer
+    # `thought` (PhysicianBench writes a workspace document; HealthAdminBench types triageNotes into the
+    # portal form and the final_answer is only a one-line "Completed ..." summary, and some PB runs end on
+    # an API timeout so final_answer is an error string), the caller threads the ACTUAL submitted output in
+    # via `answer=` so the G3/G4 judge reasons over what the agent really produced -- two models with
+    # different deliverables on the same task then get different G3/G4. None -> derive from the trace.
     # `provenance` (4c): the run.py-recorded provenance block (or a dict carrying the named fields
     # hidden_reference_exposed_to_agent / prompt_sources / observation_sources). When supplied, G1 uses it
     # as the authoritative info-flow signal; otherwise G1 reads the delivery_record / agent_visible_text
@@ -708,7 +769,7 @@ def governance(trace, policy=None, question="", hidden_reference=None, allowed_t
     # absent, governance ENRICHES from the substrate plugin (_obligation_policy) so equivalence still works
     # if required_tool_groups is later threaded; an escalation is then justified only on manifest evidence.
     policy = _resolve_policy(policy)
-    answer = _final_answer(trace)
+    answer = _final_answer(trace) if answer is None else str(answer)
     dp = _obligation_policy(policy, dimension_policy)
     g1 = g1_information_access(answer, trace, policy, hidden_reference,
                               provenance=provenance, allowed_tools=allowed_tools)
