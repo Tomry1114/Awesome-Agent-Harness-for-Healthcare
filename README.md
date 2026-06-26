@@ -133,7 +133,7 @@ spec/                   # frozen JSON schemas: task / checkpoint / tool / trajec
 benchmark_dataprocess/  # per-benchmark converters, augmentations, validators, and unified outputs
   <Bench>/tasks_unified.jsonl   # the converted, scored benchmark assets
 benchmark_metric/       # action-level safety + efficiency + integrity-meta reporting panels
-docs/                   # STATUS.md (progress) · CHANGELOG.md (per-round changes) · ARCHITECTURE · CANONICAL_CONTRACT · task spec
+docs/                   # ARCHITECTURE · CANONICAL_CONTRACT · CAPABILITY_MATRIX · task spec · processing notes
 TASK_MANIFEST.json      # task universe + pinned upstream revisions + checksums
 ```
 
@@ -168,6 +168,6 @@ pinned in `TASK_MANIFEST.json` and the deployment notes in `docs/`.
 
 ## Status
 
-See `docs/STATUS.md` (progress) and `docs/CHANGELOG.md` (per-round changes). All scorer methods are
-wired; the three substrates are real (live HAPI FHIR · real Playwright portal · real VLM tool sandbox);
-the phased judge + pure-read report + provenance integrity are in place; conformance is 109/109.
+All scorer methods are wired; the three substrates are real (live HAPI FHIR · real Playwright portal ·
+real VLM tool sandbox); the phased judge + pure-read report + provenance integrity are in place;
+conformance is 109/109.

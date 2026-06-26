@@ -70,3 +70,8 @@ res3_*/
 *.err
 *.out
 *.stdout
+
+# Internal working docs — not for the public repo (kept on disk only)
+docs/CHANGELOG.md
+docs/STATUS.md
+/ALIGNMENT.md
