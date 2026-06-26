@@ -89,24 +89,6 @@ agent model and another serves the judge:
 `governance_contract.py` is the single source of truth for the governance blend / critical veto /
 `scoring_config`. The aggregate holds no scoring math — there is exactly one blend implementation.
 
-## Evidence tiers & honesty mechanisms
-
-- **`substrate_universal`** (deterministic: Execution / Tooling / Lifecycle / Observability) →
-  `formal_analysis_eligible` and enters formal stats **only when adapter admission is `ok`** (a
-  LOW_COVERAGE dimension is `strict_by_definition` but NOT formally admitted).
-- **`experimental_hybrid`** (judge-backed: Context / Verification / Governance) → reportable but
-  `formal_analysis_eligible=false`; never counted as strict.
-- **Outcome** = dataset-native task success via the single function `native_task_outcome()`
-  (PB/HAB: *all* Outcome-dimension checkpoints pass; MedCTA: mean GAcc≥0.5). It **never** reads
-  `r["success"]` (the harness all-checkpoints gate, reported separately as `harness_gate`). A task
-  with an unresolved/missing Outcome is excluded from the denominator → `native_evaluation_coverage`.
-- **`evaluation_status`** — `complete` / `partial` / `proxy_partial` / `proxy_only` / `not_evaluated`
-  / `error`, so a run is never silently counted as fully scored. Unparseable judge verdict →
-  `verifier_error`, never a silent pass.
-- **`_qualification`** downgrades only for `mock_env` / `replay_tool_backend` / `outcome_proxy` /
-  `uses_hidden_reference` / `scorer_validation_only` — not by which substrate ran. A real Playwright
-  GUI run and a real VLM tool run are first-class.
-
 ## Metrics — the 7 ETCLOVG dimensions, in two panels
 
 Every qualified run is scored on the same 7 dimensions in [0,1], grouped into two panels:
@@ -123,24 +105,6 @@ Every qualified run is scored on the same 7 dimensions in [0,1], grouped into tw
 | | **G**overnance | policy & safety compliance (patient scope, prechecks, no forbidden / unsafe actions) |
 
 > **Outcome** — the dataset-native task correctness — is a SEPARATE line, not one of the 7.
-
-## Provenance integrity — `current` means *verified*, not *unverified*
-
-Every rescored bundle records hashes so the report can prove it is consistent with the code AND the
-inputs that produced it. `aggregate_report` recomputes them live and emits **three orthogonal axes +
-an overall rollup**:
-
-| Axis | Verifies |
-|---|---|
-| `scoring_code_status` | `git rev-parse HEAD:runner` (scoring-code TREE hash) == recorded; uniform judge/prompt; clean worktree |
-| `task_asset_status` | `tasks_unified.jsonl` (the dimension/weight map `aggregate` re-reads) unchanged |
-| `source_bundle_status` | `result.json` / `trajectory.jsonl` / `task.json` / the rescored checkpoint set (incl status+score) / the judged **deliverable files** unchanged |
-| `overall_artifact_status` | `current` **only if all three are explicitly current** (absence of provenance = `incomplete_provenance`, never `current`) |
-
-The TREE hash (not full-repo HEAD) is deliberate: committing artifacts/docs advances HEAD but leaves
-`runner/` unchanged, so an artifact stays `current` — no self-reference loop. Tamper tests
-(editing a trajectory / tasks_unified / a deliverable / a rescored checkpoint) flip the matching axis
-to stale; `runner/test_conformance.py` (109 checks) guards all of this.
 
 ## Layout
 
