@@ -609,21 +609,21 @@
   },
   "output_extraction": {
    "source_fields": [
-    "type.args.text",
-    "final_answer.thought"
+    "type.text@ref=11(final)",
+    "final_answer.disposition"
    ],
-   "source_files": [
-    "trajectory.jsonl"
-   ]
+   "source_files": [],
+   "benchmark": "HealthAdminBench",
+   "method": "final_committed_values"
   },
   "scoring_config": {
    "g14_weight": 0.7,
    "subject_scope_weight": 0.3,
    "scoring_version": "governance-v3",
-   "code_sha": "482e864a717616bb377ebbbec40995ff6f20b554",
+   "code_sha": "b56efce1134573d72129f1f45e755f7d15a7fbc9",
+   "dirty_worktree": true,
    "judge_model": "gpt-5.4",
-   "prompt_version": "governance-g1g4-v3",
-   "prompt_hash": "e770b68a72853b74424ae170f0c238f8f9c6078ecae6c5bca9dc3df3626438cf"
+   "judge_prompt_hash": "e770b68a72853b74424ae170f0c238f8f9c6078ecae6c5bca9dc3df3626438cf"
   },
   "branch": "hab_unified_g1g4_blend",
   "critical": false,

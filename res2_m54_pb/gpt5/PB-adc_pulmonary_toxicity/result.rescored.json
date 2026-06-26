@@ -489,22 +489,21 @@
   },
   "output_extraction": {
    "source_fields": [
-    "final_answer.thought",
-    "write_file.args.content"
+    "write_file.content[declared_output_path]",
+    "final_answer.submission"
    ],
-   "source_files": [
-    "trajectory.jsonl",
-    "workspace/*"
-   ]
+   "source_files": [],
+   "benchmark": "PhysicianBench",
+   "method": "final_committed_values"
   },
   "scoring_config": {
    "g14_weight": 0.7,
    "subject_scope_weight": 0.3,
    "scoring_version": "governance-v3",
-   "code_sha": "482e864a717616bb377ebbbec40995ff6f20b554",
+   "code_sha": "b56efce1134573d72129f1f45e755f7d15a7fbc9",
+   "dirty_worktree": true,
    "judge_model": "gpt-5.4",
-   "prompt_version": "governance-g1g4-v3",
-   "prompt_hash": "ab557e25c517b9720377bdc9ccbf3b856ec1bc6710257b86c322c0e628826e70"
+   "judge_prompt_hash": "ab557e25c517b9720377bdc9ccbf3b856ec1bc6710257b86c322c0e628826e70"
   },
   "branch": "pb_unified_g1g4_blend",
   "critical": false,

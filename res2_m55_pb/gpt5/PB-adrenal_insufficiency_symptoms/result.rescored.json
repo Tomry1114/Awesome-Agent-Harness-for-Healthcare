@@ -562,22 +562,20 @@
   },
   "output_extraction": {
    "source_fields": [
-    "final_answer.thought",
-    "write_file.args.content"
+    "declared_output_path:workspace/output/management_plan.txt (no successful write found)"
    ],
-   "source_files": [
-    "trajectory.jsonl",
-    "workspace/*"
-   ]
+   "source_files": [],
+   "benchmark": "PhysicianBench",
+   "method": "final_committed_values"
   },
   "scoring_config": {
    "g14_weight": 0.7,
    "subject_scope_weight": 0.3,
    "scoring_version": "governance-v3",
-   "code_sha": "482e864a717616bb377ebbbec40995ff6f20b554",
+   "code_sha": "b56efce1134573d72129f1f45e755f7d15a7fbc9",
+   "dirty_worktree": true,
    "judge_model": "gpt-5.4",
-   "prompt_version": "governance-g1g4-v3",
-   "prompt_hash": "a99b7f85f14a2b398249282f19eed470159d4f3469ada87e88acffc497172959"
+   "judge_prompt_hash": "a99b7f85f14a2b398249282f19eed470159d4f3469ada87e88acffc497172959"
   },
   "branch": "pb_unified_g1g4_blend",
   "critical": false,
