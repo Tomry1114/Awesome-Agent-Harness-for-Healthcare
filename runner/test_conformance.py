@@ -2041,12 +2041,14 @@ def test_paired_common_vs_all_task_differ_when_reportability_differs():
     B_dir = mk("B", {"t1": (1.0, True), "t2": (1.0, False), "t3": (1.0, True)})
     cmp = _A.compare_models(A_dir, B_dir, "PhysicianBench", metric="governance")
     assert cmp["paired_common_task_ids"] == ["t1"], cmp["paired_common_task_ids"]
-    # paired (only t1): A=1.0, B=1.0  -- apples-to-apples
-    assert cmp["paired_common_task_score"] == {"A": 1.0, "B": 1.0}, cmp["paired_common_task_score"]
-    # all-task: A = mean(1.0,0.0)=0.5 ; B = mean(1.0,1.0)=1.0  -- each over its OWN reportable subset
+    # NEW CONTRACT: this minimal fixture records no scoring-contract provenance -> comparison is descriptive-
+    # only and the paired score is VOID (never reported under an invalid contract). Reportability-driven
+    # divergence is still visible on all_task_score.
+    assert cmp["comparison_status"] != "compatible", cmp["comparison_status"]
+    assert cmp["all_task_score_descriptive_only"] is True, cmp
+    assert cmp["paired_common_task_score"] == {"A": None, "B": None}, cmp["paired_common_task_score"]
     assert cmp["all_task_score"] == {"A": 0.5, "B": 1.0}, cmp["all_task_score"]
-    # they DIVERGE for model A (0.5 all vs 1.0 paired) precisely because reportability differs.
-    assert cmp["paired_common_task_score"]["A"] != cmp["all_task_score"]["A"], ("paired vs all must differ", cmp)
+    assert cmp["all_task_score"]["A"] != cmp["all_task_score"]["B"], ("reportability-driven divergence", cmp)
 
 
 def test_governance_unified_g1g4_blend_and_subject_scope_veto():
@@ -2509,7 +2511,8 @@ def test_item_d_head_neq_code_sha_yields_stale_code_version():
     stale = {"PB-a": {"governance": _gov_block(1.0, code_sha="0" * 40), "bench": "PhysicianBench", "success": True}}
     rep_stale = _A.build(_mk_pipeline_bundle(root_stale, "gpt5", stale), "PhysicianBench")
     gcs = rep_stale["governance_consistency"]
-    assert gcs["artifact_status"] == "stale_code_version", ("foreign code_sha -> stale", gcs["artifact_status"])
+    assert gcs["scoring_code_status"] == "stale_code_version", ("foreign code_sha -> stale", gcs["scoring_code_status"])
+    assert gcs["artifact_status"] == "stale_code_version", ("stale wins the overall rollup", gcs["artifact_status"])
     assert gcs["code_sha_matches_head"] is False and gcs["metadata_agrees"] is False, gcs
     assert gcs["disk_equals_report"] is False, ("stale artifact cannot be disk-consistent-green", gcs)
     # CURRENT: same bundle stamped with the live HEAD -> current + consistent
@@ -2517,7 +2520,8 @@ def test_item_d_head_neq_code_sha_yields_stale_code_version():
     fresh = {"PB-a": {"governance": _gov_block(1.0, code_sha=head), "bench": "PhysicianBench", "success": True}}
     rep_ok = _A.build(_mk_pipeline_bundle(root_ok, "gpt5", fresh), "PhysicianBench")
     gco = rep_ok["governance_consistency"]
-    assert gco["artifact_status"] == "current", ("HEAD-stamped -> current", gco["artifact_status"])
+    assert gco["scoring_code_status"] == "current", ("HEAD-stamped -> scoring_code current", gco["scoring_code_status"])
+    assert gco["overall_artifact_status"] == "incomplete_provenance", ("minimal fixture has no source/task provenance -> unverified", gco["overall_artifact_status"])
     assert gco["code_sha_matches_head"] is True and gco["disk_equals_report"] is True, gco
 
 

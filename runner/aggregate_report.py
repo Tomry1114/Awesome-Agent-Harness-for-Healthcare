@@ -140,12 +140,24 @@ def native_task_outcome(result, bench):
     PB / HAB: ALL of the task's Outcome-dimension checkpoints passed. MedCTA: mean GAcc >= 0.5."""
     cps = result.get("checkpoints") or []
     if bench == "MedCTA":
-        gs = [c.get("score") for c in cps
-              if c.get("evaluator_kind") == "gacc_judge" and isinstance(c.get("score"), (int, float))]
-        return None if not gs else ((sum(gs) / len(gs)) >= 0.5)
-    ocps = [c for c in cps
-            if c.get("dimension") == "Outcome" and c.get("checkpoint_status") in ("passed", "failed")]
-    return None if not ocps else all(c.get("checkpoint_status") == "passed" for c in ocps)
+        gacc = [c for c in cps if c.get("evaluator_kind") == "gacc_judge"]
+        if not gacc:
+            return None                                   # no GAcc signal at all -> unresolved
+        gs = [c.get("score") for c in gacc if isinstance(c.get("score"), (int, float))]
+        # any declared GAcc checkpoint that produced NO numeric score -> incomplete evaluation -> unresolved.
+        if len(gs) != len(gacc):
+            return None
+        return (sum(gs) / len(gs)) >= 0.5
+    # ALL declared Outcome-dimension checkpoints (any status), NOT pre-filtered to terminal ones.
+    ocps = [c for c in cps if c.get("dimension") == "Outcome"]
+    if not ocps:
+        return None
+    # P0-B: an Outcome checkpoint that did NOT reach a terminal verdict (error / skipped / missing status)
+    # makes native success UNRESOLVED -> None. Never silently drop a non-terminal checkpoint and all() over
+    # the survivors (that would let a partially-errored task read as a clean pass and inflate Outcome).
+    if any(c.get("checkpoint_status") not in ("passed", "failed") for c in ocps):
+        return None
+    return all(c.get("checkpoint_status") == "passed" for c in ocps)
 
 
 def _native_metrics(bench, results):
@@ -599,7 +611,13 @@ def _experimental_evaluators(agent_dir, bench):
             # task item 2: tier the EVALUATOR declares (not a blanket substrate_universal).
             "evidence_tier": "experimental_hybrid" if _hybrid else "substrate_universal",
             "deterministic": not _hybrid,
-            "formal_analysis_eligible": (not _hybrid) and bool(_vr),
+            # strict-by-DEFINITION: deterministic substrate evidence with a reportable value. This is the
+            # dimension's TYPE, independent of how much of THIS run it covered.
+            "strict_by_definition": (not _hybrid) and bool(_vr),
+            # FORMALLY ADMITTED: strict-by-definition AND the adapter admitted coverage (_adm == "ok"). A
+            # dimension flagged LOW_COVERAGE by adapter admission must NOT enter the formal statistical set
+            # even though it is strict by type -- a 0.6-coverage Observability is not a formal claim.
+            "formal_analysis_eligible": (not _hybrid) and bool(_vr) and (_adm == "ok"),
             "adapter_admission": _adm}
         if _hybrid:                                            # surface judge metadata for judge-backed dims
             formal[_dim]["judge_model"] = _JUDGE_META.get(_dim, {}).get("judge_model")
@@ -657,11 +675,18 @@ def _outcome_metric(results, bench=None):
     _succ_tasks = [r for (r, o) in _signals if o is not None]
     _native_ok = sum(1 for (_, o) in _signals if o)
     _native_n = len(_succ_tasks)
+    # evaluation coverage: how much of the task universe actually produced a resolved native outcome. Tasks
+    # with NO native signal OR an unresolved (error/skipped/incomplete) Outcome are excluded from the rate's
+    # denominator -- coverage surfaces exactly how many that is, so a high rate over a thin slice is visible.
+    _eval_cov = round(_native_n / n, 3) if n else None
     _native_block = {
         "outcome_task_success_rate": round(_native_ok / _native_n, 3) if _native_n else None,
         "pass_at_1": round(_native_ok / _native_n, 3) if _native_n else None,
         "native_success_passed": _native_ok, "native_success_evaluated": _native_n,
-        "note": "from NATIVE task success only (PB/HAB success flag, MedCTA GAcc>=0.5); NOT harness checkpoints"}
+        "native_task_universe": n, "native_evaluation_coverage": _eval_cov,
+        "note": ("PB/HAB: ALL declared reportable Outcome-dimension checkpoints passed (terminal); "
+                 "MedCTA: mean GAcc>=0.5. NOT r['success'] (harness gate). Tasks with an unresolved/missing "
+                 "Outcome are excluded from the denominator -> see native_evaluation_coverage.")}
     # harness gate success kept SEPARATE (never merged into Outcome).
     _harness_ok = sum(1 for r in results if r.get("success"))
     _harness_block = {"harness_gate_success": round(_harness_ok / n, 3) if n else None,
@@ -671,7 +696,9 @@ def _outcome_metric(results, bench=None):
     # per-Outcome-checkpoint pass rate and NOT the harness gate. The checkpoint pass rate is a DIAGNOSTIC.
     if _native_n:
         return {"score": round(_native_ok / _native_n, 3), "metric": "dataset_native_task_accuracy",
-                "n_tasks": _native_n, "native_task_success": _native_block, "harness_gate": _harness_block,
+                "n_tasks": _native_n, "native_task_universe": n,
+                "native_evaluation_coverage": round(_native_n / n, 3) if n else None,
+                "native_task_success": _native_block, "harness_gate": _harness_block,
                 "outcome_diagnostics": {"checkpoint_pass_rate": round(npass / ntot, 3) if ntot else None,
                                         "n_outcome_checkpoints": ntot,
                                         "gacc_mean": round(sum(gacc) / len(gacc), 3) if gacc else None}}
@@ -699,7 +726,7 @@ def _read_disk_governance(agent_dir):
             out[tid] = {"score": None, "reportable": False, "critical": None, "branch": None,
                         "scoring_version": None, "code_sha": None, "scoring_code_tree_hash": None,
                         "dirty_worktree": None, "judge_model": None, "prompt_version": None,
-                        "g14_weight": None, "evaluation_error": err}
+                        "tasks_unified_sha256": None, "g14_weight": None, "evaluation_error": err}
             continue
         _sc = blk.get("scoring_config") or {}
         _j = blk.get("judge") or {}
@@ -709,6 +736,7 @@ def _read_disk_governance(agent_dir):
                     "scoring_code_tree_hash": _sc.get("scoring_code_tree_hash"),
                     "dirty_worktree": _sc.get("dirty_worktree"),
                     "judge_model": _j.get("model"), "prompt_version": _j.get("prompt_version"),
+                    "tasks_unified_sha256": _sc.get("tasks_unified_sha256"),
                     "g14_weight": _sc.get("g14_weight"), "evaluation_error": blk.get("evaluation_error")}
     return out
 
@@ -754,6 +782,11 @@ def build(agent_dir, bench):
     _seven = (_exp_panel.get("harness_seven") if isinstance(_exp_panel, dict) else None) or {}
     _strict_dims = sorted(m for m in MODULES
                           if isinstance(_seven.get(m), dict) and _seven[m].get("formal_analysis_eligible") is True)
+    # strict-by-DEFINITION (deterministic substrate type) vs FORMALLY ADMITTED (also passed adapter coverage
+    # admission). A dim can be strict-by-definition yet NOT formally admitted (e.g. LOW_COVERAGE Observability).
+    _strict_def_dims = sorted(m for m in MODULES
+                              if isinstance(_seven.get(m), dict) and _seven[m].get("strict_by_definition") is True)
+    _low_cov_strict = sorted(set(_strict_def_dims) - set(_strict_dims))
     _numeric_dims = sorted(m for m in MODULES
                            if isinstance(_seven.get(m), dict) and (_seven[m].get("n_with_evidence") or 0) > 0)
     _reportable_dims = sorted(m for m in MODULES
@@ -762,9 +795,14 @@ def build(agent_dir, bench):
         # numeric breadth: how many of the 7 dims produced a value at all (NOT a strictness claim).
         "numeric_coverage": "%d/7" % len(_numeric_dims), "numeric_dimensions": _numeric_dims,
         "reportable_coverage": "%d/7" % len(_reportable_dims), "reportable_dimensions": _reportable_dims,
-        # formal/strict breadth: ONLY dims with formal_analysis_eligible=True in harness_seven.
+        # formal/strict breadth: ONLY dims with formal_analysis_eligible=True (strict TYPE + adapter admitted).
         "formal_coverage": "%d/7" % len(_strict_dims), "strict_dimensions": _strict_dims,
-        # dimension_breadth kept as a back-compat alias of the FORMAL count (so '/7 strict' is now honest).
+        "formally_admitted_dimensions": _strict_dims,
+        # strict-by-definition (deterministic substrate type) -- a SUPERSET of formally admitted.
+        "strict_definition_dimensions": _strict_def_dims,
+        # strict-by-type but adapter LOW_COVERAGE -> EXCLUDED from formal stats (the口径 fix).
+        "strict_but_low_coverage_excluded": _low_cov_strict,
+        # dimension_breadth kept as a back-compat alias of the FORMAL (admitted) count.
         "dimension_breadth": "%d/7 strict" % len(_strict_dims),
         "proxy_filled": "%d/7" % len(_proxy_filled), "proxy_dimensions": _proxy_filled,
         "task_eval_coverage": _task_cov,
@@ -845,58 +883,92 @@ def _current_tasks_unified_sha(bench):
     return _sha_file(os.path.join(_ROOT, bench, "tasks_unified.jsonl"))
 
 
+REQUIRED_SOURCE_HASH_KEYS = ("raw_result_sha256", "trajectory_sha256", "task_json_sha256",
+                             "checkpoint_set_sha256")
+
+
 def _source_provenance_audit(agent_dir, bench):
-    """P0/P1 SOURCE PROVENANCE. The rescored Governance is a partial overlay on a bundle whose raw inputs
-    (result.json / trajectory.jsonl / task.json / checkpoint set) could be edited AFTER rescoring without
-    re-running the judge -- leaving a stale Governance that the runner-tree guard cannot detect. Each
-    rescored block records Governance.input_provenance{...sha256}; here we RECOMPUTE those hashes from the
-    LIVE bundle files and compare. Also compares each block's recorded tasks_unified_sha256 to the live file.
-    Returns a per-task match map + bundle/task-asset rollup statuses. PURE READ, no model call."""
+    """P0/P1 SOURCE PROVENANCE. The rescored Governance is an overlay on a bundle whose raw inputs
+    (result.json / trajectory.jsonl / task.json / the rescored CHECKPOINT SET / deliverable files) could be
+    edited AFTER rescoring -- leaving a stale artifact the runner-tree guard cannot detect. Each block records
+    Governance.input_provenance{...sha256}; here we RECOMPUTE from the LIVE files and compare. PURE READ.
+
+    COMPLETENESS IS REQUIRED (P1): 'current' demands EVERY task (n_expected) carry a COMPLETE input_provenance
+    (all REQUIRED_SOURCE_HASH_KEYS) that MATCHES. A task with no / partial provenance makes the bundle
+    incomplete_input_provenance (NOT current) -- absence is 'unverified', never 'verified'. Same for the
+    per-task tasks_unified_sha256."""
+    import governance_contract as _gc                      # shared checkpoint_set_sha (one formula)
     live_tu = _current_tasks_unified_sha(bench)
+    task_rps = sorted(glob.glob(os.path.join(agent_dir, "*", "result.json")))
+    n_expected = len(task_rps)
     per_task = {}
-    n_with_ip = n_src_match = n_tu_match = n_tu_recorded = 0
-    for rp in sorted(glob.glob(os.path.join(agent_dir, "*", "result.json"))):
+    n_with_ip = n_complete_ip = n_src_match = 0
+    n_tu_recorded = n_tu_match = 0
+    for rp in task_rps:
         tid = os.path.basename(os.path.dirname(rp))
         bdir = os.path.dirname(rp)
         blk, _ = _read_dim_block(bdir, "Governance")
         ip = (blk or {}).get("input_provenance") or {}
         tu_recorded = ((blk or {}).get("scoring_config") or {}).get("tasks_unified_sha256")
         if not ip:
-            per_task[tid] = {"has_input_provenance": False, "source_match": None, "tasks_unified_match": None}
+            per_task[tid] = {"has_input_provenance": False, "complete": False,
+                             "source_match": None, "tasks_unified_match": None}
             continue
         n_with_ip += 1
+        missing_keys = [k for k in REQUIRED_SOURCE_HASH_KEYS if not ip.get(k)]
+        complete = (len(missing_keys) == 0)
+        n_complete_ip += 1 if complete else 0
         live = {
             "raw_result_sha256": _sha_file(os.path.join(bdir, "result.json")),
             "trajectory_sha256": _sha_file(os.path.join(bdir, "trajectory.jsonl")),
             "task_json_sha256": _sha_file(os.path.join(bdir, "task.json")),
         }
-        # compare only the file-backed keys present in BOTH recorded ip and live recompute.
+        # checkpoint set recomputed from the RESCORED bundle (what the report actually reads via _bundle_path),
+        # INCLUDING status/score -> catches edits to result.rescored.json checkpoints, not just tasks_unified.
+        try:
+            _rb = json.load(open(_bundle_path(rp)))
+        except Exception:
+            _rb = {}
+        live["checkpoint_set_sha256"] = _gc.checkpoint_set_sha(_rb.get("checkpoints"))
         mism = [k for k, v in live.items() if k in ip and ip.get(k) != v]
-        src_ok = (len(mism) == 0)
+        # deliverable files the judge read (recorded paths -> re-hash the live files).
+        deliv = ip.get("deliverable_files_sha256") or {}
+        deliv_mism = [p for p, h in deliv.items() if _sha_file(os.path.join(bdir, p)) != h]
+        src_ok = complete and (len(mism) == 0) and (len(deliv_mism) == 0)
         n_src_match += 1 if src_ok else 0
         tu_ok = None
         if tu_recorded is not None:
             n_tu_recorded += 1
             tu_ok = (tu_recorded == live_tu)
             n_tu_match += 1 if tu_ok else 0
-        per_task[tid] = {"has_input_provenance": True, "source_match": src_ok,
-                         "source_mismatch_keys": mism, "tasks_unified_match": tu_ok}
-    # rollups: source_bundle_status / task_asset_status. "no_provenance" when nothing recorded it yet.
-    if n_with_ip == 0:
+        per_task[tid] = {"has_input_provenance": True, "complete": complete, "missing_keys": missing_keys,
+                         "source_match": src_ok, "source_mismatch_keys": mism,
+                         "deliverable_mismatch": deliv_mism, "tasks_unified_match": tu_ok}
+    # ---- rollups REQUIRING FULL COVERAGE over n_expected (absence != verified). ----
+    if n_expected == 0:
+        source_status = "no_rescored_artifact"
+    elif n_with_ip == 0:
         source_status = "no_input_provenance"
-    elif n_src_match == n_with_ip:
+    elif n_with_ip < n_expected or n_complete_ip < n_with_ip:
+        source_status = "incomplete_input_provenance"      # some task missing / partial provenance
+    elif n_src_match == n_expected:
         source_status = "current"
     else:
         source_status = "stale_input_artifact"
-    if n_tu_recorded == 0:
+    if n_expected == 0:
+        task_asset_status = "no_rescored_artifact"
+    elif n_tu_recorded == 0:
         task_asset_status = "no_task_asset_provenance"
-    elif n_tu_match == n_tu_recorded:
+    elif n_tu_recorded < n_expected:
+        task_asset_status = "incomplete_task_asset_provenance"
+    elif n_tu_match == n_expected:
         task_asset_status = "current"
     else:
         task_asset_status = "stale_task_asset"
     return {"per_task": per_task, "live_tasks_unified_sha256": live_tu,
             "source_bundle_status": source_status, "task_asset_status": task_asset_status,
-            "n_with_input_provenance": n_with_ip, "n_source_match": n_src_match,
+            "n_expected_tasks": n_expected, "n_with_input_provenance": n_with_ip,
+            "n_complete_input_provenance": n_complete_ip, "n_source_match": n_src_match,
             "n_tasks_unified_recorded": n_tu_recorded, "n_tasks_unified_match": n_tu_match}
 
 
@@ -982,16 +1054,20 @@ def _governance_consistency(exp_panel, disk_gov, hd, source_prov=None):
         scoring_code_status = "current"
     task_asset_status = _sp.get("task_asset_status", "no_task_asset_provenance")
     source_bundle_status = _sp.get("source_bundle_status", "no_input_provenance")
-    # overall: current ONLY if every axis is current OR cleanly-absent (no_* = nothing to contradict yet).
-    def _ok(s):  return s in ("current", "no_rescored_artifact", "no_task_asset_provenance", "no_input_provenance")
-    if scoring_code_status == "no_rescored_artifact":
+    # overall (P1 fix): 'current' demands ALL THREE axes be EXPLICITLY current. Absence of provenance is
+    # 'unverified', NOT 'verified' -> it can never yield current. Precedence: nothing rescored -> that; any
+    # stale_* axis -> stale wins (surface which); all three current -> current; otherwise (some no_*/incomplete
+    # axis, none stale) -> incomplete_provenance (unverified, distinctly NOT current).
+    _axes = [scoring_code_status, task_asset_status, source_bundle_status]
+    _stale = [a for a in _axes if a.startswith("stale")]
+    if scoring_code_status == "no_rescored_artifact" and all(a in ("no_rescored_artifact",) for a in _axes):
         overall_artifact_status = "no_rescored_artifact"
-    elif scoring_code_status == "current" and _ok(task_asset_status) and _ok(source_bundle_status):
+    elif _stale:
+        overall_artifact_status = _stale[0]
+    elif all(a == "current" for a in _axes):
         overall_artifact_status = "current"
     else:
-        overall_artifact_status = (scoring_code_status if scoring_code_status != "current"
-                                   else (task_asset_status if task_asset_status not in (None, "current",
-                                         "no_task_asset_provenance") else source_bundle_status))
+        overall_artifact_status = "incomplete_provenance"
     # back-compat: artifact_status now mirrors the OVERALL rollup (was scoring-code only).
     _artifact_status = overall_artifact_status
     # metadata_agrees: reportable branch/version/weight uniform + tree uniform + current code + clean +
@@ -1128,18 +1204,33 @@ def compare_models(agent_dir_a, agent_dir_b, bench, label_a=None, label_b=None, 
         ga, gb = _read_disk_governance(agent_dir_a), _read_disk_governance(agent_dir_b)
         def _uval(g, f):
             return sorted({g[t].get(f) for t in g if g[t].get(f) is not None})
-        for f in ("scoring_version", "scoring_code_tree_hash", "g14_weight", "judge_model", "prompt_version"):
+        def _has_none(g, f):                               # a REPORTABLE task missing this contract field
+            return any(g[t].get("reportable") and g[t].get(f) is None for t in g)
+        # contract fields now INCLUDE tasks_unified_sha256 (the task weights/dimension mapping aggregate uses).
+        for f in ("scoring_version", "scoring_code_tree_hash", "g14_weight", "judge_model", "prompt_version",
+                  "tasks_unified_sha256"):
             va, vb = _uval(ga, f), _uval(gb, f)
-            if len(va) > 1 or len(vb) > 1 or va != vb:
+            if len(va) > 1 or len(vb) > 1 or va != vb or _has_none(ga, f) or _has_none(gb, f):
                 comp_status = "incompatible_scoring_contract"
                 comp_detail[f] = {la: va, lb: vb}
-    if comp_status != "compatible":
-        pa = pb = None
+        # BOTH bundles must be source/asset CURRENT -- a paired number over a stale/incomplete artifact is void.
+        sa, sb = _source_provenance_audit(agent_dir_a, bench), _source_provenance_audit(agent_dir_b, bench)
+        for nm, aud in ((la, sa), (lb, sb)):
+            if aud.get("source_bundle_status") != "current" or aud.get("task_asset_status") != "current":
+                if comp_status == "compatible":
+                    comp_status = "stale_or_incomplete_artifact"
+                comp_detail.setdefault("artifact_status", {})[nm] = {
+                    "source_bundle_status": aud.get("source_bundle_status"),
+                    "task_asset_status": aud.get("task_asset_status")}
+    _descriptive_only = (comp_status != "compatible")
+    if _descriptive_only:
+        pa = pb = None                                     # paired score is VOID under an invalid contract
     return {
         "bench": bench, "metric": metric,
         "models": [la, lb],
         "n_tasks": n_tasks,
         "comparison_status": comp_status, "contract_incompatibilities": comp_detail,
+        "all_task_score_descriptive_only": _descriptive_only,
         "paired_common_task_ids": common, "n_paired_common": len(common),
         "paired_common_task_score": {la: pa, lb: pb},
         "all_task_score": {la: _mean(A), lb: _mean(B)},

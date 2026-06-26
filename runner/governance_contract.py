@@ -176,6 +176,19 @@ def _scoring_tree_hash():
         return "unknown"
 
 
+def checkpoint_set_sha(checkpoints):
+    """Canonical content hash of the checkpoint set ACTUALLY aggregated: per checkpoint
+    (id, dimension, subdimension, weight, checkpoint_status, score, score_eligible). ONE formula, imported by
+    BOTH the rescore writer and the aggregate live-audit so they cannot drift. Unlike a tasks_unified hash
+    (which only covers the re-mapped dimension/weight tags), this includes STATUS and SCORE, so an edit to
+    result.rescored.json's checkpoints -- which the report reads preferentially -- is caught."""
+    import hashlib as _h, json as _j
+    payload = [[c.get("id"), c.get("dimension"), c.get("subdimension"), c.get("weight"),
+                c.get("checkpoint_status"), c.get("score"), c.get("score_eligible")]
+               for c in (checkpoints or [])]
+    return _h.sha256(_j.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
+
+
 def scoring_config(judge_model, prompt_hash):
     """The audit stamp persisted into every Governance block. scoring_code_tree_hash=git rev-parse HEAD:runner
     is the provenance GUARD key (invariant under artifact-only commits); code_sha=git HEAD is kept for human

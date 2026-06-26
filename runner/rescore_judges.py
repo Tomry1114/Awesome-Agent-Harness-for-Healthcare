@@ -75,19 +75,29 @@ def _guess_bench(agent_dir):
     return "Unknown"
 
 
+def normalize_model_id(s):
+    """ONE model-id normalizer for agent / tool-backend / judge so independence compares like-for-like.
+    Strips a trailing ' (api brain)'-style role suffix AND a 'api:gateway:'-style transport prefix:
+      'gpt-5.5 (api brain)'  -> 'gpt-5.5'
+      'api:gateway:gpt-5.5'  -> 'gpt-5.5'
+      'gpt-5.4'              -> 'gpt-5.4'
+    Previously agent used split(' (')[0], tool used split(':')[-1], and judge was un-normalized -- so a judge
+    'api:gateway:gpt-5.4' would have silently mismatched a tool 'gpt-5.4'."""
+    s = str(s or "").split(" (")[0].strip()
+    s = s.split(":")[-1].strip()
+    return s or None
+
+
 def _agent_model_id(prov):
-    """The agent's model id, normalized like run.py's _ind_str ('gpt-5.5 (api brain)' -> 'gpt-5.5')."""
-    am = str((prov or {}).get("agent_model") or "").split(" (")[0].strip()
-    return am or None
+    """The agent brain's normalized model id."""
+    return normalize_model_id((prov or {}).get("agent_model"))
 
 
 def _tool_backend_model_id(prov):
-    """The tool/perception backend model id, normalized like run.py ('api:gateway:gpt-5.5' -> 'gpt-5.5').
-    None when the tool backend is non-model (GUI DOM actions, live FHIR) -> no independence constraint.
-    Judge independence must exclude THIS too: a judge sharing the model that GENERATED the visual/tool
-    evidence (e.g. MedCTA image perception) is not independent of the evidence it scores."""
-    tb = str((prov or {}).get("tool_backend_model") or "").split(":")[-1].strip()
-    return tb or None
+    """The tool/perception backend's normalized model id. None when non-model (GUI DOM, live FHIR) -> no
+    independence constraint. Judge independence must exclude THIS too: a judge sharing the model that
+    GENERATED the visual/tool evidence (e.g. MedCTA image perception) is not independent of what it scores."""
+    return normalize_model_id((prov or {}).get("tool_backend_model"))
 
 
 def _allowed_tool_names(task):
@@ -239,9 +249,10 @@ def _build_governance_block(bench, gov, scope, gcps, judge_model, agent_model, e
                             cache, evaluation_error=None, tool_model=None):
     """Assemble the FULL SHARED-CONTRACT Governance block. evaluation_error set -> fail-closed
     (score=None, reportable=False) regardless of any computed number."""
-    # judge independence (exact-id convention, matching run.py._ind_str): the judge must differ from BOTH
-    # the agent brain AND the tool/perception backend that generated the evidence it scores.
-    _collide = [m for m in (agent_model, tool_model) if m and judge_model and judge_model == m]
+    # judge independence (normalized-id convention): the judge must differ from BOTH the agent brain AND the
+    # tool/perception backend that generated the evidence it scores.
+    _jm = normalize_model_id(judge_model)
+    _collide = [m for m in (agent_model, tool_model) if m and _jm and _jm == m]
     if not judge_model:
         independence = "unknown"
     elif _collide:
@@ -343,9 +354,11 @@ def rescore(agent_dir, bench, judge_model=DEFAULT_JUDGE):
 
         cache = _JudgeCache(agent_dir, tid, judge_model)
         # JUDGE-INDEPENDENCE fail-closed: refuse BEFORE spending a model call. The judge must differ from
-        # BOTH the agent brain AND the tool/perception backend that produced the evidence it scores.
-        refused = bool(judge_model and ((agent_model and judge_model == agent_model)
-                                        or (tool_model and judge_model == tool_model)))
+        # BOTH the agent brain AND the tool/perception backend that produced the evidence it scores. All three
+        # ids pass through normalize_model_id so transport prefixes / role suffixes can't hide a collision.
+        _jm = normalize_model_id(judge_model)
+        refused = bool(_jm and ((agent_model and _jm == agent_model)
+                                or (tool_model and _jm == tool_model)))
         if refused:
             gov = {}
             cache.output_hash = None
@@ -366,13 +379,20 @@ def rescore(agent_dir, bench, judge_model=DEFAULT_JUDGE):
         # SOURCE-INPUT PROVENANCE (P0/P1): hashes of the raw inputs this Governance was computed from, so the
         # aggregate can detect a bundle whose result/trajectory/task/checkpoint-set was edited AFTER rescoring
         # (which the runner-tree guard cannot see). Recomputed + compared live by aggregate's source audit.
+        # deliverable files the judge actually read (output_extraction.source_files, relative to bundle dir).
+        _deliv = {}
+        for _sf in ((extraction or {}).get("source_files") or []):
+            _deliv[_sf] = _sha_file(os.path.join(bdir, _sf))
         block["input_provenance"] = {
             "raw_result_sha256": _sha_file(os.path.join(bdir, "result.json")),
             "trajectory_sha256": _sha_file(os.path.join(bdir, "trajectory.jsonl")),
             "task_json_sha256": _sha_file(os.path.join(bdir, "task.json")),
-            "checkpoint_set_sha256": _sha(json.dumps(
-                [[c.get("id"), c.get("dimension"), c.get("subdimension"), c.get("weight")]
-                 for c in (res.get("checkpoints") or [])], sort_keys=True, ensure_ascii=False)),
+            # checkpoint set INCLUDING status/score (shared formula) -> catches edits to the rescored
+            # checkpoints the report reads, not just tasks_unified tag changes.
+            "checkpoint_set_sha256": _contract.checkpoint_set_sha(res.get("checkpoints")),
+            # the actual judged deliverable files; edited after rescore -> source_bundle stale even if
+            # result/trajectory/task are untouched. {} when the task has no external deliverable.
+            "deliverable_files_sha256": _deliv,
         }
         # task-asset provenance: the tasks_unified.jsonl aggregate re-maps from (dimension/subdim/WEIGHT).
         if isinstance(block.get("scoring_config"), dict):
@@ -385,22 +405,28 @@ def rescore(agent_dir, bench, judge_model=DEFAULT_JUDGE):
 
         # MERGE onto any existing rescored layer (preserve other agents' blocks); never touch raw result.json
         rescored_path = os.path.join(bdir, "result.rescored.json")
-        merged = {}
+        existing = {}
         if os.path.exists(rescored_path):
             try:
-                merged = json.load(open(rescored_path))
+                existing = json.load(open(rescored_path))
             except Exception:
-                merged = {}
-        if not merged:
-            merged = dict(res)            # seed from raw so the rescored file is a complete bundle
+                existing = {}
+        # P0-A: ALWAYS rebuild the base layer from the LATEST raw result (res), then graft back ONLY the
+        # post-hoc rescore OVERLAY blocks (dims in _rescore_dims_persisted other than Governance, which we
+        # recompute now). Previously, when a rescored file existed we loaded IT as the base and refreshed only
+        # Governance -- so if raw result.json was regenerated (new checkpoints / evaluation_status / scores),
+        # the rescored BASE stayed STALE while the report (which prefers result.rescored.json via _bundle_path)
+        # kept reading the OLD checkpoints into Outcome / diagnostics / 7-dim. Rebuilding from res each time
+        # guarantees the base fields track the latest raw bundle; the overlay carries only judged dims.
+        _persisted = list(existing.get("_rescore_dims_persisted") or [])
+        merged = dict(res)
+        for _dim in _persisted:
+            if _dim != "Governance" and _dim in existing:
+                merged[_dim] = existing[_dim]
         merged["Governance"] = block
-        # P0-1: the raw bundle carries a pre-judge `canonical` block (its own governance_score / G1-G4 /
-        # dimension_scores) produced by run.py BEFORE the judge-backed rescore. Keeping it would leave TWO
-        # disagreeing governance numbers in one artifact (canonical.governance_score vs Governance.score) and
-        # a stale canonical.dimension_scores. The top-level Governance block is the SOLE persisted truth, so
-        # drop the vestigial canonical block on write.
+        # drop the pre-judge `canonical` block (vestigial dual governance truth); top-level Governance is sole.
         merged.pop("canonical", None)
-        merged.setdefault("_rescore_dims_persisted", [])
+        merged["_rescore_dims_persisted"] = _persisted
         if "Governance" not in merged["_rescore_dims_persisted"]:
             merged["_rescore_dims_persisted"].append("Governance")
         json.dump(merged, open(rescored_path, "w"), indent=1, ensure_ascii=False)
