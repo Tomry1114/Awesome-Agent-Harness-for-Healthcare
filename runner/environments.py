@@ -359,10 +359,23 @@ class GuiEnvReal(EnvironmentAdapter):
         self._pw = sync_playwright().start()
         self._browser = self._pw.chromium.launch(headless=True, args=["--no-sandbox"])
         self.page = self._browser.new_page()
+        # networkidle + settle: the portal's landing/list page is what calls initializeState() to seed
+        # localStorage portals_state.emr. Detail pages (/emr/denied/[id]) only trackAction() and NO-OP if
+        # state isn't seeded yet, so the start page MUST fully load+init before the agent drills in.
         self.page.goto(self.start_url, wait_until="domcontentloaded", timeout=45000)
-        self.page.wait_for_timeout(800)
+        self._settle()
         self._read_state()
         self._init_obs = self._snap()
+
+    def _settle(self):
+        """Wait for the React render + the post-render trackAction()/initializeState() localStorage
+        write to land. networkidle alone isn't enough (the state write happens in a useEffect AFTER the
+        first paint), so add a fixed grace window."""
+        try:
+            self.page.wait_for_load_state("networkidle", timeout=8000)
+        except Exception:
+            pass
+        self.page.wait_for_timeout(int(os.environ.get("MH_GUI_SETTLE_MS", "1200")))
 
     def initial_observation(self):
         return self._init_obs
@@ -445,13 +458,26 @@ class GuiEnvReal(EnvironmentAdapter):
                 import urllib.parse as _up
                 pth = _up.urlparse(tgt).path if "://" in tgt else (tgt if tgt.startswith("/") else "/" + tgt)
                 self.page.goto(self.base + (pth or "/"), wait_until="domcontentloaded", timeout=45000)
+                self._settle()  # let the page's init/trackAction useEffect write localStorage
             elif name == "click":
                 self._click(a)
             elif name == "type":
                 self._fill(a, a.get("text", ""))
             elif name == "select":
                 sel, _k = self._sel(a)
-                self.page.select_option(sel, a.get("value"))
+                val = a.get("value")
+                try:
+                    # native <select> element
+                    self.page.select_option(sel, val, timeout=4000)
+                except Exception:
+                    # custom dropdown (e.g. the disposition picker is a <button> that opens a list of
+                    # option buttons): click the control to open, then click the option whose text == value.
+                    try:
+                        self._click(a)
+                        self.page.wait_for_timeout(300)
+                    except Exception:
+                        pass
+                    self.page.get_by_text(str(val), exact=False).first.click(timeout=6000)
             elif name == "submit":
                 if a.get("ref") or a.get("selector") or a.get("target"):
                     self._click(a)
@@ -578,6 +604,9 @@ def make_env(task, **kw):
         # every GUI task at login. Require an explicit opt-in: set MH_GUI_MODE=real on a GPU node
         # (the HAB sbatch does). Mock is qualified as mock_inmemory in provenance, so the default
         # downgrade stays honest.
-        cls = GuiEnvReal if os.environ.get("MH_GUI_MODE") == "real" else GuiEnvMock
+        # Opt-in real Playwright portal. Two equivalent switches: MH_GUI_MODE=real (general) and
+        # MH_HAB_REAL=1 (HealthAdminBench-specific alias used by the run command); either selects real.
+        _real = os.environ.get("MH_GUI_MODE") == "real" or os.environ.get("MH_HAB_REAL") in ("1", "true", "True")
+        cls = GuiEnvReal if _real else GuiEnvMock
         return cls(task, **kw)
     return ENV_REGISTRY[et](task, **kw)

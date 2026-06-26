@@ -272,7 +272,7 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
                     "hidden_reference_exposed_to_agent": bool(_gold) and len(_gold) >= 16 and any(_gold.lower() in v.lower() for v in _vis.values())}
     ctx = {"base": getattr(env, "base", None), "mrn": (task.get("context") or {}).get("patient_ref"),
            "trajectory": trajectory, "created_meds": scoring.created_meds(trajectory),
-           "final_texts": final_texts, "note_texts": note_texts, "full_state": getattr(env, "full_state", None),
+           "final_texts": final_texts, "note_texts": note_texts, "full_state": (env.state_summary() if hasattr(env, "state_summary") else getattr(env, "full_state", None)),
            "reference": task.get("reference", {}), "agent_tool_calls": agent_tool_calls, "ref_tool_calls": ref_tool_calls,
            "verifiers": scoring._load_verifiers() if needs_pb else None, "pb_repo": pb_repo, "job_dir": job_dir,
            "judge": _judge_fn, "judge_id": _judge_id,
