@@ -23,26 +23,44 @@ All three convert into one **unified task schema** and run through one runner th
 schema** carrying the 7-dimension scores + the Outcome line. `TASK_MANIFEST.json` pins the task
 universe and upstream revisions.
 
-## Design: one loop, two convergence points, three roles
+## Architecture — one loop, two convergence points, three roles
 
-**One runner main loop**, agnostic to benchmark. Differences converge at exactly two places:
+```
+                 unified task   (one schema · PhysicianBench · HealthAdminBench · MedCTA)
+                                       │
+         ┌─────────────────────────────▼─────────────────────────────┐
+         │                  RUNNER — one main loop                    │
+         │               obs = env.step(action)   (×N steps)          │
+         └──────┬──────────────────────────────────────────▲─────────┘
+                │ action intent                  observation │
+   BRAIN  agent_model  (emits <tool_call>/<answer> only)     │
+                ▼                                             │
+   ┌─── ①  EnvironmentAdapter  · one class per substrate ─────┴───────┐
+   │    FhirEnv             GuiEnvReal             ToolSandboxEnv      │
+   │    real HAPI FHIR      real Playwright DOM    VLM image tools     │
+   └──────────────── HANDS  tool_backend_model  · real execution ─────┘
+                                       │
+                  trajectory.jsonl   (action + observation + state, per step)
+                                       │
+   ┌─── ②  checkpoint.method  · scorer dispatch ──────────────────────┐
+   │    native_pytest · jmespath · policy · deterministic · llm_judge  │
+   │                       JUDGE  judge_model                          │
+   └───────────────────────────────────┬──────────────────────────────┘
+                                        │
+                 ┌──────────────────────┴──────────────────────┐
+                 ▼                                              ▼
+          Outcome                                    7 ETCLOVG dimensions
+          native task correctness                    Efficiency  ·  Safety
+          (separate line)                            E·T·C·L     ·  O·V·G
+```
 
-- **Execution differences → `EnvironmentAdapter`** (one class per substrate). The loop only ever does
-  `obs = env.step(action)`; how an action becomes a FHIR HTTP call, a Playwright DOM event, or a VLM
-  tool call is the adapter's concern.
-- **Evaluation differences → `checkpoint.method` scorer dispatch** (`native_pytest` / `jmespath` /
-  `llm_judge` / `policy` / `deterministic`). The loop never hard-codes how a checkpoint is judged.
-
-**Three roles, recorded separately in `provenance`** (never collapsed, even when one model fills two):
-
-| Role | Field | Who |
-|---|---|---|
-| **brain** | `agent_model` | the agent — emits *action intent* only (`<tool_call>{…}</tool_call>` / `<answer>…</answer>`) |
-| **hands** | `tool_backend_model` | the environment / tool backend — performs real execution (FHIR HTTP · Playwright DOM · the VLM *inside* the image tools) |
-| **judge** | `judge_model` | the verifier that scores process / outcome |
-
-Judge **independence** is enforced against BOTH the agent brain and the tool backend: a judge sharing
-either model is `judge_not_independent` (fail-closed, never a silent pass).
+**Two convergence points** keep the loop benchmark-agnostic — execution differences live only in the
+`EnvironmentAdapter` (`obs = env.step(action)`), evaluation differences only in the `checkpoint.method`
+dispatch. **Three roles** are recorded separately in `provenance`, never collapsed even when one model
+fills two: **brain** `agent_model` (emits intent only) · **hands** `tool_backend_model` (performs the
+real execution: FHIR HTTP / Playwright DOM / the VLM *inside* the image tools) · **judge** `judge_model`
+(scores process + outcome). Judge **independence** is enforced against BOTH the brain and the tool
+backend — a judge sharing either is `judge_not_independent` (fail-closed, never a silent pass).
 
 ## Models & multi-key support
 
