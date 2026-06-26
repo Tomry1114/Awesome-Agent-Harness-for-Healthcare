@@ -67,14 +67,16 @@ class ObligationLifecycle(Capability):
 
     def after_action(self, action, result, before_state, after_state, ctx):
         name = _name(action)
-        # 1) satisfy evidence obligations whose satisfied_by.tool matches this action
+        # 1) satisfy evidence obligations whose satisfied_by matches THIS action — matched on the
+        #    STRUCTURED request (tool name + the requested resource_type arg), not by scanning free text
+        #    in the result (which would be a brittle keyword trick).
         for oid, ob in ctx.ledger.obligations.items():
             if ob.get("state") in (SATISFIED, WAIVED):
                 continue
             sb = ob.get("satisfied_by") or {}
             if sb.get("tool") and sb["tool"] == name and _ok(result):
                 rt = sb.get("resource_type")
-                if rt is None or rt.lower() in str(result).lower():
+                if rt is None or _request_targets(action, rt):
                     ctx.ledger.set_obligation(oid, SATISFIED, note="matched %s" % name,
                                               event_id="step-%d" % ctx.step)
         # 2) propagate workflow obligations whose requires are all satisfied
@@ -98,6 +100,22 @@ def _final_cp(contract):
         if cp.get("action") in ("final", "final_answer", "final_clinical_decision"):
             return cp
     return None
+
+
+def _request_targets(action, resource_type):
+    """Did the agent's STRUCTURED request target this resource_type? Matches the tool's args values (and
+    the tool name as a fallback) — not the free-text result. General across substrates: FHIR
+    resource_type arg, a case-type arg, an image-tool kind, etc."""
+    if not isinstance(action, dict):
+        return False
+    rt = str(resource_type).strip().lower()
+    args = action.get("args") or {}
+    if isinstance(args, dict):
+        for v in args.values():
+            if isinstance(v, str) and rt == v.strip().lower():
+                return True
+    name = (action.get("tool") or "").lower()
+    return rt in name
 
 
 def _ok(result):
