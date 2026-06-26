@@ -1,3 +1,5 @@
+![Medical Harness — a unified evaluation harness for healthcare AI agents](assets/banner.png)
+
 # Awesome Agent Harness for Healthcare
 
 A **unified, multimodal evaluation harness** for medical AI agents. Instead of scoring whether a
