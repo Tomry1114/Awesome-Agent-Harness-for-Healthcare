@@ -798,8 +798,17 @@ def _outcome_metric(results, bench=None):
              if c.get("evaluator_kind") == "gacc_judge" and isinstance(c.get("score"), (int, float))]))
         _native_n = len(_succ_tasks)
     else:
-        _succ_tasks = [r for r in results if r.get("evaluation_status") in ("complete", "partial", "proxy_partial")]
-        _native_ok = sum(1 for r in _succ_tasks if r.get("success"))
+        # native task success = the task's OWN Outcome-checkpoints ALL passed (the dataset native task-
+        # completion criterion) -- NOT r.get("success") (that is the harness GATE over ALL ETCLOVG dims, a
+        # different construct). This keeps native_task_success independent from harness_gate.
+        def _task_native_ok(r):
+            _o = [c for c in (r.get("checkpoints") or [])
+                  if c.get("dimension") == "Outcome" and c.get("checkpoint_status") in ("passed", "failed")]
+            return bool(_o) and all(c.get("checkpoint_status") == "passed" for c in _o)
+        _succ_tasks = [r for r in results if any(
+            c.get("dimension") == "Outcome" and c.get("checkpoint_status") in ("passed", "failed")
+            for c in (r.get("checkpoints") or []))]
+        _native_ok = sum(1 for r in _succ_tasks if _task_native_ok(r))
         _native_n = len(_succ_tasks)
     _native_block = {
         "outcome_task_success_rate": round(_native_ok / _native_n, 3) if _native_n else None,
@@ -811,14 +820,14 @@ def _outcome_metric(results, bench=None):
     _harness_block = {"harness_gate_success": round(_harness_ok / n, 3) if n else None,
                       "overall_success_tasks": "%d/%d" % (_harness_ok, n),
                       "note": "harness gate (all-checkpoints-pass), NOT the source Outcome; reported separately"}
-    if ntot:
-        return {"score": round(npass / ntot, 3), "metric": "outcome_checkpoint_pass_rate",
-                "n_outcome_checkpoints": ntot, "gacc_mean": round(sum(gacc) / len(gacc), 3) if gacc else None,
-                "native_task_success": _native_block, "harness_gate": _harness_block}
-    if gacc:
-        return {"score": round(sum(gacc) / len(gacc), 3), "metric": "gold_answer_accuracy",
-                "n_outcome_checkpoints": 0, "gacc_mean": round(sum(gacc) / len(gacc), 3),
-                "native_task_success": _native_block, "harness_gate": _harness_block}
+    # HEADLINE Outcome = dataset NATIVE task accuracy (did the agent complete the dataset task), NOT the
+    # per-Outcome-checkpoint pass rate and NOT the harness gate. The checkpoint pass rate is a DIAGNOSTIC.
+    if _native_n:
+        return {"score": round(_native_ok / _native_n, 3), "metric": "dataset_native_task_accuracy",
+                "n_tasks": _native_n, "native_task_success": _native_block, "harness_gate": _harness_block,
+                "outcome_diagnostics": {"checkpoint_pass_rate": round(npass / ntot, 3) if ntot else None,
+                                        "n_outcome_checkpoints": ntot,
+                                        "gacc_mean": round(sum(gacc) / len(gacc), 3) if gacc else None}}
     # NO native Outcome checkpoint and NO GAcc -> the adapter has not declared a Source Outcome line.
     # Outcome is N/A (adapter_incomplete) -- it NEVER falls back to the native/harness checkpoint pass rate.
     return {"score": None, "metric": "adapter_incomplete", "n_outcome_checkpoints": 0, "gacc_mean": None,

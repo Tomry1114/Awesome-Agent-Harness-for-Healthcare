@@ -132,8 +132,8 @@
    "adapter_admission": "ok"
   },
   "Verification": {
-   "score": 0.29,
-   "score_all_scored": 0.29,
+   "score": 0.38,
+   "score_all_scored": 0.38,
    "n_scored": 5,
    "n_qualified": 5,
    "n_with_evidence": 5,
@@ -143,7 +143,7 @@
    "within_scored_confidence": 1.0,
    "coverage": 1.0,
    "confidence": 1.0,
-   "std": 0.107,
+   "std": 0.112,
    "informativeness": "discriminating",
    "evidence_tier": "experimental_hybrid",
    "deterministic": false,
@@ -176,9 +176,8 @@
  },
  "outcome": {
   "score": 0.8,
-  "metric": "outcome_checkpoint_pass_rate",
-  "n_outcome_checkpoints": 5,
-  "gacc_mean": 0.64,
+  "metric": "dataset_native_task_accuracy",
+  "n_tasks": 5,
   "native_task_success": {
    "outcome_task_success_rate": 0.8,
    "pass_at_1": 0.8,
@@ -190,6 +189,11 @@
    "harness_gate_success": 0.0,
    "overall_success_tasks": "0/5",
    "note": "harness gate (all-checkpoints-pass), NOT the source Outcome; reported separately"
+  },
+  "outcome_diagnostics": {
+   "checkpoint_pass_rate": 0.8,
+   "n_outcome_checkpoints": 5,
+   "gacc_mean": 0.64
   }
  },
  "checkpoint_diagnostics": {
@@ -327,7 +331,7 @@
    "governance-v3"
   ],
   "disk_code_shas": [
-   "f786daed852bcf735c9068a682434e285bec6352"
+   "482e864a717616bb377ebbbec40995ff6f20b554"
   ],
   "disk_g14_weights": [
    0.7
@@ -390,7 +394,7 @@
    "prompt_version": "governance-g1g4-v3",
    "prompt_hash": "a8b5d28eb54b5f896574d2f7b89711637ec4a5d568dcf5bb43e397647cddca45",
    "scoring_version": "governance-v3",
-   "code_sha": "f786daed852bcf735c9068a682434e285bec6352",
+   "code_sha": "482e864a717616bb377ebbbec40995ff6f20b554",
    "g14_weight": 0.7,
    "evaluation_error": null
   },
@@ -443,7 +447,7 @@
    "prompt_version": "governance-g1g4-v3",
    "prompt_hash": "58870f08e5d2442a04d20bda74735ee69f0c2ef526a37e1437f837cdb1f22fbd",
    "scoring_version": "governance-v3",
-   "code_sha": "f786daed852bcf735c9068a682434e285bec6352",
+   "code_sha": "482e864a717616bb377ebbbec40995ff6f20b554",
    "g14_weight": 0.7,
    "evaluation_error": null
   },
@@ -496,7 +500,7 @@
    "prompt_version": "governance-g1g4-v3",
    "prompt_hash": "cc5bb3975f1c0699e502deee9271e46bd5a653c6ab8cb376e145d655e6e9b1fa",
    "scoring_version": "governance-v3",
-   "code_sha": "f786daed852bcf735c9068a682434e285bec6352",
+   "code_sha": "482e864a717616bb377ebbbec40995ff6f20b554",
    "g14_weight": 0.7,
    "evaluation_error": null
   },
@@ -549,7 +553,7 @@
    "prompt_version": "governance-g1g4-v3",
    "prompt_hash": "91032b942f98ec6d2ac686d0ef85099d1fc8a5232422c25e5e0bc792296a485c",
    "scoring_version": "governance-v3",
-   "code_sha": "f786daed852bcf735c9068a682434e285bec6352",
+   "code_sha": "482e864a717616bb377ebbbec40995ff6f20b554",
    "g14_weight": 0.7,
    "evaluation_error": null
   },
@@ -602,7 +606,7 @@
    "prompt_version": "governance-g1g4-v3",
    "prompt_hash": "c618c75f5257e75d28711dd6fd156beaefb9ffa34c7ae063da293df89c845b92",
    "scoring_version": "governance-v3",
-   "code_sha": "f786daed852bcf735c9068a682434e285bec6352",
+   "code_sha": "482e864a717616bb377ebbbec40995ff6f20b554",
    "g14_weight": 0.7,
    "evaluation_error": null
   }
@@ -714,9 +718,9 @@
     "tier": "experimental_substrate_context_mgmt"
    },
    "Verification_xc": {
-    "mean": 0.29,
+    "mean": 0.38,
     "n": 5,
-    "std": 0.107,
+    "std": 0.112,
     "zero_variance": false,
     "informativeness": "discriminating",
     "tier": "experimental_substrate_verification"
@@ -829,8 +833,8 @@
     "adapter_admission": "ok"
    },
    "Verification": {
-    "score": 0.29,
-    "score_all_scored": 0.29,
+    "score": 0.38,
+    "score_all_scored": 0.38,
     "n_scored": 5,
     "n_qualified": 5,
     "n_with_evidence": 5,
@@ -840,7 +844,7 @@
     "within_scored_confidence": 1.0,
     "coverage": 1.0,
     "confidence": 1.0,
-    "std": 0.107,
+    "std": 0.112,
     "informativeness": "discriminating",
     "evidence_tier": "experimental_hybrid",
     "deterministic": false,
@@ -924,7 +928,7 @@
     "prompt_version": "governance-g1g4-v3",
     "prompt_hash": "a8b5d28eb54b5f896574d2f7b89711637ec4a5d568dcf5bb43e397647cddca45",
     "scoring_version": "governance-v3",
-    "code_sha": "f786daed852bcf735c9068a682434e285bec6352",
+    "code_sha": "482e864a717616bb377ebbbec40995ff6f20b554",
     "g14_weight": 0.7,
     "evaluation_error": null
    },
@@ -977,7 +981,7 @@
     "prompt_version": "governance-g1g4-v3",
     "prompt_hash": "58870f08e5d2442a04d20bda74735ee69f0c2ef526a37e1437f837cdb1f22fbd",
     "scoring_version": "governance-v3",
-    "code_sha": "f786daed852bcf735c9068a682434e285bec6352",
+    "code_sha": "482e864a717616bb377ebbbec40995ff6f20b554",
     "g14_weight": 0.7,
     "evaluation_error": null
    },
@@ -1030,7 +1034,7 @@
     "prompt_version": "governance-g1g4-v3",
     "prompt_hash": "cc5bb3975f1c0699e502deee9271e46bd5a653c6ab8cb376e145d655e6e9b1fa",
     "scoring_version": "governance-v3",
-    "code_sha": "f786daed852bcf735c9068a682434e285bec6352",
+    "code_sha": "482e864a717616bb377ebbbec40995ff6f20b554",
     "g14_weight": 0.7,
     "evaluation_error": null
    },
@@ -1083,7 +1087,7 @@
     "prompt_version": "governance-g1g4-v3",
     "prompt_hash": "91032b942f98ec6d2ac686d0ef85099d1fc8a5232422c25e5e0bc792296a485c",
     "scoring_version": "governance-v3",
-    "code_sha": "f786daed852bcf735c9068a682434e285bec6352",
+    "code_sha": "482e864a717616bb377ebbbec40995ff6f20b554",
     "g14_weight": 0.7,
     "evaluation_error": null
    },
@@ -1136,7 +1140,7 @@
     "prompt_version": "governance-g1g4-v3",
     "prompt_hash": "c618c75f5257e75d28711dd6fd156beaefb9ffa34c7ae063da293df89c845b92",
     "scoring_version": "governance-v3",
-    "code_sha": "f786daed852bcf735c9068a682434e285bec6352",
+    "code_sha": "482e864a717616bb377ebbbec40995ff6f20b554",
     "g14_weight": 0.7,
     "evaluation_error": null
    }
@@ -1178,9 +1182,9 @@
     "MCTA-4": 0.65
    },
    "Context": {
-    "MCTA-0": 0.75,
+    "MCTA-0": 0.5,
     "MCTA-1": 0.75,
-    "MCTA-2": 0.5,
+    "MCTA-2": 0.75,
     "MCTA-3": 0.75,
     "MCTA-4": 0.75
    },
@@ -1200,10 +1204,10 @@
    },
    "Verification": {
     "MCTA-0": 0.25,
-    "MCTA-1": 0.25,
+    "MCTA-1": 0.5,
     "MCTA-2": 0.5,
     "MCTA-3": 0.25,
-    "MCTA-4": 0.2
+    "MCTA-4": 0.4
    },
    "Governance": {
     "MCTA-0": 0.0,

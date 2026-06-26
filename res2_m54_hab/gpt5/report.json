@@ -81,7 +81,7 @@
    "within_scored_confidence": 1.0,
    "coverage": 1.0,
    "confidence": 1.0,
-   "std": 0.19,
+   "std": 0.199,
    "informativeness": "discriminating",
    "evidence_tier": "experimental_hybrid",
    "deterministic": false,
@@ -172,10 +172,9 @@
   }
  },
  "outcome": {
-  "score": 0.448,
-  "metric": "outcome_checkpoint_pass_rate",
-  "n_outcome_checkpoints": 29,
-  "gacc_mean": null,
+  "score": 0.0,
+  "metric": "dataset_native_task_accuracy",
+  "n_tasks": 5,
   "native_task_success": {
    "outcome_task_success_rate": 0.0,
    "pass_at_1": 0.0,
@@ -187,6 +186,11 @@
    "harness_gate_success": 0.0,
    "overall_success_tasks": "0/5",
    "note": "harness gate (all-checkpoints-pass), NOT the source Outcome; reported separately"
+  },
+  "outcome_diagnostics": {
+   "checkpoint_pass_rate": 0.448,
+   "n_outcome_checkpoints": 29,
+   "gacc_mean": null
   }
  },
  "checkpoint_diagnostics": {
@@ -325,7 +329,7 @@
    "governance-v3"
   ],
   "disk_code_shas": [
-   "f786daed852bcf735c9068a682434e285bec6352"
+   "482e864a717616bb377ebbbec40995ff6f20b554"
   ],
   "disk_g14_weights": [
    0.7
@@ -386,7 +390,7 @@
    "prompt_version": "governance-g1g4-v3",
    "prompt_hash": "fed7c2ab0d92cf933a3f2d115848be2a55d9df593bc66e15fdfbb71bcaf9ea3f",
    "scoring_version": "governance-v3",
-   "code_sha": "f786daed852bcf735c9068a682434e285bec6352",
+   "code_sha": "482e864a717616bb377ebbbec40995ff6f20b554",
    "g14_weight": 0.7,
    "evaluation_error": null
   },
@@ -441,7 +445,7 @@
    "prompt_version": "governance-g1g4-v3",
    "prompt_hash": "c3cf17eebd72e770ed2122ce1dfa4df728a6c19498d03a772bc94fb533cbf0d5",
    "scoring_version": "governance-v3",
-   "code_sha": "f786daed852bcf735c9068a682434e285bec6352",
+   "code_sha": "482e864a717616bb377ebbbec40995ff6f20b554",
    "g14_weight": 0.7,
    "evaluation_error": null
   },
@@ -494,7 +498,7 @@
    "prompt_version": "governance-g1g4-v3",
    "prompt_hash": "31a95da1915580f1248f8525384b3410e964becb04622e7e0fb6c2225b330eaa",
    "scoring_version": "governance-v3",
-   "code_sha": "f786daed852bcf735c9068a682434e285bec6352",
+   "code_sha": "482e864a717616bb377ebbbec40995ff6f20b554",
    "g14_weight": 0.7,
    "evaluation_error": null
   },
@@ -547,7 +551,7 @@
    "prompt_version": "governance-g1g4-v3",
    "prompt_hash": "d354f3c71c338270bf76ca14b4cea2291f022f5b73610000308fd12f38ba82ab",
    "scoring_version": "governance-v3",
-   "code_sha": "f786daed852bcf735c9068a682434e285bec6352",
+   "code_sha": "482e864a717616bb377ebbbec40995ff6f20b554",
    "g14_weight": 0.7,
    "evaluation_error": null
   },
@@ -602,7 +606,7 @@
    "prompt_version": "governance-g1g4-v3",
    "prompt_hash": "05da5d4429877f1c817699d876e4a62a30dcec9c7b14812374d6f6d8c92260f5",
    "scoring_version": "governance-v3",
-   "code_sha": "f786daed852bcf735c9068a682434e285bec6352",
+   "code_sha": "482e864a717616bb377ebbbec40995ff6f20b554",
    "g14_weight": 0.7,
    "evaluation_error": null
   }
@@ -700,7 +704,7 @@
    "Context_xc": {
     "mean": 0.348,
     "n": 5,
-    "std": 0.19,
+    "std": 0.199,
     "zero_variance": false,
     "informativeness": "discriminating",
     "tier": "experimental_substrate_context_mgmt"
@@ -773,7 +777,7 @@
     "within_scored_confidence": 1.0,
     "coverage": 1.0,
     "confidence": 1.0,
-    "std": 0.19,
+    "std": 0.199,
     "informativeness": "discriminating",
     "evidence_tier": "experimental_hybrid",
     "deterministic": false,
@@ -914,7 +918,7 @@
     "prompt_version": "governance-g1g4-v3",
     "prompt_hash": "fed7c2ab0d92cf933a3f2d115848be2a55d9df593bc66e15fdfbb71bcaf9ea3f",
     "scoring_version": "governance-v3",
-    "code_sha": "f786daed852bcf735c9068a682434e285bec6352",
+    "code_sha": "482e864a717616bb377ebbbec40995ff6f20b554",
     "g14_weight": 0.7,
     "evaluation_error": null
    },
@@ -969,7 +973,7 @@
     "prompt_version": "governance-g1g4-v3",
     "prompt_hash": "c3cf17eebd72e770ed2122ce1dfa4df728a6c19498d03a772bc94fb533cbf0d5",
     "scoring_version": "governance-v3",
-    "code_sha": "f786daed852bcf735c9068a682434e285bec6352",
+    "code_sha": "482e864a717616bb377ebbbec40995ff6f20b554",
     "g14_weight": 0.7,
     "evaluation_error": null
    },
@@ -1022,7 +1026,7 @@
     "prompt_version": "governance-g1g4-v3",
     "prompt_hash": "31a95da1915580f1248f8525384b3410e964becb04622e7e0fb6c2225b330eaa",
     "scoring_version": "governance-v3",
-    "code_sha": "f786daed852bcf735c9068a682434e285bec6352",
+    "code_sha": "482e864a717616bb377ebbbec40995ff6f20b554",
     "g14_weight": 0.7,
     "evaluation_error": null
    },
@@ -1075,7 +1079,7 @@
     "prompt_version": "governance-g1g4-v3",
     "prompt_hash": "d354f3c71c338270bf76ca14b4cea2291f022f5b73610000308fd12f38ba82ab",
     "scoring_version": "governance-v3",
-    "code_sha": "f786daed852bcf735c9068a682434e285bec6352",
+    "code_sha": "482e864a717616bb377ebbbec40995ff6f20b554",
     "g14_weight": 0.7,
     "evaluation_error": null
    },
@@ -1130,7 +1134,7 @@
     "prompt_version": "governance-g1g4-v3",
     "prompt_hash": "05da5d4429877f1c817699d876e4a62a30dcec9c7b14812374d6f6d8c92260f5",
     "scoring_version": "governance-v3",
-    "code_sha": "f786daed852bcf735c9068a682434e285bec6352",
+    "code_sha": "482e864a717616bb377ebbbec40995ff6f20b554",
     "g14_weight": 0.7,
     "evaluation_error": null
    }
@@ -1174,9 +1178,9 @@
    "Context": {
     "HAB-denial-easy-1": 0.392,
     "HAB-denial-easy-10": 0.396,
-    "HAB-denial-easy-11": 0.367,
+    "HAB-denial-easy-11": 0.617,
     "HAB-denial-easy-12": 0.0,
-    "HAB-denial-easy-13": 0.583
+    "HAB-denial-easy-13": 0.333
    },
    "Lifecycle": {
     "HAB-denial-easy-1": 0.433,

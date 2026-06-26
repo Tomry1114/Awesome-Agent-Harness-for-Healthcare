@@ -589,7 +589,7 @@
    "g14_weight": 0.7,
    "subject_scope_weight": 0.3,
    "scoring_version": "governance-v3",
-   "code_sha": "f786daed852bcf735c9068a682434e285bec6352",
+   "code_sha": "482e864a717616bb377ebbbec40995ff6f20b554",
    "judge_model": "gpt-5.4",
    "prompt_version": "governance-g1g4-v3",
    "prompt_hash": "cc5bb3975f1c0699e502deee9271e46bd5a653c6ab8cb376e145d655e6e9b1fa"
