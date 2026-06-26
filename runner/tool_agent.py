@@ -161,7 +161,7 @@ def _first_json_after(s, tag="<tool_call>"):
     return None
 
 
-class QwenToolAgent:
+class ToolProtocolAgent:
     name = "qwen"
     def __init__(self, task):
         self.task = task

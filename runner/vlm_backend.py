@@ -118,7 +118,7 @@ class ApiVLM:
     def __init__(self, model=None):
         self.model = model or os.environ.get("MH_VLM_API_MODEL", "gpt-5.5")  # micuapi has gpt-5.x, no gemini
         _b = (os.environ.get("MH_VLM_API_BASE") or os.environ.get("MH_OPENAI_BASE") or "https://www.micuapi.ai").rstrip("/")
-        if _b.endswith("/v1"): _b = _b[:-3].rstrip("/")  # normalize: callers append /v1 (consistent with openai_agent/gacc/mm_judge)
+        if _b.endswith("/v1"): _b = _b[:-3].rstrip("/")  # normalize: callers append /v1 (consistent with api_agent/gacc/mm_judge)
         self.base = _b
         self.key = os.environ.get("MH_OPENAI_KEY") or os.environ.get("OPENAI_API_KEY")
         if not self.key:

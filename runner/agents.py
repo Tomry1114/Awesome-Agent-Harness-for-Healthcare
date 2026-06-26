@@ -134,11 +134,11 @@ def make_agent(name, task):
     if name == "scripted":
         return ScriptedAgent(task)
     if name in ("gpt5", "openai"):
-        from openai_agent import OpenAIToolAgent
-        return OpenAIToolAgent(task)
+        from api_agent import ApiToolAgent
+        return ApiToolAgent(task)
     if name == "qwen":
-        from qwen_agent import QwenToolAgent
-        return QwenToolAgent(task)
+        from tool_agent import ToolProtocolAgent
+        return ToolProtocolAgent(task)
     if name == "stub" and et == "gui":
         return StubGuiAgent(task)
     if name == "stub" and et == "tool_sandbox":

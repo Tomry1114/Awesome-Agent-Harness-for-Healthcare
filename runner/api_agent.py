@@ -1,4 +1,4 @@
-"""OpenAI-compatible API agent (the BRAIN) — same <tool_call>/<answer> protocol as QwenToolAgent,
+"""OpenAI-compatible API agent (the BRAIN) — same <tool_call>/<answer> protocol as ToolProtocolAgent,
 but the brain is a remote chat-completions model (e.g. gpt-5.5 via an OpenAI-compatible gateway)
 instead of the local Qwen3-VL. Tool perception (MedCTA image tools) still runs the LOCAL VLM inside
 the tool backend; this class only swaps the reasoning brain. Text-only brain across all 3 substrates.
@@ -10,7 +10,7 @@ Config (env):
 """
 import os, json, time, re, urllib.request, urllib.error
 import gateway
-from qwen_agent import (QwenToolAgent, _MEDCTA_MM, _MEDCTA_MM_NOTOOLS,
+from tool_agent import (ToolProtocolAgent, _MEDCTA_MM, _MEDCTA_MM_NOTOOLS,
                         resolve_medcta_image, image_data_url)
 
 def _load_key():
@@ -20,7 +20,7 @@ def _load_key():
     if os.path.exists(p): return open(p).read().strip()
     raise RuntimeError("no API key: set MH_OPENAI_KEY or create ~/.xbai_key")
 
-class OpenAIToolAgent(QwenToolAgent):
+class ApiToolAgent(ToolProtocolAgent):
     name = "gpt5"
     def __init__(self, task):
         super().__init__(task)

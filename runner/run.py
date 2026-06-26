@@ -315,7 +315,7 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
     if aname == "qwen":
         agent_model = "%s (text-only brain)" % vlm; uses_hidden_ref = False; validation_only = False
     elif aname == "gpt5":
-        agent_model = "%s (api brain)" % os.environ.get("MH_OPENAI_MODEL", "gpt-5.5"); uses_hidden_ref = False; validation_only = False
+        agent_model = "%s (api brain)" % (os.environ.get("MH_API_MODEL") or os.environ.get("MH_OPENAI_MODEL", "gpt-5.5")); uses_hidden_ref = False; validation_only = False
     elif aname == "replay":
         agent_model = "gold_replay:reference_trace"; uses_hidden_ref = True; validation_only = True
     elif aname == "scripted":

@@ -1,4 +1,4 @@
-"""MedCTA QwenToolAgent failure profiler v2 (MCTA-0..9). One process => model loads once.
+"""MedCTA ToolProtocolAgent failure profiler v2 (MCTA-0..9). One process => model loads once.
 Deterministic MULTI-LABEL classifier. Separates GENUINE failure tags from formal-metric diagnostics
 (cp_tool_selection / cp_arg_accuracy are reference-SEQUENCE match = under-use signal, NOT 'wrong tool').
 Heuristic by design. Persists full trajectory + all cp + actual args for offline re-classification."""
