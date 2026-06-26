@@ -563,17 +563,24 @@
    "g14_weight": 0.7,
    "subject_scope_weight": 0.3,
    "scoring_version": "governance-v3",
-   "scoring_code_tree_hash": "1d727ec1c914bca18224feceb98ba5707f5747c2",
-   "code_sha": "7760bfde1875b8c402317cbd759f418aeb704214",
+   "scoring_code_tree_hash": "282e7722e649ad18916859371ac741b37f8fa02e",
+   "code_sha": "4842608b38777adf841818b91214f1b603b795d6",
    "dirty_worktree": false,
    "judge_model": "gpt-5.4",
-   "judge_prompt_hash": "02af79e09a14f2ab57f4b5d657584608b9faf0f0809bf5d48de174dd2364fb6e"
+   "judge_prompt_hash": "02af79e09a14f2ab57f4b5d657584608b9faf0f0809bf5d48de174dd2364fb6e",
+   "tasks_unified_sha256": "ba423393da2c09679b6353f072ceeddb35bc43068b7dc1cb6f949d8fa7eec77a"
   },
   "branch": "medcta_governance_4rule",
   "critical": false,
   "critical_reason": null,
   "judge_independence": "independent",
-  "subject_scope_diagnostic": null
+  "subject_scope_diagnostic": null,
+  "input_provenance": {
+   "raw_result_sha256": "dc3d93c34b3909e44c20957a1da8725cc44b9990bd157d18c51959a906d0a16f",
+   "trajectory_sha256": "f48c5e8bb05d0cb76785bb3b2e94bc71ec0656e074a5d21454d12b8113d67a7b",
+   "task_json_sha256": "1fe9bba1031ff664b459fd9f507bcf6fc30a8150df217278117ff393616175f5",
+   "checkpoint_set_sha256": "89022daa141fc1b096fac908c92a33d0ab96bc2ec1410b087675888813991694"
+  }
  },
  "_rescore_dims_persisted": [
   "Governance"

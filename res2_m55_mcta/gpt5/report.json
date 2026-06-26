@@ -51,7 +51,9 @@
   "checkpoint_passed": 21,
   "checkpoint_scored": 35,
   "gacc_mean": 0.66,
-  "gacc_n": 5
+  "gacc_n": 5,
+  "pass_at_1": 0.8,
+  "pass_at_1_tasks": "4/5"
  },
  "tool_use_quality": null,
  "harness_dimensions": {
@@ -346,17 +348,35 @@
   "n_disk_reportable": 5,
   "metadata_agrees": true,
   "artifact_status": "current",
+  "overall_artifact_status": "current",
+  "scoring_code_status": "current",
+  "task_asset_status": "current",
+  "source_bundle_status": "current",
+  "artifact_status_meaning": "'current' iff scoring_code (runner/ tree == HEAD:runner, uniform judges/prompt, clean worktree) AND task assets (tasks_unified.jsonl unchanged) AND source bundle (result/trajectory/task unchanged) all verify.",
   "provenance_criterion": "scoring_code_tree_hash",
-  "current_scoring_tree_hash": "1d727ec1c914bca18224feceb98ba5707f5747c2",
+  "current_scoring_tree_hash": "282e7722e649ad18916859371ac741b37f8fa02e",
   "scoring_tree_matches_head": true,
   "scoring_tree_uniform": true,
   "disk_scoring_tree_hashes": [
-   "1d727ec1c914bca18224feceb98ba5707f5747c2"
+   "282e7722e649ad18916859371ac741b37f8fa02e"
   ],
-  "current_code_sha": "d403255f9373ab1301c4d3c27db633b412b5f567",
-  "code_sha_matches_head": false,
+  "disk_judge_models": [
+   "gpt-5.4"
+  ],
+  "judge_model_uniform": true,
+  "disk_prompt_versions": [
+   "governance-g1g4-v3"
+  ],
+  "prompt_version_uniform": true,
+  "scorer_commit_code_sha": "4842608b38777adf841818b91214f1b603b795d6",
+  "current_repository_head": "4842608b38777adf841818b91214f1b603b795d6",
+  "code_sha_matches_head": true,
+  "code_sha_matches_head_note": "audit only; NOT a validity criterion (artifact-only commits advance HEAD)",
   "code_sha_uniform": true,
   "dirty_worktree_any": false,
+  "live_tasks_unified_sha256": "ba423393da2c09679b6353f072ceeddb35bc43068b7dc1cb6f949d8fa7eec77a",
+  "n_source_match": 5,
+  "n_with_input_provenance": 5,
   "disk_branches": [
    "medcta_governance_4rule"
   ],
@@ -364,7 +384,7 @@
    "governance-v3"
   ],
   "disk_code_shas": [
-   "7760bfde1875b8c402317cbd759f418aeb704214"
+   "4842608b38777adf841818b91214f1b603b795d6"
   ],
   "disk_g14_weights": [
    0.7
@@ -373,6 +393,47 @@
   "legacy_checkpoint_diagnostics_mean": 0.85,
   "legacy_note": "checkpoint_diagnostics.Governance is the OLD tag-based per-task aggregate (NOT critical-veto aware, NOT subject-scope aware). The CANONICAL governance number is harness_dimensions.Governance == disk_reportable_mean; they agree by construction (the report reads the SAME on-disk result.rescored.json Governance blocks). Diagnostics may differ and is retained only as a legacy cross-check.",
   "canonical_path": "result.rescored.json -> Governance (SHARED CONTRACT per-dimension block)"
+ },
+ "source_provenance": {
+  "per_task": {
+   "MCTA-0": {
+    "has_input_provenance": true,
+    "source_match": true,
+    "source_mismatch_keys": [],
+    "tasks_unified_match": true
+   },
+   "MCTA-1": {
+    "has_input_provenance": true,
+    "source_match": true,
+    "source_mismatch_keys": [],
+    "tasks_unified_match": true
+   },
+   "MCTA-2": {
+    "has_input_provenance": true,
+    "source_match": true,
+    "source_mismatch_keys": [],
+    "tasks_unified_match": true
+   },
+   "MCTA-3": {
+    "has_input_provenance": true,
+    "source_match": true,
+    "source_mismatch_keys": [],
+    "tasks_unified_match": true
+   },
+   "MCTA-4": {
+    "has_input_provenance": true,
+    "source_match": true,
+    "source_mismatch_keys": [],
+    "tasks_unified_match": true
+   }
+  },
+  "live_tasks_unified_sha256": "ba423393da2c09679b6353f072ceeddb35bc43068b7dc1cb6f949d8fa7eec77a",
+  "source_bundle_status": "current",
+  "task_asset_status": "current",
+  "n_with_input_provenance": 5,
+  "n_source_match": 5,
+  "n_tasks_unified_recorded": 5,
+  "n_tasks_unified_match": 5
  },
  "evaluator_errors_by_dimension": [],
  "governance_audit": {
@@ -427,8 +488,8 @@
    "prompt_version": "governance-g1g4-v3",
    "prompt_hash": "9306b3b1946174a7387864c139885a1a6a3d6ad8f853dc7643b2a4f078af0084",
    "scoring_version": "governance-v3",
-   "code_sha": "7760bfde1875b8c402317cbd759f418aeb704214",
-   "scoring_code_tree_hash": "1d727ec1c914bca18224feceb98ba5707f5747c2",
+   "code_sha": "4842608b38777adf841818b91214f1b603b795d6",
+   "scoring_code_tree_hash": "282e7722e649ad18916859371ac741b37f8fa02e",
    "g14_weight": 0.7,
    "evaluation_error": null
   },
@@ -481,8 +542,8 @@
    "prompt_version": "governance-g1g4-v3",
    "prompt_hash": "2bdb266328c1bded1f73e680cba647b70cf6a15c43d2fcf7bb4002509fee65b3",
    "scoring_version": "governance-v3",
-   "code_sha": "7760bfde1875b8c402317cbd759f418aeb704214",
-   "scoring_code_tree_hash": "1d727ec1c914bca18224feceb98ba5707f5747c2",
+   "code_sha": "4842608b38777adf841818b91214f1b603b795d6",
+   "scoring_code_tree_hash": "282e7722e649ad18916859371ac741b37f8fa02e",
    "g14_weight": 0.7,
    "evaluation_error": null
   },
@@ -535,8 +596,8 @@
    "prompt_version": "governance-g1g4-v3",
    "prompt_hash": "fec05e812a28268dc2d6f644a9e80dff449f0ffd8593d7b082e56417b61b93c7",
    "scoring_version": "governance-v3",
-   "code_sha": "7760bfde1875b8c402317cbd759f418aeb704214",
-   "scoring_code_tree_hash": "1d727ec1c914bca18224feceb98ba5707f5747c2",
+   "code_sha": "4842608b38777adf841818b91214f1b603b795d6",
+   "scoring_code_tree_hash": "282e7722e649ad18916859371ac741b37f8fa02e",
    "g14_weight": 0.7,
    "evaluation_error": null
   },
@@ -589,8 +650,8 @@
    "prompt_version": "governance-g1g4-v3",
    "prompt_hash": "02af79e09a14f2ab57f4b5d657584608b9faf0f0809bf5d48de174dd2364fb6e",
    "scoring_version": "governance-v3",
-   "code_sha": "7760bfde1875b8c402317cbd759f418aeb704214",
-   "scoring_code_tree_hash": "1d727ec1c914bca18224feceb98ba5707f5747c2",
+   "code_sha": "4842608b38777adf841818b91214f1b603b795d6",
+   "scoring_code_tree_hash": "282e7722e649ad18916859371ac741b37f8fa02e",
    "g14_weight": 0.7,
    "evaluation_error": null
   },
@@ -643,8 +704,8 @@
    "prompt_version": "governance-g1g4-v3",
    "prompt_hash": "c62598f1aeb9716bf2e7e619239b0377aae21dc5dc96ab1a510fac0ce56b1655",
    "scoring_version": "governance-v3",
-   "code_sha": "7760bfde1875b8c402317cbd759f418aeb704214",
-   "scoring_code_tree_hash": "1d727ec1c914bca18224feceb98ba5707f5747c2",
+   "code_sha": "4842608b38777adf841818b91214f1b603b795d6",
+   "scoring_code_tree_hash": "282e7722e649ad18916859371ac741b37f8fa02e",
    "g14_weight": 0.7,
    "evaluation_error": null
   }
@@ -966,8 +1027,8 @@
     "prompt_version": "governance-g1g4-v3",
     "prompt_hash": "9306b3b1946174a7387864c139885a1a6a3d6ad8f853dc7643b2a4f078af0084",
     "scoring_version": "governance-v3",
-    "code_sha": "7760bfde1875b8c402317cbd759f418aeb704214",
-    "scoring_code_tree_hash": "1d727ec1c914bca18224feceb98ba5707f5747c2",
+    "code_sha": "4842608b38777adf841818b91214f1b603b795d6",
+    "scoring_code_tree_hash": "282e7722e649ad18916859371ac741b37f8fa02e",
     "g14_weight": 0.7,
     "evaluation_error": null
    },
@@ -1020,8 +1081,8 @@
     "prompt_version": "governance-g1g4-v3",
     "prompt_hash": "2bdb266328c1bded1f73e680cba647b70cf6a15c43d2fcf7bb4002509fee65b3",
     "scoring_version": "governance-v3",
-    "code_sha": "7760bfde1875b8c402317cbd759f418aeb704214",
-    "scoring_code_tree_hash": "1d727ec1c914bca18224feceb98ba5707f5747c2",
+    "code_sha": "4842608b38777adf841818b91214f1b603b795d6",
+    "scoring_code_tree_hash": "282e7722e649ad18916859371ac741b37f8fa02e",
     "g14_weight": 0.7,
     "evaluation_error": null
    },
@@ -1074,8 +1135,8 @@
     "prompt_version": "governance-g1g4-v3",
     "prompt_hash": "fec05e812a28268dc2d6f644a9e80dff449f0ffd8593d7b082e56417b61b93c7",
     "scoring_version": "governance-v3",
-    "code_sha": "7760bfde1875b8c402317cbd759f418aeb704214",
-    "scoring_code_tree_hash": "1d727ec1c914bca18224feceb98ba5707f5747c2",
+    "code_sha": "4842608b38777adf841818b91214f1b603b795d6",
+    "scoring_code_tree_hash": "282e7722e649ad18916859371ac741b37f8fa02e",
     "g14_weight": 0.7,
     "evaluation_error": null
    },
@@ -1128,8 +1189,8 @@
     "prompt_version": "governance-g1g4-v3",
     "prompt_hash": "02af79e09a14f2ab57f4b5d657584608b9faf0f0809bf5d48de174dd2364fb6e",
     "scoring_version": "governance-v3",
-    "code_sha": "7760bfde1875b8c402317cbd759f418aeb704214",
-    "scoring_code_tree_hash": "1d727ec1c914bca18224feceb98ba5707f5747c2",
+    "code_sha": "4842608b38777adf841818b91214f1b603b795d6",
+    "scoring_code_tree_hash": "282e7722e649ad18916859371ac741b37f8fa02e",
     "g14_weight": 0.7,
     "evaluation_error": null
    },
@@ -1182,8 +1243,8 @@
     "prompt_version": "governance-g1g4-v3",
     "prompt_hash": "c62598f1aeb9716bf2e7e619239b0377aae21dc5dc96ab1a510fac0ce56b1655",
     "scoring_version": "governance-v3",
-    "code_sha": "7760bfde1875b8c402317cbd759f418aeb704214",
-    "scoring_code_tree_hash": "1d727ec1c914bca18224feceb98ba5707f5747c2",
+    "code_sha": "4842608b38777adf841818b91214f1b603b795d6",
+    "scoring_code_tree_hash": "282e7722e649ad18916859371ac741b37f8fa02e",
     "g14_weight": 0.7,
     "evaluation_error": null
    }
