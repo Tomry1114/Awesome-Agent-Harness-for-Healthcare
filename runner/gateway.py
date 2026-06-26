@@ -52,7 +52,19 @@ def _is_timeout_like(ex):
     return any(h in s for h in _CONN_HINTS)
 
 
-def load_key():
+def load_key(judge=False, override=None):
+    """Resolve the API key for a call. Precedence:
+      explicit per-call override  >  MH_JUDGE_KEY (judge=True only)  >  MH_OPENAI_KEY  >  OPENAI_API_KEY
+      >  ~/.xbai_key.
+    This lets the agent brain, the VLM tool backend, and the judge use DIFFERENT keys within ONE run --
+    e.g. a gemini/deepseek-only key for the agent (OPENAI_API_KEY) while the VLM (MH_VLM_API_KEY, passed as
+    override) and the judge (MH_JUDGE_KEY) run gpt-5.x on a separate gpt-capable key."""
+    if override:
+        return override.strip()
+    if judge:
+        jk = os.environ.get("MH_JUDGE_KEY")
+        if jk:
+            return jk.strip()
     k = os.environ.get("MH_OPENAI_KEY") or os.environ.get("OPENAI_API_KEY")
     if k:
         return k.strip()
@@ -72,7 +84,7 @@ def image_data_url(image_path):
         return "data:%s;base64,%s" % (_MIME.get(ext, "image/jpeg"), base64.b64encode(f.read()).decode())
 
 
-def chat(messages, model, max_tokens=1024, judge=False, timeout=None, retries=None, image_path=None, extra=None):
+def chat(messages, model, max_tokens=1024, judge=False, timeout=None, retries=None, image_path=None, extra=None, key=None):
     """Return {"ok": bool, "content": str|None, "error_type": str|None, "raw": str}.
     error_type in {None, "billing", "auth", "http_4xx", "http_5xx", "empty", "timeout", "exception"} --
     structured, never a substring guess. On image_path, the LAST user message is made multimodal.
@@ -100,6 +112,7 @@ def chat(messages, model, max_tokens=1024, judge=False, timeout=None, retries=No
     url = base_url(judge) + "/v1/chat/completions"
     ua = os.environ.get("MH_OPENAI_UA", "codex_cli_rs/0.20.0")
     last = ""
+    auth_key = load_key(judge=judge, override=key)   # resolve once: per-call key > MH_JUDGE_KEY > globals
     timed_out = False  # sticky: did the latest failure look like a dead/slow connection?
     for attempt in range(max(1, retries)):
         remaining = deadline - time.monotonic()
@@ -112,7 +125,7 @@ def chat(messages, model, max_tokens=1024, judge=False, timeout=None, retries=No
         call_to = max(1, min(timeout, int(remaining) or 1))
         try:
             req = urllib.request.Request(url, data=data, method="POST", headers={
-                "Authorization": "Bearer " + load_key(), "Content-Type": "application/json",
+                "Authorization": "Bearer " + auth_key, "Content-Type": "application/json",
                 "User-Agent": ua, "Accept": "application/json"})
             with urllib.request.urlopen(req, timeout=call_to) as r:
                 d = json.loads(r.read().decode())

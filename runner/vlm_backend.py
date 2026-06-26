@@ -120,7 +120,10 @@ class ApiVLM:
         _b = (os.environ.get("MH_VLM_API_BASE") or os.environ.get("MH_OPENAI_BASE") or "https://www.micuapi.ai").rstrip("/")
         if _b.endswith("/v1"): _b = _b[:-3].rstrip("/")  # normalize: callers append /v1 (consistent with api_agent/gacc/mm_judge)
         self.base = _b
-        self.key = os.environ.get("MH_OPENAI_KEY") or os.environ.get("OPENAI_API_KEY")
+        # VLM key is INDEPENDENT of the agent key (MH_VLM_API_KEY first): in a mixed-provider run the agent
+        # brain may use a gemini/deepseek-only key while VLM perception still needs a gpt-5.x key.
+        self.key = (os.environ.get("MH_VLM_API_KEY") or os.environ.get("MH_OPENAI_KEY")
+                    or os.environ.get("OPENAI_API_KEY"))
         if not self.key:
             kp = os.path.expanduser("~/.xbai_key")
             if os.path.exists(kp): self.key = open(kp).read().strip()
@@ -150,7 +153,8 @@ class ApiVLM:
                 image.convert("RGB").save(tmp, format="PNG")
                 img_path = tmp
             res = gateway.chat([{"role": "user", "content": prompt}], model=self.model,
-                               max_tokens=max_tokens, judge=False, timeout=120, image_path=img_path)
+                               max_tokens=max_tokens, judge=False, timeout=120, image_path=img_path,
+                               key=self.key)
         finally:
             if tmp and os.path.exists(tmp):
                 try: os.remove(tmp)
