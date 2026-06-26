@@ -129,6 +129,25 @@ def _remap(results, bench):
     return results
 
 
+def native_task_outcome(result, bench):
+    """SINGLE SOURCE OF TRUTH for dataset-NATIVE task success (the Source Outcome unit). NEVER uses
+    result['success'] (that is the harness GATE over all ETCLOVG dims -- a different construct). Every
+    native-success consumer (_outcome_metric, _native_metrics, _per_task_reportable_scores, compare_models,
+    final table) routes through THIS function so the headline and every secondary field agree.
+    Returns:
+      True / False -> the task carries a native outcome signal and did / did not pass it
+      None         -> the task carries NO native outcome signal (adapter incomplete for this task)
+    PB / HAB: ALL of the task's Outcome-dimension checkpoints passed. MedCTA: mean GAcc >= 0.5."""
+    cps = result.get("checkpoints") or []
+    if bench == "MedCTA":
+        gs = [c.get("score") for c in cps
+              if c.get("evaluator_kind") == "gacc_judge" and isinstance(c.get("score"), (int, float))]
+        return None if not gs else ((sum(gs) / len(gs)) >= 0.5)
+    ocps = [c for c in cps
+            if c.get("dimension") == "Outcome" and c.get("checkpoint_status") in ("passed", "failed")]
+    return None if not ocps else all(c.get("checkpoint_status") == "passed" for c in ocps)
+
+
 def _native_metrics(bench, results):
     n = len(results)
     cps = [c for r in results for c in (r.get("checkpoints") or [])]
@@ -137,18 +156,26 @@ def _native_metrics(bench, results):
     base = {"n_tasks": n,
             "checkpoint_pass_rate": round(cp_pass / cp_total, 3) if cp_total else None,
             "checkpoint_passed": cp_pass, "checkpoint_scored": cp_total}
+    # native task success via the SINGLE SOURCE OF TRUTH (native Outcome checkpoints / GAcc), NOT r['success']
+    # (the harness gate). Denominator = tasks that actually carry a native outcome signal.
+    _nat = [native_task_outcome(r, bench) for r in results]
+    _nat = [x for x in _nat if x is not None]
+    _nat_pass, _nat_n = sum(1 for x in _nat if x), len(_nat)
     if bench == "PhysicianBench":
-        passed = sum(1 for r in results if r.get("success") and r.get("evaluation_status") == "complete")
-        base["pass_at_1"] = round(passed / n, 3) if n else None
-        base["pass_at_1_tasks"] = "%d/%d" % (passed, n)
+        base["pass_at_1"] = round(_nat_pass / _nat_n, 3) if _nat_n else None
+        base["pass_at_1_tasks"] = "%d/%d" % (_nat_pass, _nat_n)
+        base["native_note"] = "native Outcome checkpoints only (NOT r['success'] harness gate)"
     elif bench == "MedCTA":
         scores = [c["score"] for c in cps if c.get("evaluator_kind") == "gacc_judge" and isinstance(c.get("score"), (int, float))]
         base["gacc_mean"] = round(sum(scores) / len(scores), 3) if scores else None
         base["gacc_n"] = len(scores)
+        base["pass_at_1"] = round(_nat_pass / _nat_n, 3) if _nat_n else None     # GAcc>=0.5 binary
+        base["pass_at_1_tasks"] = "%d/%d" % (_nat_pass, _nat_n)
     elif bench == "HealthAdminBench":
-        task_ok = sum(1 for r in results if r.get("success"))
-        base["task_success_rate"] = round(task_ok / n, 3) if n else None
+        base["task_success_rate"] = round(_nat_pass / _nat_n, 3) if _nat_n else None
+        base["task_success_tasks"] = "%d/%d" % (_nat_pass, _nat_n)
         base["subtask_pass_rate"] = base["checkpoint_pass_rate"]
+        base["native_note"] = "native Outcome checkpoints only (NOT r['success'] harness gate)"
     return base
 
 
@@ -623,29 +650,13 @@ def _outcome_metric(results, bench=None):
                 ntot += 1; npass += 1 if c.get("checkpoint_status") == "passed" else 0
     gacc = [c.get("score") for r in results for c in (r.get("checkpoints") or [])
             if c.get("evaluator_kind") == "gacc_judge" and isinstance(c.get("score"), (int, float))]
-    # native task success, computed from NATIVE success ONLY (never from harness checkpoints).
-    if bench == "MedCTA":
-        # GAcc>=0.5 is MedCTA's native task-success notion; pass_at_1 over GAcc-scored tasks only.
-        _succ_tasks = [r for r in results if any(
-            c.get("evaluator_kind") == "gacc_judge" and isinstance(c.get("score"), (int, float))
-            for c in (r.get("checkpoints") or []))]
-        _native_ok = sum(1 for r in _succ_tasks if (lambda gs: gs and (sum(gs) / len(gs)) >= 0.5)(
-            [c["score"] for c in (r.get("checkpoints") or [])
-             if c.get("evaluator_kind") == "gacc_judge" and isinstance(c.get("score"), (int, float))]))
-        _native_n = len(_succ_tasks)
-    else:
-        # native task success = the task's OWN Outcome-checkpoints ALL passed (the dataset native task-
-        # completion criterion) -- NOT r.get("success") (that is the harness GATE over ALL ETCLOVG dims, a
-        # different construct). This keeps native_task_success independent from harness_gate.
-        def _task_native_ok(r):
-            _o = [c for c in (r.get("checkpoints") or [])
-                  if c.get("dimension") == "Outcome" and c.get("checkpoint_status") in ("passed", "failed")]
-            return bool(_o) and all(c.get("checkpoint_status") == "passed" for c in _o)
-        _succ_tasks = [r for r in results if any(
-            c.get("dimension") == "Outcome" and c.get("checkpoint_status") in ("passed", "failed")
-            for c in (r.get("checkpoints") or []))]
-        _native_ok = sum(1 for r in _succ_tasks if _task_native_ok(r))
-        _native_n = len(_succ_tasks)
+    # native task success via the SINGLE SOURCE OF TRUTH native_task_outcome() (MedCTA GAcc>=0.5; PB/HAB all
+    # Outcome-checkpoints passed) -- NEVER r.get("success") (the harness GATE over all ETCLOVG dims). The
+    # denominator is exactly the tasks that carry a native outcome signal (native_task_outcome is not None).
+    _signals = [(r, native_task_outcome(r, bench)) for r in results]
+    _succ_tasks = [r for (r, o) in _signals if o is not None]
+    _native_ok = sum(1 for (_, o) in _signals if o)
+    _native_n = len(_succ_tasks)
     _native_block = {
         "outcome_task_success_rate": round(_native_ok / _native_n, 3) if _native_n else None,
         "pass_at_1": round(_native_ok / _native_n, 3) if _native_n else None,
@@ -932,16 +943,10 @@ def _per_task_reportable_scores(agent_dir, bench, metric="native_success"):
         for rp in sorted(glob.glob(os.path.join(agent_dir, "*", "result.json"))):
             tid = os.path.basename(os.path.dirname(rp))
             bdir = os.path.dirname(rp)
-            # PURE READ of the per-task Governance: prefer the SHARED CONTRACT top-level "Governance" block;
-            # fall back to the legacy canonical.governance block for older bundles. NO model call.
+            # SOLE TRUTH: the shared-contract top-level "Governance" block. The legacy canonical.governance
+            # fallback is REMOVED -- a paired comparison must never silently read a stale shadow score. A
+            # missing / invalid top-level block -> (None, False) = N/A, exactly like the main report. NO call.
             gblk, _err = _read_dim_block(bdir, "Governance")
-            if not (gblk and isinstance(gblk.get("score"), (int, float))):
-                rescored = os.path.join(bdir, "result.rescored.json")
-                try:
-                    base = json.load(open(rescored)) if os.path.exists(rescored) else None
-                except Exception:
-                    base = None
-                gblk = ((base or {}).get("canonical") or {}).get("governance") if base else None
             if gblk and isinstance(gblk.get("score"), (int, float)):
                 out[tid] = (gblk["score"], bool(gblk.get("reportable")))
             else:
@@ -955,16 +960,15 @@ def _per_task_reportable_scores(agent_dir, bench, metric="native_success"):
         except Exception:
             out[tid] = (None, False); continue
         es = r.get("evaluation_status")
+        # native_success unit via the SINGLE SOURCE OF TRUTH native_task_outcome() (binary; MedCTA GAcc>=0.5,
+        # PB/HAB all-Outcome-checkpoints-passed) -- NOT r['success']. Headline and paired comparison agree.
         if bench == "MedCTA":
-            gaccs = [c.get("score") for c in (r.get("checkpoints") or [])
-                     if c.get("evaluator_kind") == "gacc_judge" and isinstance(c.get("score"), (int, float))]
-            if gaccs:
-                out[tid] = (round(sum(gaccs) / len(gaccs), 3), True)
-            else:
-                out[tid] = (None, False)
+            o = native_task_outcome(r, bench)           # MedCTA signal is GAcc, independent of es
+            out[tid] = ((1.0 if o else 0.0), True) if o is not None else (None, False)
         else:
             if es in ("complete", "partial", "proxy_partial"):
-                out[tid] = (1.0 if r.get("success") else 0.0, True)
+                o = native_task_outcome(r, bench)
+                out[tid] = ((1.0 if o else 0.0), True) if o is not None else (None, False)
             else:
                 out[tid] = (None, False)        # error / not_evaluated -> not reportable
     return out

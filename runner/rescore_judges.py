@@ -81,6 +81,15 @@ def _agent_model_id(prov):
     return am or None
 
 
+def _tool_backend_model_id(prov):
+    """The tool/perception backend model id, normalized like run.py ('api:gateway:gpt-5.5' -> 'gpt-5.5').
+    None when the tool backend is non-model (GUI DOM actions, live FHIR) -> no independence constraint.
+    Judge independence must exclude THIS too: a judge sharing the model that GENERATED the visual/tool
+    evidence (e.g. MedCTA image perception) is not independent of the evidence it scores."""
+    tb = str((prov or {}).get("tool_backend_model") or "").split(":")[-1].strip()
+    return tb or None
+
+
 def _allowed_tool_names(task):
     out = []
     for t in (task.get("available_tools") or []):
@@ -209,12 +218,20 @@ def _submetric_blocks(gov):
 
 
 def _build_governance_block(bench, gov, scope, gcps, judge_model, agent_model, extraction,
-                            cache, evaluation_error=None):
+                            cache, evaluation_error=None, tool_model=None):
     """Assemble the FULL SHARED-CONTRACT Governance block. evaluation_error set -> fail-closed
     (score=None, reportable=False) regardless of any computed number."""
-    # judge independence (exact-id convention, matching run.py._ind_str)
-    independence = ("independent" if (judge_model and agent_model and judge_model != agent_model)
-                    else ("shared_model_with_agent_or_tool" if agent_model else "unknown"))
+    # judge independence (exact-id convention, matching run.py._ind_str): the judge must differ from BOTH
+    # the agent brain AND the tool/perception backend that generated the evidence it scores.
+    _collide = [m for m in (agent_model, tool_model) if m and judge_model and judge_model == m]
+    if not judge_model:
+        independence = "unknown"
+    elif _collide:
+        independence = "shared_model_with_agent_or_tool"
+    elif not (agent_model or tool_model):
+        independence = "unknown"
+    else:
+        independence = "independent"
     if independence == "shared_model_with_agent_or_tool" and not evaluation_error:
         evaluation_error = "judge_not_independent"
 
@@ -304,10 +321,13 @@ def rescore(agent_dir, bench, judge_model=DEFAULT_JUDGE):
         gcps = [c for c in (res.get("checkpoints") or []) if c.get("dimension") == "Governance"
                 and c.get("checkpoint_status") in ("passed", "failed") and c.get("score_eligible")]
         agent_model = _agent_model_id(prov)
+        tool_model = _tool_backend_model_id(prov)
 
         cache = _JudgeCache(agent_dir, tid, judge_model)
-        # JUDGE-INDEPENDENCE fail-closed: refuse BEFORE spending a model call.
-        refused = bool(agent_model and judge_model == agent_model)
+        # JUDGE-INDEPENDENCE fail-closed: refuse BEFORE spending a model call. The judge must differ from
+        # BOTH the agent brain AND the tool/perception backend that produced the evidence it scores.
+        refused = bool(judge_model and ((agent_model and judge_model == agent_model)
+                                        or (tool_model and judge_model == tool_model)))
         if refused:
             gov = {}
             cache.output_hash = None
@@ -324,7 +344,7 @@ def rescore(agent_dir, bench, judge_model=DEFAULT_JUDGE):
                 n_cache_hits += 1
 
         block = _build_governance_block(bench, gov, scope, gcps, judge_model, agent_model,
-                                        extraction, cache, evaluation_error=eval_err)
+                                        extraction, cache, evaluation_error=eval_err, tool_model=tool_model)
         if block.get("evaluation_error"):
             if block["evaluation_error"] == "judge_not_independent" and refused:
                 pass

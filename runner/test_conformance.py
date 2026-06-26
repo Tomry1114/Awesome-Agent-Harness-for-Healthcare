@@ -2033,7 +2033,7 @@ def test_paired_common_vs_all_task_differ_when_reportability_differs():
         for tid, (score, rep) in tasks.items():
             td = _os.path.join(ad, tid); _os.makedirs(td, exist_ok=True)
             _json.dump({"task_id": tid}, open(_os.path.join(td, "result.json"), "w"))
-            _json.dump({"canonical": {"governance": {"score": score, "reportable": rep}}},
+            _json.dump({"Governance": {"score": score, "reportable": rep}},
                        open(_os.path.join(td, "result.rescored.json"), "w"))
         return ad
     # A reportable on {t1,t2}; B reportable on {t1,t3} -> different subsets, common = {t1}
