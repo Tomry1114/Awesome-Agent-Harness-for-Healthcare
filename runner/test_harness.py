@@ -896,6 +896,8 @@ def test_validated_evidence_version_only_on_genuine_progress():
     assert L.validated_evidence_version == 1
     L.add_evidence("x", "v3", extra={"status": "VALIDATED", "scope_relation": "foreign"})
     assert L.validated_evidence_version == 1   # foreign-subject evidence is not genuine progress here
+    L.add_evidence("x", "v2", extra={"status": "VALIDATED", "scope_relation": "matched"})  # IDENTICAL to the earlier matched read
+    assert L.validated_evidence_version == 1   # a repeated identical validated read is NOT new progress
 
 
 def _run():

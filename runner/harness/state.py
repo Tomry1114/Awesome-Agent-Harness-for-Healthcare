@@ -32,7 +32,8 @@ class Ledger:
         self._opp_seen = set()              # (key, step) already counted -> one opportunity per ACTION
         self._evk = 0
         self.evidence_version = 0           # bumped on EVERY add_evidence (incl. ATTEMPTED/foreign)
-        self.validated_evidence_version = 0  # bumped ONLY on VALIDATED, non-foreign evidence = real progress
+        self.validated_evidence_version = 0  # bumped ONLY on a NEW validated, non-foreign evidence signature
+        self._validated_sigs = set()        # dedup: a repeated identical read is not new progress
         # CONTRACT(3): legacy note kept below; the validated counter is the one the repair budget keys on.
                                             # revision-identity key so a stuck-revision counter RESETS
                                             # when new evidence lands (the agent made progress)
@@ -72,7 +73,13 @@ class Ledger:
         self.evidence_version += 1          # every event (even a failed/foreign read) bumps this
         _x = extra or {}
         if _x.get("status") == "VALIDATED" and _x.get("scope_relation") != "foreign":
-            self.validated_evidence_version += 1   # genuine progress only -> a failing tool cannot refresh repair budget
+            import hashlib as _hl
+            _sig = (str(subject_id), str(source_type or _x.get("source_class")), str(_x.get("resource")),
+                    str(_x.get("modality")),
+                    _hl.sha1(str(_x.get("value_full") or value or "").encode("utf-8", "replace")).hexdigest()[:16])
+            if _sig not in self._validated_sigs:   # only a NEW validated evidence signature is genuine progress
+                self._validated_sigs.add(_sig)
+                self.validated_evidence_version += 1   # a repeated identical read can no longer refresh the repair budget
         rec = {"evidence_id": "ev-%d" % self._evk, "type": type, "value": value,
                "subject_id": subject_id, "source_event": source_event, "source_type": source_type}
         if extra:

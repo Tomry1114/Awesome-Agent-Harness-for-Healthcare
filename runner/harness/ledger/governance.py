@@ -115,6 +115,7 @@ def summarize(ledger, harness_events, mode=None):
         "repair_success_count": n_repair_success,
         "repair_opportunities": n_repair_opp,
         "escalation_rate": _rate(escalations, len(proposed)),
+        "escalation_count": escalations,
         # violation split — executed_violation_rate is the headline (should drop enforce vs observe);
         # post_commit_failure counts violations found only AFTER the action ran (cannot be prevented):
         "proposed_violation_count": proposed_v,

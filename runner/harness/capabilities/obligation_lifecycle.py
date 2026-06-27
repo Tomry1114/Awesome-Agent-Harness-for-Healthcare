@@ -71,7 +71,7 @@ def _evidence_satisfies(ledger, req, active=None):
     req = req or {}
     want_sc, want_res, want_mod = req.get("source_class"), req.get("resource"), req.get("modality")
     for e in ledger.evidence:
-        if e.get("status") not in (None, "VALIDATED"):       # only validated evidence counts
+        if e.get("status") != "VALIDATED":       # only VALIDATED evidence counts (no legacy status-None fail-open)
             continue
         if active is not None and e.get("subject_id") is not None and _eq(e["subject_id"], active) is False:
             continue                                          # foreign-subject evidence never satisfies
