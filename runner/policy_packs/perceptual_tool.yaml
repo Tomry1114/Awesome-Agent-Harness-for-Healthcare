@@ -36,4 +36,8 @@ commit_points:
   - match: {semantic_type: answer}
     risk: R2
     requires: [grounded_reasoning]
-    postcondition: {type: key_claims_supported_by_image_evidence}   # semantic claim<->evidence (judge)
+    # semantic claim<->evidence (judge). The selector restricts the judge to ONLY perception/image
+    # evidence -> external (web) / computation evidence can never be used to support an image claim.
+    postcondition:
+      type: claim_supported_by_evidence
+      evidence_selector: {source_class: perception, modality: image}

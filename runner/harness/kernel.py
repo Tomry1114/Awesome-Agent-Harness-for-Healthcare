@@ -88,11 +88,13 @@ class HarnessKernel:
         else:  # enforce
             eff = raw
         note = None
-        # budget is a RESOURCE constraint, NOT a safety override: an exhausted budget must NEVER silently
-        # turn a would-be BLOCK/REVISE/ESCALATE into ALLOW. Instead it ESCALATEs (terminate safely). Only
-        # an EFFECTIVE (run-affecting) intervention consumes budget.
+        # budget is a RESOURCE constraint, not a safety override. On exhaustion: enforce ESCALATEs
+        # (terminate safely, never silently ALLOW a would-be BLOCK); assist STOPS giving feedback (ALLOW)
+        # but must NOT terminate (assist is feedback-only by contract); observe never reaches here.
+        # Only an EFFECTIVE (run-affecting) intervention consumes budget.
         if eff != D.ALLOW and self._n_interventions >= self.budget["max_interventions_per_task"]:
-            eff, note = D.ESCALATE, "budget_exhausted_interventions"
+            note = "budget_exhausted_interventions"
+            eff = D.ESCALATE if self.mode == "enforce" else D.ALLOW
         ev = self._ev("harness_decision", stage, decision, mode_applied=eff,
                       extra=({"note": note} if note else None))
         # record the WOULD-BE intervention (raw) with its effective outcome, in every mode
@@ -109,6 +111,7 @@ class HarnessKernel:
         sem = canonicalize(action, self.manifest, observation=observation)
         self.ctx.sem = sem
         self.ctx.risk = classify_risk(sem, self.contract)
+        self.ctx.verification = None
         return sem
 
     def before_action(self, action, env_state=None, step=0):
@@ -134,10 +137,12 @@ class HarnessKernel:
         eff.feedback = _feedback(winner) if eff.type != D.ALLOW else None
         return eff
 
-    def after_action(self, action, result, before_state, after_state, step=0, canonical_observation=None):
+    def after_action(self, action, result, before_state, after_state, step=0, canonical_observation=None,
+                     result_ok=None):
         self.ctx.step = step
         self.ctx.observation = canonical_observation
         sem = self._canon(action, observation=canonical_observation)
+        self.ctx.result_ok = result_ok      # whether the tool result succeeded (adapter signal)
         decisions = []
         for cap in self.capabilities:
             try:
@@ -150,8 +155,9 @@ class HarnessKernel:
         winner = D.combine(decisions, stage="after_action")
         from .risk import at_least, R2
         if at_least(self.ctx.risk, R2):
-            self.ledger.record_commit(sem.capability, step,
-                                      verified=(winner.type == D.ALLOW),
+            # verified is the EXPLICIT tri-state from verify_commit (True/False/None), NOT inferred from
+            # the combined decision — an unverifiable commit must record verified=None, never True.
+            self.ledger.record_commit(sem.capability, step, verified=self.ctx.verification,
                                       detail=winner.reason)
         eff = self._apply_mode(winner, "after_action")
         eff.feedback = _feedback(winner) if eff.type != D.ALLOW else None
@@ -159,7 +165,13 @@ class HarnessKernel:
 
     def before_final(self, answer, step=0):
         self.ctx.step = step
-        self._canon({"type": "final", "answer": answer})
+        sem = self._canon({"type": "final", "answer": answer})
+        from .risk import at_least, R2
+        # the final answer is a commit -> it enters the SAME commit lifecycle (proposal + opportunity).
+        self.ledger.record_proposed(sem.capability, self.ctx.risk, step)
+        is_commit = at_least(self.ctx.risk, R2)
+        if is_commit:
+            self.ledger.bump_opportunity("commit_proposal")
         decisions = []
         for cap in self.capabilities:
             try:
@@ -172,6 +184,10 @@ class HarnessKernel:
         winner = D.combine(decisions, stage="before_final")
         eff = self._apply_mode(winner, "before_final")
         eff.feedback = _feedback(winner) if eff.type != D.ALLOW else None
+        # an ACCEPTED final answer (effective ALLOW) is a committed action.
+        if is_commit and eff.type == D.ALLOW:
+            self.ledger.record_commit(sem.capability, step, verified=self.ctx.verification,
+                                      detail="final_answer")
         return eff
 
     def build_observation(self, tool_result, post_eff):

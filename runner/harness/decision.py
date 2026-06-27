@@ -20,18 +20,19 @@ class HarnessDecision:
     """One capability's verdict on a proposed action / final answer. `feedback` is the structured,
     leak-safe message handed back to the agent (it never contains gold answers or reference traces)."""
 
-    __slots__ = ("type", "stage", "capability", "rule_id", "reason", "missing_obligations",
+    __slots__ = ("type", "stage", "capability", "rule_id", "reason_code", "reason", "missing_obligations",
                  "suggested_capabilities", "feedback", "deterministic", "risk", "extra")
 
     def __init__(self, type=ALLOW, stage=None, capability=None, rule_id=None, reason=None,
                  missing_obligations=None, suggested_capabilities=None, feedback=None,
-                 deterministic=True, risk=None, extra=None):
+                 deterministic=True, risk=None, extra=None, reason_code=None):
         if type not in _PRIORITY:
             raise ValueError("unknown decision %r" % (type,))
         self.type = type
         self.stage = stage
         self.capability = capability
         self.rule_id = rule_id
+        self.reason_code = reason_code   # STRUCTURED category for metrics (rule_id is for audit only)
         self.reason = reason
         self.missing_obligations = list(missing_obligations or [])
         self.suggested_capabilities = list(suggested_capabilities or [])
@@ -46,7 +47,7 @@ class HarnessDecision:
 
     def to_dict(self):
         d = {"decision": self.type, "stage": self.stage, "capability": self.capability,
-             "rule_id": self.rule_id, "reason": self.reason,
+             "rule_id": self.rule_id, "reason_code": self.reason_code, "reason": self.reason,
              "missing_obligations": self.missing_obligations,
              "suggested_capabilities": self.suggested_capabilities,
              "deterministic": self.deterministic, "risk": self.risk}

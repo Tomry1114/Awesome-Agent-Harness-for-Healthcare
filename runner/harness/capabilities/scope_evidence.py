@@ -23,7 +23,7 @@ class ScopeEvidenceBinding(Capability):
             return None
         if _norm(target) != _norm(active):
             return self._decide(
-                D.BLOCK, rule_id="subject_scope_mismatch", deterministic=True,
+                D.BLOCK, rule_id="subject_scope_mismatch", reason_code="wrong_scope", deterministic=True,
                 reason="action operates on %s but the active subject is %s" % (target, active),
                 feedback="This action targets %s; the assigned subject is %s. Operate only on %s."
                          % (target, active, active),
@@ -40,17 +40,26 @@ class ScopeEvidenceBinding(Capability):
             ctx.ledger.bump_opportunity("subject_bearing_action")
             if _norm(shown) != _norm(active):
                 return self._decide(
-                    D.REVISE, rule_id="subject_scope_mismatch", deterministic=True,
+                    D.REVISE, rule_id="subject_scope_mismatch", reason_code="wrong_scope", deterministic=True,
                     reason="page now shows %s but the assigned subject is %s" % (shown, active),
                     feedback="You are viewing %s; the assigned subject is %s — return to it." % (shown, active),
                     extra={"shown": shown, "active_subject": active})
-        # evidence binding: a read action that yields evidence (source_class declared by the manifest)
+        # evidence binding: a read action that yields evidence (source_class declared by the manifest).
+        # Evidence is tagged with VALIDITY (only success + non-empty -> VALIDATED) and bound to the
+        # action's OWN subject (sem.target_entity), with a scope_relation to the active subject. A failed/
+        # empty result, or a foreign-subject read, therefore does NOT satisfy an obligation.
         if sem and sem.source_class:
+            valid = (ctx.result_ok is not False) and _nonempty(result)
+            subj = sem.target_entity if sem.target_entity is not None else active
+            rel = ("matched" if (subj is not None and active is not None and _norm(subj) == _norm(active))
+                   else ("foreign" if (subj is not None and active is not None) else "unknown"))
             ctx.ledger.add_evidence(type=(sem.resource or sem.capability), value=_summarize(result),
-                                    subject_id=active, source_event="step-%d" % ctx.step,
+                                    subject_id=subj, source_event="step-%d" % ctx.step,
                                     source_type=sem.source_class,
                                     extra={"modality": sem.modality, "resource": sem.resource,
-                                           "source_class": sem.source_class})
+                                           "source_class": sem.source_class,
+                                           "status": ("VALIDATED" if valid else "ATTEMPTED"),
+                                           "scope_relation": rel})
         return None
 
 
@@ -66,6 +75,13 @@ def _arg_subject(action, manifest):
 
 def _norm(x):
     return str(x or "").strip().lower().split("/")[-1]
+
+
+def _nonempty(result):
+    if result is None:
+        return False
+    s = result if isinstance(result, str) else str(result)
+    return bool(s.strip())
 
 
 def _summarize(result):

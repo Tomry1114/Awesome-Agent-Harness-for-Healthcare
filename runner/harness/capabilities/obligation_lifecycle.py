@@ -41,18 +41,20 @@ class ObligationLifecycle(Capability):
             return None
         leaves, sugg = _expand_missing(ctx.ledger, missing)
         return self._decide(
-            D.REVISE, rule_id=cp.get("requires_rule", default_rule), deterministic=True,
+            D.REVISE, rule_id=cp.get("requires_rule", default_rule), reason_code="missing_prerequisite",
+            deterministic=True,
             missing_obligations=leaves, suggested_capabilities=sugg,
             reason="commit requires unmet obligations: %s" % ", ".join(leaves),
             feedback="Before this commit, complete: %s." % ", ".join(leaves))
 
     def after_action(self, action, result, before_state, after_state, ctx):
         # 1) satisfy evidence obligations whose required evidence now EXISTS in the ledger
+        active = ctx.ledger.subject_id()
         for oid, ob in ctx.ledger.obligations.items():
             if ob.get("state") in (SATISFIED, WAIVED):
                 continue
-            if ob.get("kind") == "evidence" and _evidence_satisfies(ctx.ledger, ob.get("satisfied_by")):
-                ctx.ledger.set_obligation(oid, SATISFIED, note="evidence present",
+            if ob.get("kind") == "evidence" and _evidence_satisfies(ctx.ledger, ob.get("satisfied_by"), active):
+                ctx.ledger.set_obligation(oid, SATISFIED, note="valid evidence present",
                                           event_id="step-%d" % ctx.step)
         # 2) propagate workflow obligations whose prerequisites are all satisfied
         for oid, ob in ctx.ledger.obligations.items():
@@ -62,12 +64,17 @@ class ObligationLifecycle(Capability):
         return None
 
 
-def _evidence_satisfies(ledger, req):
-    """True iff some ledger evidence matches every declared field of `req` (source_class / resource /
-    modality). req with no fields -> any evidence satisfies."""
+def _evidence_satisfies(ledger, req, active=None):
+    """True iff some VALIDATED, SUBJECT-CONSISTENT ledger evidence matches every declared field of `req`
+    (source_class / resource / modality). A failed/empty (ATTEMPTED) read, or evidence about a foreign
+    subject, does NOT satisfy an obligation."""
     req = req or {}
     want_sc, want_res, want_mod = req.get("source_class"), req.get("resource"), req.get("modality")
     for e in ledger.evidence:
+        if e.get("status") not in (None, "VALIDATED"):       # only validated evidence counts
+            continue
+        if active is not None and e.get("subject_id") is not None and _eq(e["subject_id"], active) is False:
+            continue                                          # foreign-subject evidence never satisfies
         if want_sc and (e.get("source_class") or e.get("source_type")) != want_sc:
             continue
         if want_res and e.get("resource") != want_res:
@@ -76,6 +83,10 @@ def _evidence_satisfies(ledger, req):
             continue
         return True
     return False
+
+
+def _eq(a, b):
+    return str(a or "").strip().lower().split("/")[-1] == str(b or "").strip().lower().split("/")[-1]
 
 
 def _expand_missing(ledger, missing):

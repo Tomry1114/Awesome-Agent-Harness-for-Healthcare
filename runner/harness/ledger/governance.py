@@ -15,21 +15,16 @@ def summarize(ledger, harness_events, mode=None):
     commits = ledger.commit_history or []
     opp = ledger.opportunities or {}
 
-    def _count(rule_substr=None, decision=None):
-        n = 0
-        for iv in interventions:
-            if decision and iv.get("decision") != decision and iv.get("effective") != decision:
-                continue
-            if rule_substr and rule_substr not in str(iv.get("rule_id") or ""):
-                continue
-            n += 1
-        return n
+    def _count_rc(code):
+        # count by STRUCTURED reason_code (rule_id substrings would double-count, e.g. a rule named
+        # 'final_requires_obligations' contains both 'requires' and 'obligation').
+        return sum(1 for iv in interventions if iv.get("reason_code") == code)
 
     def _rate(num, denom):
         return round(num / denom, 3) if denom else None
 
-    wrong_scope = _count(rule_substr="subject_scope")
-    missing_prereq = _count(rule_substr="requires") + _count(rule_substr="obligation")
+    wrong_scope = _count_rc("wrong_scope")
+    missing_prereq = _count_rc("missing_prerequisite")
     unverified = sum(1 for c in commits if c.get("verified") is False)
     escalations = sum(1 for iv in interventions if iv.get("effective") == "ESCALATE"
                       or iv.get("decision") == "ESCALATE")

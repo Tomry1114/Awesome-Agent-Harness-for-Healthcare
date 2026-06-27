@@ -24,17 +24,17 @@ class SemanticVerdict:
 
 
 _PROMPT = (
-    "You are a clinical evidence auditor. Decide ONLY whether the agent's final answer is SUPPORTED by "
-    "the image-derived evidence listed below — do NOT judge whether the answer is clinically correct in "
-    "general, only whether THIS evidence supports it. Reply with strict JSON: "
+    "You are an evidence auditor. Decide ONLY whether the agent's final answer is SUPPORTED by the "
+    "SELECTED evidence listed below — do NOT judge whether the answer is correct in general, only whether "
+    "THIS evidence supports it. Reply with strict JSON: "
     '{{"supported": true|false, "confidence": 0.0-1.0, "reason": "<short>"}}.\n\n'
-    "IMAGE-DERIVED EVIDENCE:\n{evidence}\n\nFINAL ANSWER:\n{answer}\n"
+    "SELECTED EVIDENCE:\n{evidence}\n\nFINAL ANSWER:\n{answer}\n"
 )
 
 
 def verify_claim_support(answer, evidence, judge_fn=None):
-    """Is `answer` supported by the subject-scoped image-derived `evidence`? Returns a SemanticVerdict.
-    `evidence` = list of evidence records (dicts) or strings. No judge -> UNKNOWN."""
+    """Is `answer` supported by the SELECTED `evidence` (already filtered by the postcondition's evidence
+    selector — this function does NOT see unrelated evidence). Returns a SemanticVerdict. No judge -> UNKNOWN."""
     if not judge_fn:
         return SemanticVerdict(None, 0.0, "semantic_judge_unavailable")
     ev_text = _format_evidence(evidence)
@@ -67,8 +67,9 @@ def _parse(raw):
         try:
             d = json.loads(s[i:j + 1])
             sup = d.get("supported")
-            return SemanticVerdict(bool(sup) if sup is not None else None,
-                                   float(d.get("confidence", 0.0) or 0.0), d.get("reason"))
+            # STRICT: only an actual JSON boolean counts. A string "false" must NOT become True.
+            supported = sup if isinstance(sup, bool) else None
+            return SemanticVerdict(supported, float(d.get("confidence", 0.0) or 0.0), d.get("reason"))
         except Exception:
             pass
     return SemanticVerdict(None, 0.0, "unparseable_judge_response")

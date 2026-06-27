@@ -109,25 +109,30 @@ def _resolve_resource(action, rule, pe):
 
 
 def _extract_subject(action, manifest, observation):
-    """The operated-on subject id, by the manifest's declared extraction (structured args first, then the
-    displayed/observation subject). Pure data-driven; the core never parses ids itself."""
+    """The operated-on subject id, by the manifest's DECLARED extraction (structured args first, then
+    declared observation PATHS). Fully data-driven: the core knows no domain field (no 'patient_id',
+    no 'page_state') — every path comes from manifest.subject. Dotted paths are supported."""
     subj = manifest.get("subject") or {}
     args = (action or {}).get("args") or {}
     if isinstance(args, dict):
         for k in (subj.get("from_args") or []):
             if args.get(k):
                 return str(args[k])
-    if observation and subj.get("from_observation"):
-        if isinstance(observation, dict):
-            for k in subj["from_observation"]:
-                if observation.get(k):
-                    return str(observation[k])
-            ps = observation.get("page_state")
-            if isinstance(ps, dict):
-                for sect in ps.values():
-                    if isinstance(sect, dict) and sect.get("patient_id"):
-                        return str(sect["patient_id"])
+    if observation and isinstance(observation, dict):
+        for path in (subj.get("from_observation") or []):
+            v = _path_get(observation, path)
+            if v:
+                return str(v)
     return None
+
+
+def _path_get(d, path):
+    cur = d
+    for part in str(path).split("."):
+        cur = cur.get(part) if isinstance(cur, dict) else None
+        if cur is None:
+            return None
+    return cur
 
 
 def assigned_subject(manifest, goal=None, context=None, observed=None):

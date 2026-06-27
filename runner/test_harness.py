@@ -144,6 +144,27 @@ def test_opportunity_denominators():
     assert s2["wrong_scope_action_rate"] is None, s2
 
 
+def test_failed_result_does_not_satisfy_obligation():
+    """A failed/empty tool result is ATTEMPTED evidence, not VALIDATED -> it cannot satisfy an obligation."""
+    k = _kernel("enforce")
+    allergy = {"type": "tool", "tool": "fhir_search", "args": {"patient": "Patient/123", "resource_type": "AllergyIntolerance"}}
+    k.after_action(allergy, "{error: HTTP 500}", {"a": 0}, {"a": 0}, step=1, result_ok=False)
+    assert k.ledger.obligation_state("check_allergies") != "SATISFIED", "error result must not satisfy"
+    k.after_action(allergy, "penicillin allergy", {"a": 0}, {"a": 1}, step=2, result_ok=True)
+    assert k.ledger.obligation_state("check_allergies") == "SATISFIED"
+
+
+def test_unverifiable_commit_not_recorded_verified():
+    """A commit whose state is unobservable -> verification None (UNKNOWN), NOT verified=True."""
+    k = _kernel("enforce")
+    allergy = {"type": "tool", "tool": "fhir_search", "args": {"patient": "Patient/123", "resource_type": "AllergyIntolerance"}}
+    k.after_action(allergy, "penicillin", {"a": 0}, {"a": 1}, step=1, result_ok=True)   # satisfy med_review
+    create = {"type": "tool", "tool": "create_medication_request", "args": {"patient": "Patient/123"}}
+    assert k.before_action(create, step=2).type == D.ALLOW
+    k.after_action(create, "created", None, None, step=2, result_ok=True)   # unobservable state
+    assert k.ledger.commit_history[-1]["verified"] is None, k.ledger.commit_history[-1]
+
+
 def test_capability_error_does_not_crash():
     class Boom(ScopeEvidenceBinding):
         def before_action(self, action, ctx):

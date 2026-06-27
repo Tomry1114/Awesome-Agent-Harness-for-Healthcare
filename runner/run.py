@@ -203,7 +203,8 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
         if _harness is not None:
             try:
                 _hpost = _harness.after_action(action, res, _state_before, _state_after, step=step,
-                                               canonical_observation=_canon.canonical_observation(res, env_type))
+                                               canonical_observation=_canon.canonical_observation(res, env_type),
+                                               result_ok=not (isinstance(res, dict) and res.get("error")))
             except Exception:
                 _hpost = None
         _src_full = json.dumps(res, ensure_ascii=False)
@@ -237,7 +238,11 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
         trajectory.append(_ev)
         if _hpost is not None:
             trajectory.extend(_hpost.events)
-            if _hpost.type in ("REVISE", "BLOCK", "ESCALATE") and _hpost.feedback:   # fold into next obs
+            if _hpost.type == "ESCALATE":          # retrospective escalation TERMINATES the run
+                trajectory.append({"step": step, "event_type": "harness_escalation",
+                                   "stage": "after_action", "feedback": _hpost.feedback, "status": "error"})
+                _aborted = True; break
+            if _hpost.type in ("REVISE", "BLOCK") and _hpost.feedback:   # fold into next obs
                 obs = (obs + "\n[HARNESS] " + json.dumps(_hpost.feedback, ensure_ascii=False))[:int(os.environ.get("MH_OBS_MAX_LEN", "10000"))]
         _last_tool_ev = _ev   # mark consumed only if a later agent.act() runs (circuit-break -> stays False)
         if _err:
