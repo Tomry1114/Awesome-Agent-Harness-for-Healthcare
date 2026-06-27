@@ -26,9 +26,11 @@ class ClinicalProcessContract:
                 [o.get("id") for o in self.workflow_obligations if o.get("id")])
 
     def _cp_matches(self, cp, sem):
-        m = cp.get("match")
-        if not m:                       # None or {} -> a bare commit point (any commit), never any action
+        if "match" not in cp:           # match OMITTED -> a bare commit point (any commit)
             return getattr(sem, "is_commit", lambda: False)()
+        m = cp.get("match")
+        if not m:                       # explicit empty match {} is invalid (flagged by the loader) -> nothing
+            return False
         for field in ("semantic_type", "effect", "resource"):
             if field in m and m[field] != getattr(sem, field, None):
                 return False

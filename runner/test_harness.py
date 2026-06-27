@@ -95,7 +95,7 @@ def test_commit_requires_obligation_then_satisfied():
     assert k.before_action(commit, step=0).type == D.REVISE
     allergy = {"type": "tool", "tool": "fhir_search", "args": {"patient": "Patient/123", "resource_type": "AllergyIntolerance"}}
     k.before_action(allergy, step=1)
-    k.after_action(allergy, "penicillin allergy", {"a": 0}, {"a": 1}, step=1)
+    k.after_action(allergy, "penicillin allergy", {"a": 0}, {"a": 1}, step=1, result_ok=True)
     assert k.ledger.obligation_state("check_allergies") == "SATISFIED"
     assert k.ledger.obligation_state("med_review") == "SATISFIED"
     assert k.before_action(commit, step=2).type == D.ALLOW
@@ -199,8 +199,8 @@ def test_p1_structured_record_pack():
     assert k.before_action(create, step=2).type == D.REVISE
     allergy = {"type": "tool", "tool": "fhir_allergy_intolerance_search_active", "args": {"patient": "MRN6025656705"}}
     meds = {"type": "tool", "tool": "fhir_medication_request_search_orders", "args": {"patient": "MRN6025656705"}}
-    k.after_action(allergy, "penicillin", {"x": 0}, {"x": 1}, step=3)
-    k.after_action(meds, "lisinopril", {"x": 1}, {"x": 2}, step=4)
+    k.after_action(allergy, "penicillin", {"x": 0}, {"x": 1}, step=3, result_ok=True)
+    k.after_action(meds, "lisinopril", {"x": 1}, {"x": 2}, step=4, result_ok=True)
     assert k.ledger.obligation_state("medication_safety_review") == "SATISFIED"
     assert k.before_action(create, step=5).type == D.ALLOW
     assert classify_risk(canonicalize(create, pol["manifest"]), contract) == "R2"
@@ -236,7 +236,7 @@ def test_p3_perceptual_tool_pack():
                       mode="enforce", policy=pol, env_type="tool_sandbox")
     assert k.before_final("a 3 cm mass", step=0).type == D.REVISE      # ungrounded
     region = {"type": "tool", "tool": "RegionAttributeDescription", "args": {}}
-    k.after_action(region, "spiculated RUL nodule", None, None, step=1)
+    k.after_action(region, "spiculated RUL nodule", None, None, step=1, result_ok=True)
     assert k.ledger.obligation_state("image_derived_evidence") == "SATISFIED"
     # grounded, but NO judge configured -> claim-support is UNVERIFIABLE -> enforce ESCALATEs (fail-closed),
     # it does NOT pass just because grounding evidence exists. (With a judge -> see the semantic test.)
@@ -259,7 +259,7 @@ def test_p3_semantic_claim_support_judge():
                           mode="enforce", policy=pol, env_type="tool_sandbox", judge_fn=judge_fn,
                           budget={"max_semantic_checks": 5})
         k.after_action({"type": "tool", "tool": "ImageDescription", "args": {}},
-                       "a 3cm spiculated RUL nodule", None, None, step=0)
+                       "a 3cm spiculated RUL nodule", None, None, step=0, result_ok=True)
         return k
 
     assert mk(lambda p: '{"supported": true, "confidence": 0.9, "reason": "ok"}').before_final("RUL nodule", step=1).type == D.ALLOW
@@ -295,7 +295,7 @@ def test_tool_renaming_invariance():
                       mode="enforce", policy=pol, env_type="fhir")
     create = {"type": "tool", "tool": "zz9", "args": {"patient": "Patient/123"}}
     assert k.before_action(create, step=0).type == D.REVISE                 # missing prerequisite
-    k.after_action({"type": "tool", "tool": "xq7", "args": {"patient": "Patient/123"}}, "ok", {"a": 0}, {"a": 1}, step=1)
+    k.after_action({"type": "tool", "tool": "xq7", "args": {"patient": "Patient/123"}}, "ok", {"a": 0}, {"a": 1}, step=1, result_ok=True)
     assert k.ledger.obligation_state("allergies") == "SATISFIED"            # satisfied by evidence class
     assert k.before_action(create, step=2).type == D.ALLOW
     assert k.before_action({"type": "tool", "tool": "xq7", "args": {"patient": "Patient/999"}}, step=3).type == D.BLOCK
@@ -552,6 +552,45 @@ def test_unseen_adapter_zero_core_change():
                    step=6, result_ok=True)
     assert k.ledger.commit_history[-1]["verified"] is True
     assert any(r["resolution"] == "repaired" for r in k.ledger.resolutions)
+
+
+def test_loader_rejects_invalid_enums():
+    """A typo'd effect/semantic_type/binding/source_class is caught at load (would otherwise be accepted
+    verbatim by the canonicalizer and silently mis-classify risk/scope)."""
+    from harness.engines.policy import _validate_enums
+    errs = []
+    _validate_enums({"subject": {"binding": "requred"},
+                     "actions": [{"match": {"tool": "x"}, "semantic_type": "craete", "effect": "irreversble",
+                                  "produces_evidence": {"source_class": "recrod"}},
+                                 {"match": {}}]}, errs)
+    assert any("invalid_subject_binding" in e for e in errs)
+    assert any("invalid_semantic_type" in e for e in errs)
+    assert any("invalid_effect" in e for e in errs)
+    assert any("invalid_source_class" in e for e in errs)
+    assert any("action_rule_empty_match" in e for e in errs)
+
+
+def test_uncovered_irreversible_escalates():
+    """An irreversible action that NO commit point covers (no obligations/postcondition) fails closed."""
+    pol = {"manifest": {"subject": {}, "actions": [{"match": {"tool": "danger"},
+            "semantic_type": "create", "effect": "irreversible"}]},
+           "evidence_obligations": [], "workflow_obligations": [], "commit_points": []}
+    task = {"task_id": "t", "goal": "g", "context": {}, "environment": {"type": "fhir"}}
+    contract = build_contract(task, env_type="fhir", policy=pol)
+    k = HarnessKernel(contract, [ScopeEvidenceBinding(), ObligationLifecycle(), VerifyAndCommit()],
+                      mode="enforce", policy=pol, env_type="fhir")
+    assert k.before_action({"type": "tool", "tool": "danger", "args": {}}, step=0).type == D.ESCALATE
+
+
+def test_required_binding_rejects_subjectless_read():
+    """required binding covers READS too: a search with no patient ('all patients') -> REVISE."""
+    pol = H.load_policy(env_type="fhir")
+    task = {"task_id": "t", "goal": "g", "context": {"patient_ref": "Patient/1"}, "environment": {"type": "fhir"}}
+    contract = build_contract(task, env_type="fhir", policy=pol)
+    k = HarnessKernel(contract, [ScopeEvidenceBinding(), ObligationLifecycle(), VerifyAndCommit()],
+                      mode="enforce", policy=pol, env_type="fhir")
+    rd = {"type": "tool", "tool": "fhir_allergy_intolerance_search_active", "args": {}}
+    assert k.before_action(rd, step=0).type == D.REVISE
 
 
 def _run():

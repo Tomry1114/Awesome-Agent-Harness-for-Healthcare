@@ -84,7 +84,7 @@ def test_n_semantic_checks_increments():
     assert k.audit()["n_semantic_checks"] == 0, k.audit()["n_semantic_checks"]
     # ground a perception-tool claim, then accept a final answer -> verify_commit spends one semantic check
     k.after_action({"type": "tool", "tool": "ImageDescription", "args": {}},
-                   "a 3cm spiculated RUL nodule", None, None, step=0)
+                   "a 3cm spiculated RUL nodule", None, None, step=0, result_ok=True)
     assert k.before_final("RUL nodule", step=1).type == D.ALLOW
     n = k.audit()["n_semantic_checks"]
     assert n >= 1, ("a semantic check should have been spent", n)

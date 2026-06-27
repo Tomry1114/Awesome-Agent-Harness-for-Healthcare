@@ -8,7 +8,9 @@ clinical_modules: [evidence_grounding]
 manifest:
   subject:
     type: perceptual_artifact
-    binding: none            # single-artifact tasks: perception tools carry no per-action subject
+    # implicit_active: perception evidence binds to the active artifact (when one is identified) so A-image
+    # evidence cannot ground a B-image answer in multi-artifact tasks; falls back to None for a lone image.
+    binding: implicit_active
     id_context_keys: [image_id, series_id, image, region_id]
     from_args: [image_id, image, region_id, series_id]
   actions:

@@ -33,6 +33,15 @@ class VerifyAndCommit(Capability):
                                 deterministic=True,
                                 reason="action is high-risk and cannot be reliably adjudicated",
                                 feedback="This action is high-risk and cannot be auto-verified; escalating.")
+        # FAIL-CLOSED: an IRREVERSIBLE action that NO commit point covers has no obligations and no
+        # postcondition -> it would execute unverified. Escalate instead of silently allowing it.
+        if (ctx.sem and ctx.sem.effect == "irreversible" and ctx.contract
+                and not ctx.contract.matching_commit_points(ctx.sem)):
+            return self._decide(D.ESCALATE, rule_id="uncovered_irreversible_action",
+                                reason_code="unverifiable_commit", deterministic=True,
+                                reason="irreversible action is not covered by any commit point (no "
+                                       "obligations/postcondition) — cannot be verified",
+                                feedback="This irreversible action has no governing commit policy; escalating.")
         return None
 
     def after_action(self, action, result, before_state, after_state, ctx):
@@ -108,7 +117,10 @@ class VerifyAndCommit(Capability):
 
 
 def _selected(e, selector):
-    """Evidence passes the postcondition's selector: VALIDATED + every declared source_class/modality."""
+    """Evidence passes the postcondition's selector: VALIDATED + NOT foreign-subject + every declared
+    source_class/modality. Foreign-subject evidence is never fed to the claim-support judge."""
+    if e.get("scope_relation") == "foreign":
+        return False
     if not selector:
         return True
     if e.get("status") not in (None, "VALIDATED"):

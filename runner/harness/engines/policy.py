@@ -65,6 +65,47 @@ def _load_json(path):
         return json.load(f)
 
 
+_SEMANTIC_TYPES = {"read", "inspect", "create", "update", "submit", "answer", "other"}
+_EFFECTS = {"none", "reversible", "irreversible"}
+_BINDINGS = {"required", "implicit_active", "none"}
+_SOURCE_CLASSES = {"record", "perception", "interface", "external", "computation"}
+_PREDICATE_TYPES = {"state_transition", "object_exists", "field_equals", "field_not_equals",
+                    "no_unexpected_side_effect", "target_consistency", "claim_supported_by_evidence",
+                    "key_claims_supported_by_image_evidence"}
+
+
+def _validate_enums(manifest, errors):
+    """Strict enum validation: a typo'd effect/semantic_type/binding/source_class would otherwise be
+    accepted verbatim by the canonicalizer and silently mis-classify risk/scope. Fail it at load."""
+    subj = manifest.get("subject") or {}
+    if subj.get("binding") and subj["binding"] not in _BINDINGS:
+        errors.append("invalid_subject_binding:%s" % subj["binding"])
+    rules = manifest.get("actions") or []
+    pats = []
+    for r in rules:
+        m = r.get("match")
+        if not m:
+            errors.append("action_rule_empty_match")           # a rule MUST declare a non-empty match
+        if r.get("semantic_type") and r["semantic_type"] not in _SEMANTIC_TYPES:
+            errors.append("invalid_semantic_type:%s" % r["semantic_type"])
+        if r.get("effect") and r["effect"] not in _EFFECTS:
+            errors.append("invalid_effect:%s" % r["effect"])
+        if r.get("subject_binding") and r["subject_binding"] not in _BINDINGS:
+            errors.append("invalid_subject_binding:%s" % r["subject_binding"])
+        pe = r.get("produces_evidence") or {}
+        if pe.get("source_class") and pe["source_class"] not in _SOURCE_CLASSES:
+            errors.append("invalid_source_class:%s" % pe["source_class"])
+        p = (m or {}).get("tool_pattern")
+        if p:
+            pats.append((p, r.get("semantic_type"), r.get("effect")))
+    # static ambiguity audit: one tool_pattern is a substring of another with DIFFERENT semantics -> the
+    # first-match order silently decides; flag it (the maintainer should reorder or disambiguate).
+    for i, (p, st, ef) in enumerate(pats):
+        for q, st2, ef2 in pats[:i]:
+            if (p in q or q in p) and (st, ef) != (st2, ef2):
+                errors.append("ambiguous_action_rules:%s~%s" % (q, p))
+
+
 def substrate_of(env_type):
     return _SUBSTRATE_BY_ENV.get(env_type)
 
@@ -98,6 +139,7 @@ def load_policy(adapter=None, substrate=None, env_type=None):
         return out
 
     manifest = adoc.get("manifest", {})
+    _validate_enums(manifest, errors)
     ev = _concat("evidence_obligations", [sdoc] + cdocs)
     wf = _concat("workflow_obligations", [sdoc] + cdocs)
     # clinical (specific) commit points FIRST -> commit_point_for matches them before the substrate's
@@ -121,6 +163,10 @@ def load_policy(adapter=None, substrate=None, env_type=None):
                 errors.append("commit_requires_unknown_obligation:%s" % r)
         if cp.get("match") == {}:        # an explicit empty match is almost always a typo (matches any commit)
             errors.append("overly_broad_commit_match")
+        post = cp.get("postcondition")
+        pt = (post.get("type") if isinstance(post, dict) else post)
+        if pt and pt not in _PREDICATE_TYPES:    # a postcondition the predicate registry can't evaluate
+            errors.append("invalid_postcondition_type:%s" % pt)
 
     return {
         "manifest": manifest, "evidence_obligations": ev, "workflow_obligations": wf,

@@ -22,11 +22,13 @@ class ScopeEvidenceBinding(Capability):
         active = ctx.ledger.subject_id()
         # a subject-bound COMMIT under `required` binding with NO resolved target: "operating on nobody"
         # must NOT pass as "operating on the active subject" -> REVISE (name the subject explicitly).
-        if binding == "required" and target is None and sem and sem.is_commit():
+        # `required` binding applies to EVERY subject-bearing action of that rule (a commit OR a read that
+        # produces evidence) — not only commits. "Search all patients" / a subject-less write both fail.
+        if binding == "required" and target is None and sem and (sem.is_commit() or sem.source_class):
             return self._decide(
                 D.REVISE, rule_id="subject_unspecified", reason_code="subject_unspecified", deterministic=True,
-                reason="commit does not specify which subject it operates on",
-                feedback="This action does not name a subject; specify the subject it applies to before committing.")
+                reason="action does not specify which subject it operates on",
+                feedback="This action does not name a subject; specify the subject it applies to.")
         # PROSPECTIVE guard for implicit_active substrates (GUI): a COMMIT (e.g. submit) while the page
         # shows a DIFFERENT subject than assigned is blocked BEFORE it executes — post-hoc is too late for
         # an irreversible submit. (Non-commit navigation toward the right subject is still allowed.)
@@ -78,7 +80,10 @@ class ScopeEvidenceBinding(Capability):
                 subj = active
             else:
                 subj = None
-            valid = ((ctx.result_ok is not False) and _nonempty(result)
+            # STRICT: evidence is VALIDATED only on an explicit success signal (result_ok is True). A missing
+            # signal (None) is UNKNOWN -> ATTEMPTED, never VALIDATED (a future adapter that forgets the field
+            # must fail safe, not pass).
+            valid = ((ctx.result_ok is True) and _nonempty(result)
                      and (binding != "required" or sem.target_entity is not None))
             rel = ("matched" if (subj is not None and active is not None and _same_subject(subj, active))
                    else ("foreign" if (subj is not None and active is not None) else "unknown"))
