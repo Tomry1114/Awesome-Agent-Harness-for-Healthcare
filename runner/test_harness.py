@@ -229,7 +229,7 @@ def test_p2_interactive_gui_pack():
 
 def test_p3_perceptual_tool_pack():
     pol = H.load_policy(env_type="tool_sandbox")
-    assert pol.get("_substrate") == "perceptual_tool"
+    assert pol.get("_substrate") == "perceptual"
     task = {"task_id": "m", "goal": "finding in the chest CT?", "context": {}, "environment": {"type": "tool_sandbox"}}
     contract = build_contract(task, env_type="tool_sandbox", policy=pol)
     k = HarnessKernel(contract, [ScopeEvidenceBinding(), ObligationLifecycle(), VerifyAndCommit()],
@@ -316,6 +316,40 @@ def test_kernel_has_no_benchmark_names():
                     if name in txt:
                         hits.append("%s:%s" % (os.path.relpath(os.path.join(dp, fn), root), name))
     assert not hits, "benchmark name leaked into harness core: %s" % hits
+
+
+def test_three_layer_policy_composition():
+    """The effective policy is composed from ADAPTER (manifest) + SUBSTRATE (generic) + CLINICAL modules.
+    No layer is a benchmark; env_type picks a DEFAULT adapter that can be overridden."""
+    pol = H.load_policy(env_type="fhir")
+    assert pol["_adapter"] == "hapi_fhir" and pol["_substrate"] == "structured_record"
+    assert pol["_clinical_modules"] == ["medication_safety"]
+    assert pol["manifest"]["actions"], "manifest came from the adapter"
+    # clinical obligations are present and clinical commit point is FIRST (matched before the substrate's
+    # generic irreversible-write rule).
+    assert any(o["id"] == "check_allergies" for o in pol["evidence_obligations"])
+    assert pol["commit_points"][0]["match"].get("resource") == "MedicationRequest"
+    assert any(cp["match"] == {"effect": "irreversible"} for cp in pol["commit_points"]), "substrate invariant present"
+
+
+def test_clinical_module_scoped_to_its_resource():
+    """GENERALITY: a NON-medication irreversible write (e.g. ServiceRequest) gets only the SUBSTRATE's
+    generic write-verification — the medication-safety review does NOT fire. Clinical rules are scoped to
+    the resources they name, not to the whole substrate."""
+    pol = H.load_policy(env_type="fhir")
+    task = {"task_id": "t", "goal": "place an order", "context": {"patient_ref": "Patient/1"},
+            "environment": {"type": "fhir"}}
+    contract = build_contract(task, env_type="fhir", policy=pol)
+    k = HarnessKernel(contract, [ScopeEvidenceBinding(), ObligationLifecycle(), VerifyAndCommit()],
+                      mode="enforce", policy=pol, env_type="fhir")
+    # a service-request create maps to create/irreversible with NO MedicationRequest resource -> it matches
+    # the substrate's generic {effect: irreversible} commit, NOT the medication clinical rule -> ALLOW
+    # (no allergy review required), just a state-change postcondition.
+    svc = {"type": "tool", "tool": "fhir_service_request_create", "args": {"patient": "Patient/1"}}
+    assert k.before_action(svc, step=0).type == D.ALLOW, "non-medication write must not require med review"
+    # contrast: a medication create DOES require the review
+    med = {"type": "tool", "tool": "fhir_medication_request_create", "args": {"patient": "Patient/1"}}
+    assert k.before_action(med, step=1).type == D.REVISE
 
 
 def _run():

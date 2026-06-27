@@ -1,5 +1,8 @@
-# SUBSTRATE: interactive GUI workflow (web / desktop portal). The operated-on object is the one DISPLAYED
-# (read from canonical_observation), not an action arg. Tool names live ONLY in manifest.actions.
+# ENVIRONMENT ADAPTER — administrative web portal (GUI). The operated object is the DISPLAYED one (read
+# from canonical_observation), not an action arg. Tool names live ONLY here.
+name: admin_portal
+substrate: interactive_gui
+clinical_modules: []        # no extra clinical rules beyond the substrate submission invariant
 
 manifest:
   subject:
@@ -21,15 +24,3 @@ manifest:
     - match: {tool_any: [submit, send_appeal, change_case_status, upload_final_document]}
       semantic_type: submit
       effect: irreversible
-
-evidence_obligations: []        # workflow-stage obligations need full_state signal mapping -> refinement
-workflow_obligations: []
-
-commit_points:
-  - match: {semantic_type: submit}
-    risk: R2
-    requires: []
-    # generic predicate, named honestly for what it measures: submit must change observable state.
-    # (A field-level check `{type: field_not_equals, path: case.status, unexpected: Draft}` needs the env
-    # to expose STRUCTURED canonical state; with only a state token it returns UNKNOWN -> P-future.)
-    postcondition: {type: state_transition}

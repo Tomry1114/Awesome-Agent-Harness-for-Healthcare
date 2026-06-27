@@ -1,0 +1,24 @@
+# CLINICAL POLICY MODULE — medication ordering safety. Reusable across ANY structured-record environment
+# that exposes medications (activated by an adapter's `clinical_modules`). The domain vocabulary
+# (MedicationRequest / AllergyIntolerance) is PUBLIC clinical knowledge SCOPED to this module — it is NOT
+# baked into the substrate, so a non-medication write is unaffected by these rules.
+name: medication_safety
+
+evidence_obligations:
+  - id: check_allergies
+    satisfied_by: {source_class: record, resource: AllergyIntolerance}
+  - id: check_current_medications
+    satisfied_by: {source_class: record, resource: MedicationRequest}
+
+workflow_obligations:
+  - id: medication_safety_review
+    requires: [check_allergies, check_current_medications]
+
+commit_points:
+  # specific: creating a MedicationRequest requires the safety review (matched BEFORE the substrate's
+  # generic irreversible-write rule, because clinical commit points are composed first).
+  - match: {semantic_type: create, resource: MedicationRequest}
+    risk: R2
+    requires: [medication_safety_review]
+    requires_rule: medication_requires_safety_review
+    postcondition: {type: state_transition}

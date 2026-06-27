@@ -1,8 +1,0 @@
-# Common defaults, merged UNDER every substrate pack. A substrate pack supplies its own `manifest`
-# (the adapter: tool -> canonical semantics) + obligations + commit points (in capability terms).
-manifest:
-  subject: {}
-  actions: []
-evidence_obligations: []
-workflow_obligations: []
-commit_points: []

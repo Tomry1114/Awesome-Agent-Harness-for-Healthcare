@@ -1,8 +1,10 @@
-# SUBSTRATE: structured record system (EHR / DB / resource API). PUBLIC, oracle-free.
-#   manifest = the ADAPTER layer: maps raw tool names -> canonical semantics. This is the ONLY place tool
-#              names appear. The harness core never sees them.
-#   evidence/workflow obligations + commit points = the policy, expressed in CAPABILITY terms
-#              (source_class / resource / semantic_type / effect) — no tool names.
+# ENVIRONMENT ADAPTER — HAPI FHIR EHR. The ONLY layer that knows tool names / observation schema. It maps
+# raw tool calls to canonical semantics and declares which SUBSTRATE this environment is and which reusable
+# CLINICAL policy modules are in force. A second FHIR-like dataset adds its own adapter (different tool
+# names) on the SAME substrate + clinical modules — zero core/substrate/policy change.
+name: hapi_fhir
+substrate: structured_record
+clinical_modules: [medication_safety]
 
 manifest:
   subject:
@@ -43,20 +45,3 @@ manifest:
     - match: {tool: write_file}
       semantic_type: update
       effect: reversible
-
-evidence_obligations:
-  - id: check_allergies
-    satisfied_by: {source_class: record, resource: AllergyIntolerance}
-  - id: check_current_medications
-    satisfied_by: {source_class: record, resource: MedicationRequest}
-
-workflow_obligations:
-  - id: medication_safety_review
-    requires: [check_allergies, check_current_medications]
-
-commit_points:
-  - match: {semantic_type: create, resource: MedicationRequest}
-    risk: R2
-    requires: [medication_safety_review]
-    requires_rule: medication_requires_safety_review
-    postcondition: {type: state_transition}      # the created resource changed the record (read-back floor)

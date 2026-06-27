@@ -1,0 +1,15 @@
+# SUBSTRATE POLICY — structured record system (EHR / DB / resource API). GENERIC invariants for the whole
+# class of environment: NO tool names, NO domain resource names. Clinical specifics (e.g. medication
+# safety) are layered separately and only apply to the resources they name.
+name: structured_record
+
+evidence_obligations: []
+workflow_obligations: []
+
+commit_points:
+  # generic write invariant: ANY irreversible write must produce an observable state change (read-back
+  # floor). A create of an unmodelled resource (e.g. ServiceRequest) gets THIS — and nothing clinical.
+  - match: {effect: irreversible}
+    risk: R2
+    requires: []
+    postcondition: {type: state_transition}

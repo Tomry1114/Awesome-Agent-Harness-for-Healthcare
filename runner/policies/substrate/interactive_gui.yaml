@@ -1,0 +1,12 @@
+# SUBSTRATE POLICY — interactive GUI workflow. Generic invariant: a submission (irreversible) must change
+# observable workflow state. No tool names; no portal-specific fields.
+name: interactive_gui
+
+evidence_obligations: []
+workflow_obligations: []
+
+commit_points:
+  - match: {semantic_type: submit}
+    risk: R2
+    requires: []
+    postcondition: {type: state_transition}

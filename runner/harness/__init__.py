@@ -34,15 +34,15 @@ def resolve_mode(explicit=None):
 
 
 def build_kernel(task, env_type=None, mode=None, observed=None, capabilities=None,
-                 budget=None, substrate=None):
-    """Compile a contract (oracle-blind) and build the kernel. Returns None for mode 'off'. Selects the
-    SUBSTRATE policy pack from `substrate` or env_type — NO benchmark name is passed in or used.
-    On a contract-leak attempt (LeakError) we DISABLE the harness for that task rather than risk an
-    oracle — fail safe."""
+                 budget=None, substrate=None, adapter=None):
+    """Compile a contract (oracle-blind) and build the kernel. Returns None for mode 'off'. Composes the
+    policy from the ENVIRONMENT ADAPTER (explicit `adapter` / MH_HARNESS_ADAPTER / env_type default) + its
+    SUBSTRATE + CLINICAL modules — NO benchmark name is passed in or used. On a contract-leak attempt
+    (LeakError) we DISABLE the harness for that task rather than risk an oracle — fail safe."""
     mode = resolve_mode(mode)
     if mode == "off":
         return None
-    policy = load_policy(substrate=substrate, env_type=env_type)
+    policy = load_policy(adapter=adapter, substrate=substrate, env_type=env_type)
     try:
         contract = build_contract(task, env_type=env_type,
                                   capabilities=[t.get("name") if isinstance(t, dict) else t

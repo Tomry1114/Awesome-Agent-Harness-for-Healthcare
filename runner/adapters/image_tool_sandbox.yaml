@@ -1,0 +1,28 @@
+# ENVIRONMENT ADAPTER — perceptual tool sandbox (image / pathology / video). Maps each perception tool to
+# perception-class evidence; web/calculator to non-perception classes (so they cannot ground an image
+# claim). Tool names live ONLY here.
+name: image_tool_sandbox
+substrate: perceptual
+clinical_modules: [evidence_grounding]
+
+manifest:
+  subject:
+    type: perceptual_artifact
+    id_context_keys: [image_id, series_id, image, region_id]
+    from_args: [image_id, image, region_id, series_id]
+  actions:
+    - match: {tool_any: [ImageDescription, RegionAttributeDescription, OCR]}
+      semantic_type: inspect
+      effect: none
+      produces_evidence: {source_class: perception, modality: image}
+    - match: {tool: GoogleSearch}
+      semantic_type: read
+      effect: none
+      produces_evidence: {source_class: external, modality: external_text}   # NOT image -> cannot ground
+    - match: {tool: Calculator}
+      semantic_type: read
+      effect: none
+      produces_evidence: {source_class: computation, modality: computation}
+    - match: {type: final}
+      semantic_type: answer
+      effect: irreversible

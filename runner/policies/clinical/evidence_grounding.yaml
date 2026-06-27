@@ -1,0 +1,21 @@
+# CLINICAL POLICY MODULE — perceptual evidence grounding. Reusable across ANY perceptual environment: a
+# final answer must be grounded in perception-class evidence about the artifact, and the claim must be
+# supported by that (selector-filtered) evidence. Names no tool — only evidence modality/source_class.
+name: evidence_grounding
+
+evidence_obligations:
+  - id: image_derived_evidence
+    satisfied_by: {source_class: perception, modality: image}   # any perception evidence about the artifact
+
+workflow_obligations:
+  - id: grounded_reasoning
+    requires: [image_derived_evidence]
+
+commit_points:
+  - match: {semantic_type: answer}
+    risk: R2
+    requires: [grounded_reasoning]
+    # semantic claim<->evidence; selector restricts the judge to perception/image evidence only.
+    postcondition:
+      type: claim_supported_by_evidence
+      evidence_selector: {source_class: perception, modality: image}

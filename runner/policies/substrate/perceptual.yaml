@@ -1,0 +1,13 @@
+# SUBSTRATE POLICY — perceptual tool environment. Generic invariant: a final answer is an irreversible
+# commit (R2). Grounding / claim-support is a reusable CLINICAL module layered on top (evidence_grounding),
+# so the bare substrate stays domain-agnostic.
+name: perceptual
+
+evidence_obligations: []
+workflow_obligations: []
+
+commit_points:
+  - match: {semantic_type: answer}
+    risk: R2
+    requires: []
+    postcondition: {type: state_transition}   # generic floor; a clinical module prepends a stronger one
