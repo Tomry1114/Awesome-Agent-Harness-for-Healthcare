@@ -238,7 +238,7 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
             try:
                 _hpost = _harness.after_action(action, res, _state_before, _state_after, step=step,
                                                canonical_observation=_canon.canonical_observation(res, env_type),
-                                               result_ok=not _err)
+                                               result_ok=not _err, raw_observation=res)
             except Exception as _he:
                 _hpost = None
                 _harness_runtime_errors.append("after_action: %r" % _he)

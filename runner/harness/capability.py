@@ -40,7 +40,7 @@ class HarnessContext:
     """What every capability + the kernel share for one task."""
     __slots__ = ("ledger", "contract", "policy", "mode", "step", "env_type", "risk_of", "observation",
                  "judge_fn", "judge_model", "semantic_remaining", "manifest", "sem", "risk",
-                 "result_ok", "verification", "last_observation")
+                 "result_ok", "verification", "last_observation", "observed_subject", "displayed_subject")
 
     def __init__(self, ledger, contract, policy, mode, env_type=None, risk_of=None,
                  judge_fn=None, judge_model=None, semantic_budget=0, manifest=None):
@@ -57,7 +57,9 @@ class HarnessContext:
         self.risk = None            # risk tier of the current action (set by the kernel)
         self.result_ok = None       # did the current action's tool result succeed? (set by the kernel)
         self.verification = None     # tri-state commit verification: True/False/None (set by verify_commit)
-        self.last_observation = None  # the most recent canonical_observation (for PROSPECTIVE GUI scope)
+        self.last_observation = None  # the most recent canonical_observation
+        self.observed_subject = None   # subject displayed by THIS action's observation (manifest-projected)
+        self.displayed_subject = None  # last-known displayed subject, carried into before_action (sticky)
         self.judge_fn = judge_fn    # injected judge: callable(prompt:str) -> str|None (INDEPENDENT model)
         self.judge_model = judge_model
         self.semantic_remaining = int(semantic_budget or 0)

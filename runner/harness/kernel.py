@@ -57,6 +57,7 @@ class HarnessKernel:
         self._rev_for_action = {}
         self._capability_errors = []     # capability-hook exceptions (fail-closed: see _cap_error)
         self._last_obs = None            # most recent canonical_observation -> prospective GUI scope
+        self._last_displayed_subject = None   # last known displayed subject (sticky: empty obs won't clear it)
         self._open_repairs = {}          # commit identity -> REVISE event id (missing-prereq, not yet repaired)
         self._gate_passed = {}           # commit identity -> event id (prereqs met + gate passed, awaiting verify)
         self._evk = 0
@@ -187,6 +188,8 @@ class HarnessKernel:
     def before_action(self, action, env_state=None, step=0):
         self.ctx.step = step
         self.ctx.last_observation = self._last_obs      # the page the agent is currently looking at
+        self.ctx.displayed_subject = self._last_displayed_subject   # for the prospective commit guard
+        self.ctx.observed_subject = None
         sem = self._canon(action)
         risk = self.ctx.risk
         pid = self.ledger.record_proposed(sem.capability, risk, step)
@@ -211,10 +214,18 @@ class HarnessKernel:
         return eff
 
     def after_action(self, action, result, before_state, after_state, step=0, canonical_observation=None,
-                     result_ok=None):
+                     result_ok=None, raw_observation=None):
         self.ctx.step = step
         self.ctx.observation = canonical_observation
         self._last_obs = canonical_observation        # carried into the NEXT before_action (prospective scope)
+        # the displayed subject is projected from the RAW observation via the manifest (the canonical
+        # observation may not carry portal-specific fields). Sticky: an empty/error observation that yields
+        # no subject does NOT erase the last known one.
+        from .semantics import observed_subject as _obs_subj
+        _cur = _obs_subj(self.manifest, raw_observation if raw_observation is not None else canonical_observation)
+        self.ctx.observed_subject = _cur
+        if _cur is not None:
+            self._last_displayed_subject = _cur
         sem = self._canon(action, observation=canonical_observation)
         self.ctx.result_ok = result_ok      # whether the tool result succeeded (adapter signal)
         decisions = []

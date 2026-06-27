@@ -33,7 +33,7 @@ class ScopeEvidenceBinding(Capability):
         # shows a DIFFERENT subject than assigned is blocked BEFORE it executes — post-hoc is too late for
         # an irreversible submit. (Non-commit navigation toward the right subject is still allowed.)
         if binding == "implicit_active" and active and sem and sem.is_commit():
-            shown = _observed_subject(ctx.manifest, ctx.last_observation)
+            shown = ctx.displayed_subject            # last known displayed subject (manifest-projected)
             if shown is not None and not _same_subject(shown, active):
                 return self._decide(
                     D.BLOCK, rule_id="subject_scope_mismatch", reason_code="wrong_scope", deterministic=True,
@@ -54,7 +54,8 @@ class ScopeEvidenceBinding(Capability):
     def after_action(self, action, result, before_state, after_state, ctx):
         sem = ctx.sem
         active = ctx.ledger.subject_id()
-        shown = sem.target_entity if sem else None
+        # subject displayed by THIS action's observation (manifest-projected from the raw env result).
+        shown = ctx.observed_subject if ctx.observed_subject is not None else (sem.target_entity if sem else None)
         # observation-derived subject (GUIs): if this action's subject was NOT a structured arg (so
         # before_action didn't count it), count the opportunity here and check the displayed subject.
         if active and shown is not None and not _arg_subject(action, ctx.manifest):
@@ -95,18 +96,6 @@ class ScopeEvidenceBinding(Capability):
                                            "status": ("VALIDATED" if valid else "ATTEMPTED"),
                                            "scope_relation": rel})
         return None
-
-
-def _observed_subject(manifest, obs):
-    """The subject DISPLAYED in the observation, via the manifest's declared from_observation paths."""
-    if not isinstance(obs, dict):
-        return None
-    from ..semantics import _path_get
-    for path in ((manifest.get("subject") or {}).get("from_observation") or []):
-        v = _path_get(obs, path)
-        if v:
-            return str(v)
-    return None
 
 
 def _arg_subject(action, manifest):

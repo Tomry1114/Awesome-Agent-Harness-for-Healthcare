@@ -593,6 +593,25 @@ def test_required_binding_rejects_subjectless_read():
     assert k.before_action(rd, step=0).type == D.REVISE
 
 
+def test_gui_subject_projected_from_raw_observation():
+    """REAL-PATH: the displayed case is projected from the RAW env observation via the manifest's declared
+    paths (full_state.fields.caseId), not a hand-fed canonical field; and it is STICKY (an empty/error
+    observation does NOT erase the last known displayed subject)."""
+    pol = H.load_policy(env_type="gui")
+    task = {"task_id": "hab", "goal": "Triage DEN-001.", "context": {"text": "DEN-001"}, "environment": {"type": "gui"}}
+    contract = build_contract(task, env_type="gui", policy=pol)
+    k = HarnessKernel(contract, [ScopeEvidenceBinding(), ObligationLifecycle(), VerifyAndCommit()],
+                      mode="enforce", policy=pol, env_type="gui")
+    raw_wrong = {"full_state": {"fields": {"caseId": "DEN-999"}}}
+    k.after_action({"type": "tool", "tool": "snapshot", "args": {}}, raw_wrong, {"x": 0}, {"x": 1}, step=0,
+                   raw_observation=raw_wrong)
+    # an empty observation must NOT clear the known displayed subject
+    k.after_action({"type": "tool", "tool": "snapshot", "args": {}}, {"ok": True}, {"x": 1}, {"x": 2}, step=1,
+                   raw_observation={"ok": True})
+    eff = k.before_action({"type": "tool", "tool": "submit", "args": {}}, step=2)
+    assert eff.type == D.BLOCK and "DEN-999" in str(eff.feedback), eff.feedback
+
+
 def _run():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     passed = 0

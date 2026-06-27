@@ -156,6 +156,19 @@ def _extract_subject(action, manifest, observation):
     return None
 
 
+def observed_subject(manifest, observation):
+    """The subject DISPLAYED in an observation, via the manifest's declared from_observation paths
+    (resolved against the RAW environment result — dotted paths supported). Generic: no portal field is
+    hard-coded in the core; the adapter declares where its displayed subject lives."""
+    if not isinstance(observation, dict):
+        return None
+    for path in ((manifest.get("subject") or {}).get("from_observation") or []):
+        v = _path_get(observation, path)
+        if v:
+            return str(v)
+    return None
+
+
 def _path_get(d, path):
     cur = d
     for part in str(path).split("."):

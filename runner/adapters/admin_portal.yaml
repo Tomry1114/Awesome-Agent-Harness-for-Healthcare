@@ -9,7 +9,12 @@ manifest:
     type: admin_case
     binding: implicit_active   # the operated case is the one DISPLAYED on the page (no per-action arg)
     from_goal_regex: '([A-Z]{2,5}-\d+)'                       # assigned case named in the task goal
-    from_observation: [case_identity, patient_id, subject_token]   # operated case = the displayed one
+    # DECLARED projection paths into the RAW environment observation (dotted paths supported). The harness
+    # resolves the displayed case generically — NO portal field is hard-coded in the core. The full_state.*
+    # paths target the GUI env's state digest; tune to the live observation without any code change.
+    from_observation: [case_identity, patient_id, subject_token,
+                       full_state.signals.caseId, full_state.fields.caseId, full_state.fields.case_id,
+                       full_state._page]
   actions:
     - match: {tool_any: [navigate, click, select]}
       semantic_type: inspect
