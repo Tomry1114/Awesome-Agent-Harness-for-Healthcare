@@ -43,6 +43,7 @@ manifest:
     - match: {tool_pattern: _create}
       semantic_type: create
       effect: irreversible
-    - match: {tool: write_file}
+    - match: {tool: write_file}      # generic scratchpad write — NOT a patient operation
       semantic_type: update
       effect: reversible
+      subject_binding: none

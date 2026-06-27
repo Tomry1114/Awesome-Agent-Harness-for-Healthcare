@@ -16,7 +16,7 @@ class ScopeEvidenceBinding(Capability):
     def before_action(self, action, ctx):
         sem = ctx.sem
         target = sem.target_entity if sem else None
-        binding = _binding(ctx.manifest)
+        binding = sem.subject_binding if sem else "implicit_active"
         if target is not None:
             ctx.ledger.bump_opportunity("subject_bearing_action")
         active = ctx.ledger.subject_id()
@@ -57,7 +57,7 @@ class ScopeEvidenceBinding(Capability):
         # action's OWN subject (sem.target_entity), with a scope_relation to the active subject. A failed/
         # empty result, or a foreign-subject read, therefore does NOT satisfy an obligation.
         if sem and sem.source_class:
-            binding = _binding(ctx.manifest)
+            binding = sem.subject_binding
             # bind evidence to the action's OWN subject; only fall back to the active subject when the
             # adapter guarantees it (implicit_active). Under `required` binding a read with no named subject
             # is NOT assumed to be about the active subject -> subject None + NOT validated (cannot satisfy).
@@ -79,13 +79,6 @@ class ScopeEvidenceBinding(Capability):
                                            "status": ("VALIDATED" if valid else "ATTEMPTED"),
                                            "scope_relation": rel})
         return None
-
-
-def _binding(manifest):
-    """How the substrate binds an action to its subject (adapter-declared, default 'implicit_active' for
-    back-compat): required = must name a subject; implicit_active = the displayed/active one; none = no
-    subject (e.g. a calculator)."""
-    return ((manifest or {}).get("subject") or {}).get("binding", "implicit_active")
 
 
 def _arg_subject(action, manifest):

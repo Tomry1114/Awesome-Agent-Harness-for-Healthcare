@@ -20,11 +20,13 @@ EFFECT_RISK = {"none": "R0", "reversible": "R1", "irreversible": "R2"}
 
 class SemanticAction:
     __slots__ = ("semantic_type", "effect", "source_class", "modality", "resource", "target_entity",
-                 "capability", "raw", "mapped")
+                 "capability", "raw", "mapped", "subject_binding")
 
     def __init__(self, semantic_type="other", effect="none", source_class=None, modality=None,
-                 resource=None, target_entity=None, capability=None, raw=None, mapped=False):
+                 resource=None, target_entity=None, capability=None, raw=None, mapped=False,
+                 subject_binding="implicit_active"):
         self.semantic_type = semantic_type
+        self.subject_binding = subject_binding   # required | implicit_active | none (PER-action)
         self.effect = effect
         self.source_class = source_class
         self.modality = modality
@@ -41,7 +43,7 @@ class SemanticAction:
         return {"semantic_type": self.semantic_type, "effect": self.effect,
                 "source_class": self.source_class, "modality": self.modality, "resource": self.resource,
                 "target_entity": self.target_entity, "capability": self.capability,
-                "mapped": self.mapped}
+                "mapped": self.mapped, "subject_binding": self.subject_binding}
 
 
 def _action_tool(action):
@@ -77,6 +79,9 @@ def canonicalize(action, manifest, observation=None):
     is_final = isinstance(action, dict) and action.get("type") == "final"
 
     sem = SemanticAction(capability=tool, raw=action)
+    # subject binding default for the substrate; a matching action rule may override it PER-action (e.g. a
+    # generic scratchpad write is `none` even though the substrate default is `required`).
+    sem.subject_binding = (manifest.get("subject") or {}).get("binding", "implicit_active")
     if is_final:
         # the final answer is the answer commit; manifest may override effect/modality. It is always mapped.
         sem.semantic_type, sem.effect = "answer", "irreversible"
@@ -113,6 +118,8 @@ def _apply_rule_body(sem, action, rule):
     sem.modality = pe.get("modality", sem.modality)
     # resource = the action's domain kind (for commit matching), independent of evidence binding
     sem.resource = rule.get("resource") or _resolve_resource(action, rule, pe)
+    if "subject_binding" in rule:                # per-action override of the substrate default
+        sem.subject_binding = rule["subject_binding"]
 
 
 def _resolve_resource(action, rule, pe):
