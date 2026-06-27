@@ -691,6 +691,35 @@ def test_admission_rejects_ambiguous_tool():
     assert not admission_errors(manifest, ["other_order"])
 
 
+def test_evidence_not_truncated_for_grounding_judge():
+    # REGRESSION (observed on MedCTA enforce: Verification 0.45->0.20). The grounding judge must receive the
+    # FULL evidence text, not the 200-char audit preview — a truncated stub makes the judge call well-grounded
+    # answers "unsupported" and REVISE/ESCALATE them. The ledger keeps `value_full` for the judge; the audit
+    # (to_dict) keeps only the short `value` preview.
+    pol = H.load_policy(env_type="tool_sandbox")
+    task = {"task_id": "m", "goal": "finding?", "context": {}, "environment": {"type": "tool_sandbox"}}
+    contract = build_contract(task, env_type="tool_sandbox", policy=pol)
+    long_finding = ("CT abdomen. " + "portal vein shows an intraluminal filling defect; " * 14 + "TAIL_MARKER_PVT")
+    assert len(long_finding) > 250 and long_finding.index("TAIL_MARKER_PVT") > 200  # marker lives past 200 chars
+    seen = {}
+
+    def echo_judge(prompt):
+        seen["prompt"] = prompt
+        return '{"supported": true, "confidence": 0.9, "reason": "ok"}'
+
+    k = HarnessKernel(contract, [ScopeEvidenceBinding(), ObligationLifecycle(), VerifyAndCommit()],
+                      mode="enforce", policy=pol, env_type="tool_sandbox", judge_fn=echo_judge,
+                      budget={"max_semantic_checks": 5})
+    k.after_action({"type": "tool", "tool": "ImageDescription", "args": {}},
+                   long_finding, None, None, step=0, result_ok=True)
+    ev = k.ledger.evidence[-1]
+    assert "TAIL_MARKER_PVT" in (ev.get("value_full") or ""), "full payload not retained for the judge"
+    assert k.before_final("portal vein thrombosis", step=1).type == D.ALLOW
+    assert "TAIL_MARKER_PVT" in seen.get("prompt", ""), "grounding judge saw a truncated evidence stub"
+    aud_ev = k.ledger.to_dict()["evidence"][-1]
+    assert "value_full" not in aud_ev and len(aud_ev.get("value", "")) <= 220  # audit stays compact
+
+
 def _run():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     passed = 0

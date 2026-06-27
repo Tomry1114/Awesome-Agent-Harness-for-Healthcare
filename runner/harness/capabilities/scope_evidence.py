@@ -94,6 +94,7 @@ class ScopeEvidenceBinding(Capability):
                                     subject_id=subj, source_event="step-%d" % ctx.step,
                                     source_type=sem.source_class,
                                     extra={"modality": sem.modality, "resource": sem.resource,
+                                           "value_full": _full(result),
                                            "source_class": sem.source_class,
                                            "status": ("VALIDATED" if valid else "ATTEMPTED"),
                                            "scope_relation": rel})
@@ -146,5 +147,15 @@ def _has_payload(result):
 
 
 def _summarize(result):
+    # short, human-readable PREVIEW for the audit ledger (transparency / compactness).
     s = result if isinstance(result, str) else str(result)
     return s[:200]
+
+
+def _full(result):
+    # the VERIFICATION payload the grounding judge actually reads. The 200-char preview above is far too
+    # short to verify a clinical finding (a CT region description, a lab panel) — judging against it makes
+    # the judge see a truncated stub and reject well-grounded answers. Bounded (not unbounded) so the
+    # context stays sane; stripped from the persisted audit (state.to_dict) to keep result.json compact.
+    s = result if isinstance(result, str) else str(result)
+    return s[:4000]

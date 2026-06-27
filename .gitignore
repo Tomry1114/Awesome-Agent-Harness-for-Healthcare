@@ -79,3 +79,11 @@ docs/STATUS.md
 res4_*/
 res_harness_smoke/
 res3_dsk_smoke/
+res5_*/
+res5b_*/
+res5_cmp.log
+res5b_mcta_enf.log
+/diag*.py
+/patch_evidence.py
+/add_test.py
+/cmp_fix.py

@@ -40,7 +40,7 @@ def verify_claim_support(answer, evidence, judge_fn=None):
     ev_text = _format_evidence(evidence)
     if not ev_text.strip():
         return SemanticVerdict(False, 1.0, "no_selected_evidence")
-    prompt = _PROMPT.format(evidence=ev_text[:4000], answer=str(answer)[:2000])
+    prompt = _PROMPT.format(evidence=ev_text[:8000], answer=str(answer)[:2000])
     try:
         raw = judge_fn(prompt)
     except Exception as ex:
@@ -52,7 +52,8 @@ def _format_evidence(evidence):
     out = []
     for e in (evidence or []):
         if isinstance(e, dict):
-            out.append("- [%s] %s" % (e.get("type", "evidence"), str(e.get("value", ""))[:300]))
+            out.append("- [%s] %s" % (e.get("type", "evidence"),
+                                      str(e.get("value_full") or e.get("value", ""))[:1800]))
         else:
             out.append("- " + str(e)[:300])
     return "\n".join(out)

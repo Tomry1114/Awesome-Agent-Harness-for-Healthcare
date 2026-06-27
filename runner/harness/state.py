@@ -128,7 +128,10 @@ class Ledger:
 
     # ---- audit ---------------------------------------------------------------
     def to_dict(self):
-        return {"active_subject": self.active_subject, "evidence": self.evidence, "findings": self.findings,
+        # the persisted audit keeps the short `value` preview; the full verification payload (value_full,
+        # read by the grounding judge at runtime) is dropped here so result.json stays compact.
+        _ev = [{k: v for k, v in e.items() if k != "value_full"} for e in self.evidence]
+        return {"active_subject": self.active_subject, "evidence": _ev, "findings": self.findings,
                 "obligations": self.obligations, "workflow_state": self.workflow_state,
                 "proposed_actions": self.proposed_actions, "interventions": self.interventions,
                 "commit_history": self.commit_history, "unresolved_risks": self.unresolved_risks,
