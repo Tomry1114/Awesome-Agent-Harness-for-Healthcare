@@ -1,0 +1,37 @@
+# HELD-OUT ENVIRONMENT ADAPTER — a DIFFERENT structured-record EMR with entirely different tool names and
+# a different patient-id field (mrn). It reuses the SAME substrate (structured_record) and the SAME clinical
+# module (medication_safety) with ZERO change to the harness core, the substrate policy, or the clinical
+# module. This is the zero-shot-adapter generality proof: a new dataset = one new adapter file.
+name: clinic_emr
+substrate: structured_record
+clinical_modules: [medication_safety]
+
+manifest:
+  subject:
+    type: patient
+    binding: required
+    id_context_keys: [mrn, patient_mrn]
+    from_args: [mrn, patient_mrn]
+  actions:
+    - match: {tool_pattern: allergy_review}        # different tool name -> still AllergyIntolerance evidence
+      semantic_type: read
+      effect: none
+      resource: AllergyIntolerance
+      produces_evidence: {source_class: record, modality: record}
+    - match: {tool_pattern: med_list}              # different tool name -> MedicationRequest evidence
+      semantic_type: read
+      effect: none
+      resource: MedicationRequest
+      produces_evidence: {source_class: record, modality: record}
+    - match: {tool_pattern: _fetch}
+      semantic_type: read
+      effect: none
+      produces_evidence: {source_class: record, modality: record}
+    - match: {tool: ehr_prescribe}                 # different commit tool name -> same MedicationRequest create
+      semantic_type: create
+      effect: irreversible
+      resource: MedicationRequest
+    - match: {tool: scratch_note}
+      semantic_type: update
+      effect: reversible
+      subject_binding: none

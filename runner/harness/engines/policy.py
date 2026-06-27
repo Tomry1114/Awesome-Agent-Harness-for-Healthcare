@@ -119,6 +119,8 @@ def load_policy(adapter=None, substrate=None, env_type=None):
         for r in (cp.get("requires") or []):
             if r not in known:
                 errors.append("commit_requires_unknown_obligation:%s" % r)
+        if cp.get("match") == {}:        # an explicit empty match is almost always a typo (matches any commit)
+            errors.append("overly_broad_commit_match")
 
     return {
         "manifest": manifest, "evidence_obligations": ev, "workflow_obligations": wf,

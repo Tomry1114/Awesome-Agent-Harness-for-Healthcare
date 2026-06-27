@@ -503,6 +503,32 @@ def test_violation_split_executed_vs_prevented():
     assert se["prevented_violation_count"] == 1 and se["executed_violation_count"] == 0, se
 
 
+def test_unseen_adapter_zero_core_change():
+    """ZERO-SHOT ADAPTER GENERALITY: a NEW EMR with entirely different tool names and a different patient-id
+    field (mrn) runs the full wrong-patient / medication-safety / repair flow via load_policy(adapter=...),
+    with ZERO change to the harness core, the substrate policy, or the clinical module. A new dataset is one
+    new adapter file."""
+    pol = H.load_policy(adapter="clinic_emr")
+    assert pol["_adapter"] == "clinic_emr" and pol["_substrate"] == "structured_record"
+    assert pol["_clinical_modules"] == ["medication_safety"] and not pol.get("_errors")
+    task = {"task_id": "u", "goal": "prescribe", "context": {"mrn": "M-7"},
+            "environment": {"type": "fhir", "adapter": "clinic_emr"}}
+    contract = build_contract(task, env_type="fhir", policy=pol)
+    assert contract.subject == {"type": "patient", "id": "M-7"}, contract.subject
+    k = HarnessKernel(contract, [ScopeEvidenceBinding(), ObligationLifecycle(), VerifyAndCommit()],
+                      mode="enforce", policy=pol, env_type="fhir")
+    # wrong patient, brand-new tool name -> still BLOCK
+    assert k.before_action({"type": "tool", "tool": "ehr_labs_fetch", "args": {"mrn": "M-999"}}, step=0).type == D.BLOCK
+    assert k.before_action({"type": "tool", "tool": "ehr_labs_fetch", "args": {"mrn": "M-7"}}, step=1).type == D.ALLOW
+    rx = {"type": "tool", "tool": "ehr_prescribe", "args": {"mrn": "M-7"}}
+    assert k.before_action(rx, step=2).type == D.REVISE        # medication safety review still required
+    k.after_action({"type": "tool", "tool": "ehr_allergy_review", "args": {"mrn": "M-7"}}, "pen", {"a": 0}, {"a": 1}, step=3, result_ok=True)
+    k.after_action({"type": "tool", "tool": "ehr_med_list", "args": {"mrn": "M-7"}}, "lis", {"a": 1}, {"a": 2}, step=4, result_ok=True)
+    assert k.ledger.obligation_state("medication_safety_review") == "SATISFIED"
+    assert k.before_action(rx, step=5).type == D.ALLOW
+    assert any(r["resolution"] == "repaired" for r in k.ledger.resolutions)
+
+
 def _run():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     passed = 0

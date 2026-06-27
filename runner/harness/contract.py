@@ -27,7 +27,7 @@ class ClinicalProcessContract:
 
     def _cp_matches(self, cp, sem):
         m = cp.get("match")
-        if m is None:
+        if not m:                       # None or {} -> a bare commit point (any commit), never any action
             return getattr(sem, "is_commit", lambda: False)()
         for field in ("semantic_type", "effect", "resource"):
             if field in m and m[field] != getattr(sem, field, None):
