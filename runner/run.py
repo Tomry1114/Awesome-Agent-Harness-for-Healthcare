@@ -126,8 +126,10 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
         import harness as _Harness
         _harness_requested_mode = _Harness.resolve_mode(os.environ.get("MH_HARNESS_MODE"))
         if _harness_requested_mode != "off":
-            # the harness governs by SUBSTRATE (env_type) only — no benchmark name is passed in.
-            _harness = _Harness.build_kernel(task, env_type=env_type,
+            # substrate from env_type; a specific environment ADAPTER may be named per-task (two datasets of
+            # the same substrate with different tool names) — task.environment.adapter, else the default.
+            _adapter = (task.get("environment") or {}).get("adapter") if isinstance(task, dict) else None
+            _harness = _Harness.build_kernel(task, env_type=env_type, adapter=_adapter,
                                              mode=os.environ.get("MH_HARNESS_MODE"))
     except Exception as _he:
         _harness = None

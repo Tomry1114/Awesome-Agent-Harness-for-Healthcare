@@ -29,8 +29,14 @@ def _make_capabilities(names):
 
 
 def resolve_mode(explicit=None):
+    """Unset -> 'off'. A SET but unrecognized value (e.g. a typo 'enforc') RAISES rather than silently
+    disabling the harness — a formal enforce run must not turn off because of a typo."""
     m = (explicit or os.environ.get("MH_HARNESS_MODE", "off")).strip().lower()
-    return m if m in MODES else "off"
+    if not m:
+        return "off"
+    if m not in MODES:
+        raise ValueError("invalid MH_HARNESS_MODE %r (expected one of %s)" % (m, MODES))
+    return m
 
 
 def build_kernel(task, env_type=None, mode=None, observed=None, capabilities=None,

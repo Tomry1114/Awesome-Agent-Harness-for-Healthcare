@@ -56,6 +56,7 @@ class HarnessKernel:
         self._n_semantic = 0
         self._rev_for_action = {}
         self._capability_errors = []     # capability-hook exceptions (fail-closed: see _cap_error)
+        self._last_obs = None            # most recent canonical_observation -> prospective GUI scope
         self._evk = 0
         for cap in self.capabilities:
             cap.on_contract(self.ctx)
@@ -149,6 +150,7 @@ class HarnessKernel:
 
     def before_action(self, action, env_state=None, step=0):
         self.ctx.step = step
+        self.ctx.last_observation = self._last_obs      # the page the agent is currently looking at
         sem = self._canon(action)
         risk = self.ctx.risk
         pid = self.ledger.record_proposed(sem.capability, risk, step)
@@ -175,6 +177,7 @@ class HarnessKernel:
                      result_ok=None):
         self.ctx.step = step
         self.ctx.observation = canonical_observation
+        self._last_obs = canonical_observation        # carried into the NEXT before_action (prospective scope)
         sem = self._canon(action, observation=canonical_observation)
         self.ctx.result_ok = result_ok      # whether the tool result succeeded (adapter signal)
         decisions = []

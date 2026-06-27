@@ -437,6 +437,34 @@ def test_typed_subject_identity():
     assert not _same_subject("Patient/123", "Encounter/123")   # same id, different TYPE -> not the same
 
 
+def test_gui_prospective_commit_guard():
+    """A GUI submit while the page shows the WRONG case is blocked BEFORE it executes (prospective), not
+    only caught post-hoc. Non-commit navigation is allowed."""
+    pol = H.load_policy(env_type="gui")
+    task = {"task_id": "hab", "goal": "Triage DEN-001.", "context": {"text": "DEN-001"}, "environment": {"type": "gui"}}
+    contract = build_contract(task, env_type="gui", policy=pol)
+    k = HarnessKernel(contract, [ScopeEvidenceBinding(), ObligationLifecycle(), VerifyAndCommit()],
+                      mode="enforce", policy=pol, env_type="gui")
+    # land on the WRONG case (records the displayed subject)
+    k.after_action({"type": "tool", "tool": "click", "args": {}}, "ok", {"x": 0}, {"x": 1}, step=0,
+                   canonical_observation={"case_identity": "DEN-999"})
+    eff = k.before_action({"type": "tool", "tool": "submit", "args": {}}, step=1)   # commit on wrong page
+    assert eff.type == D.BLOCK and "DEN-999" in str(eff.feedback), eff.feedback
+    # navigate to the right case -> submit now allowed prospectively
+    k.after_action({"type": "tool", "tool": "click", "args": {}}, "ok", {"x": 1}, {"x": 2}, step=2,
+                   canonical_observation={"case_identity": "DEN-001"})
+    assert k.before_action({"type": "tool", "tool": "submit", "args": {}}, step=3).type == D.ALLOW
+
+
+def test_invalid_mode_raises():
+    assert H.resolve_mode("") == "off"
+    assert H.resolve_mode("enforce") == "enforce"
+    try:
+        H.resolve_mode("enforc"); assert False, "a typo'd mode must raise, not silently disable the harness"
+    except ValueError:
+        pass
+
+
 def _run():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     passed = 0

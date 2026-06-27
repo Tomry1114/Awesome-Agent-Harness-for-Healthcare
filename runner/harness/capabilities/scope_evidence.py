@@ -27,6 +27,17 @@ class ScopeEvidenceBinding(Capability):
                 D.REVISE, rule_id="subject_unspecified", reason_code="subject_unspecified", deterministic=True,
                 reason="commit does not specify which subject it operates on",
                 feedback="This action does not name a subject; specify the subject it applies to before committing.")
+        # PROSPECTIVE guard for implicit_active substrates (GUI): a COMMIT (e.g. submit) while the page
+        # shows a DIFFERENT subject than assigned is blocked BEFORE it executes — post-hoc is too late for
+        # an irreversible submit. (Non-commit navigation toward the right subject is still allowed.)
+        if binding == "implicit_active" and active and sem and sem.is_commit():
+            shown = _observed_subject(ctx.manifest, ctx.last_observation)
+            if shown is not None and not _same_subject(shown, active):
+                return self._decide(
+                    D.BLOCK, rule_id="subject_scope_mismatch", reason_code="wrong_scope", deterministic=True,
+                    reason="committing while the page shows %s but the assigned subject is %s" % (shown, active),
+                    feedback="The page shows %s; do not submit until you are on %s." % (shown, active),
+                    extra={"shown": shown, "active_subject": active})
         if not active or target is None:
             return None
         if not _same_subject(target, active):
@@ -79,6 +90,18 @@ class ScopeEvidenceBinding(Capability):
                                            "status": ("VALIDATED" if valid else "ATTEMPTED"),
                                            "scope_relation": rel})
         return None
+
+
+def _observed_subject(manifest, obs):
+    """The subject DISPLAYED in the observation, via the manifest's declared from_observation paths."""
+    if not isinstance(obs, dict):
+        return None
+    from ..semantics import _path_get
+    for path in ((manifest.get("subject") or {}).get("from_observation") or []):
+        v = _path_get(obs, path)
+        if v:
+            return str(v)
+    return None
 
 
 def _arg_subject(action, manifest):
