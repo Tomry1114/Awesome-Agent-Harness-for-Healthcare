@@ -270,6 +270,53 @@ def test_p3_semantic_claim_support_judge():
     assert any(r["rule_id"] == "semantic_claim_support" for r in nj.ledger.unresolved_risks)
 
 
+def test_p3_semantic_relation_tristate():
+    """P0-4/P0-5: the judge sees the QUESTION/GOAL + PUBLIC CONTEXT; the relation tri-state separates a
+    CONTRADICTION (hard REVISE) from INSUFFICIENT under-coverage (limited REVISE + unverified_grounding
+    flag). Also checks the decision carries the side_effecting routing flag (CONTRACT 5)."""
+    from harness.engines.semantic import verify_claim_support, SUPPORTED, CONTRADICTED, INSUFFICIENT
+    cap = {}
+    def jins(p):
+        cap["prompt"] = p
+        return '{"relation": "insufficient", "confidence": 0.8, "reason": "under-covers"}'
+    v = verify_claim_support("finding in chest CT?", "ctx-text", "a 3 cm mass",
+                             [{"type": "image", "value": "spiculated nodule"}], judge_fn=jins)
+    assert v.relation == INSUFFICIENT and v.supported is None, v.to_dict()
+    # P0-4: the judge prompt actually contains the PUBLIC QUESTION/GOAL (oracle-safe, never gold).
+    assert "QUESTION / GOAL" in cap["prompt"] and "finding in chest CT?" in cap["prompt"], cap["prompt"]
+    # P0-5: zero SELECTED evidence = under-coverage (INSUFFICIENT), NOT a 1.0-confidence contradiction.
+    v0 = verify_claim_support("g", "c", "ans", [], judge_fn=jins)
+    assert v0.relation == INSUFFICIENT and v0.supported is None, v0.to_dict()
+    # back-compat: a legacy {"supported": ...} judge still parses (relation derived).
+    vb = verify_claim_support("g", "c", "ans", [{"type": "image", "value": "x"}],
+                              judge_fn=lambda p: '{"supported": false, "confidence": 0.9, "reason": "r"}')
+    assert vb.relation == CONTRADICTED and vb.supported is False, vb.to_dict()
+
+    pol = H.load_policy(env_type="tool_sandbox")
+    task = {"task_id": "m", "goal": "finding?", "context": {}, "environment": {"type": "tool_sandbox"}}
+    contract = build_contract(task, env_type="tool_sandbox", policy=pol)
+
+    def mk(judge_fn):
+        k = HarnessKernel(contract, [ScopeEvidenceBinding(), ObligationLifecycle(), VerifyAndCommit()],
+                          mode="enforce", policy=pol, env_type="tool_sandbox", judge_fn=judge_fn,
+                          budget={"max_semantic_checks": 5})
+        k.after_action({"type": "tool", "tool": "ImageDescription", "args": {}},
+                       "a 3cm spiculated RUL nodule", None, None, step=0, result_ok=True)
+        return k
+
+    # CONTRADICTED (high conf) -> HARD REVISE; reason_code kept 'unsupported_claim' (counted violation).
+    dc = mk(lambda p: '{"relation": "contradicted", "confidence": 0.9, "reason": "LUL vs RUL"}').before_final("LUL effusion", step=1)
+    assert dc.type == D.REVISE and dc.raw.reason_code == "unsupported_claim", dc.raw.to_dict()
+    # INSUFFICIENT -> limited REVISE carrying the unverified_grounding flag + routing fields.
+    di = mk(lambda p: '{"relation": "insufficient", "confidence": 0.8, "reason": "under"}').before_final("RUL nodule", step=1)
+    assert di.type == D.REVISE and di.raw.reason_code == "insufficient_grounding", di.raw.to_dict()
+    assert di.raw.extra.get("verification_flag") == "unverified_grounding", di.raw.extra
+    assert di.raw.extra.get("relation") == INSUFFICIENT and "side_effecting" in di.raw.extra, di.raw.extra
+    # SUPPORTED relation -> ALLOW (no opinion).
+    ds = mk(lambda p: '{"relation": "supported", "confidence": 0.9, "reason": "match"}').before_final("RUL nodule", step=1)
+    assert ds.type == D.ALLOW, ds.raw.to_dict() if ds.raw else ds.type
+
+
 def test_tool_renaming_invariance():
     """GENERALITY: rename every tool to an opaque id in the manifest; the SAME gates fire. The harness
     depends on capability SEMANTICS (manifest mapping), not on any tool name -> a new dataset that uses
@@ -718,6 +765,46 @@ def test_evidence_not_truncated_for_grounding_judge():
     assert "TAIL_MARKER_PVT" in seen.get("prompt", ""), "grounding judge saw a truncated evidence stub"
     aud_ev = k.ledger.to_dict()["evidence"][-1]
     assert "value_full" not in aud_ev and len(aud_ev.get("value", "")) <= 220  # audit stays compact
+
+
+def test_revision_identity_resets_on_progress():
+    """CONTRACT(3) (P0-3): the per-action revision counter is keyed on the FULL action fingerprint
+    (semantic_type, resource, target_entity, payload_hash, evidence_version, reason_code, capability).
+    A TRULY identical repeated rejection accumulates toward the ESCALATE cap; a revised payload OR new
+    evidence (genuine progress) RESETS the counter so a progressing agent is never wrongly ESCALATEd."""
+    rev = D.HarnessDecision(D.REVISE, capability="verify_commit", reason_code="ungrounded_claim", rule_id="r")
+    man = POLICY.get("manifest")
+
+    # (a) IDENTICAL final answer rejected over and over -> stuck loop -> ESCALATE past the cap (=2).
+    k = _kernel("enforce"); k.budget["max_revisions_per_action"] = 2
+    k.ctx.sem = canonicalize({"type": "final", "answer": "a 3 cm mass"}, man)
+    effs = [k._apply_mode(rev, "before_final").type for _ in range(4)]
+    assert effs == [D.REVISE, D.REVISE, D.ESCALATE, D.ESCALATE], effs
+
+    # (b) a DIFFERENT answer every turn (still REVISE'd) = progress -> counter RESETS -> never escalates.
+    k2 = _kernel("enforce"); k2.budget["max_revisions_per_action"] = 2
+    outs = []
+    for i in range(5):
+        k2.ctx.sem = canonicalize({"type": "final", "answer": "draft v%d" % i}, man)
+        outs.append(k2._apply_mode(rev, "before_final").type)
+    assert all(o == D.REVISE for o in outs), outs
+
+    # (c) SAME answer but NEW evidence each turn = progress (evidence_version bumps) -> RESETS -> no escalate.
+    k3 = _kernel("enforce"); k3.budget["max_revisions_per_action"] = 2
+    outs3 = []
+    for i in range(5):
+        k3.ctx.sem = canonicalize({"type": "final", "answer": "stuck"}, man)
+        k3.ledger.add_evidence("record", {"i": i}, subject_id="Patient/123")
+        outs3.append(k3._apply_mode(rev, "before_final").type)
+    assert all(o == D.REVISE for o in outs3), outs3
+
+    # (d) the identity now bounds BEFORE_ACTION too (P0-7): two DISTINCT tool args don't share a counter.
+    k4 = _kernel("enforce"); k4.budget["max_revisions_per_action"] = 1
+    k4.ctx.sem = canonicalize({"type": "tool", "tool": "fhir_search", "args": {"q": "A"}}, man)
+    a1 = [k4._apply_mode(rev, "before_action").type for _ in range(2)]
+    assert a1 == [D.REVISE, D.ESCALATE], a1                      # same args -> accumulates -> ESCALATE
+    k4.ctx.sem = canonicalize({"type": "tool", "tool": "fhir_search", "args": {"q": "B"}}, man)
+    assert k4._apply_mode(rev, "before_action").type == D.REVISE  # different args -> fresh counter
 
 
 def _run():

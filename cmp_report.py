@@ -10,7 +10,9 @@ MODS = ["Execution", "Tooling", "Context", "Lifecycle", "Observability", "Verifi
 HM = ["n_proposed_actions", "n_commits", "n_interventions", "n_findings", "escalation_rate",
       "wrong_scope_action_rate", "missing_prerequisite_rate", "unverified_commit_rate",
       "verified_commit_rate", "violated_commit_rate", "unknown_verification_rate",
-      "executed_violation_rate", "post_commit_failure_count", "over_block_rate"]
+      "executed_violation_rate", "post_commit_failure_count", "over_block_rate",
+      "repair_success_rate", "unsafe_commitment_rate", "outcome_preservation", "answer_delivered",
+      "over_block_proxy_count"]
 
 
 def rep(d): return json.load(open(d + "/gpt5/report.json")) if os.path.exists(d + "/gpt5/report.json") else None
@@ -20,11 +22,13 @@ def native(r): return (r.get("native_metrics") or {}) if r else {}
 
 
 def harness_agg(stem):
-    acc, cnt, n, model, judge = {}, {}, 0, None, None
+    acc, cnt, n, model, judge, ojudge, oj_ind = {}, {}, 0, None, None, None, None
     for f in glob.glob("%s/gpt5/*/result.json" % stem):
         d = json.load(open(f)); h = d.get("harness") or {}; m = h.get("metrics") or {}
         prov = d.get("provenance") or {}
         model = model or prov.get("agent_model") or d.get("agent_model")
+        _oj = (prov.get("judges") or {}).get("outcome") or {}
+        ojudge = ojudge or _oj.get("model"); oj_ind = oj_ind or _oj.get("independence")
         if not m:
             continue
         n += 1
@@ -33,7 +37,7 @@ def harness_agg(stem):
             if isinstance(v, (int, float)) and not isinstance(v, bool):
                 acc[k] = acc.get(k, 0) + v; cnt[k] = cnt.get(k, 0) + 1
     agg = {k: (round(acc[k] / cnt[k], 3) if "rate" in k else acc[k]) for k in acc}
-    return agg, n, model, judge
+    return agg, n, model, judge, ojudge, oj_ind
 
 
 def f(v):
@@ -47,11 +51,16 @@ def delta(a, b):
 
 for bench, soff, senf in DS:
     ro, re_ = rep(soff), rep(senf)
-    ha, hn, hmodel, hjudge = harness_agg(senf)
-    _, on, omodel, _ = harness_agg(soff)
+    ha, hn, hmodel, hjudge, h_oj, h_oj_ind = harness_agg(senf)
+    _, on, omodel, _, o_oj, o_oj_ind = harness_agg(soff)
     print("=" * 80)
-    print("%-18s agent=%s | harness_judge=%s | bundles off=%d enf=%d (harness-active=%d)"
-          % (bench, hmodel or omodel or "?", hjudge or "none",
+    _ojm = h_oj or o_oj or "none"
+    _ojflag = ("  [!! OUTCOME JUDGE DID NOT RUN -> native outcome invalid]" if _ojm == "offline_whitelist_proxy"
+               else ("  [!! non-independent outcome judge]"
+                     if (o_oj_ind == "shared_model_with_agent_or_tool" or h_oj_ind == "shared_model_with_agent_or_tool")
+                     else ""))
+    print("%-18s agent=%s | harness_judge=%s | outcome_judge=%s (indep=%s)%s | bundles off=%d enf=%d (harness-active=%d)"
+          % (bench, hmodel or omodel or "?", hjudge or "none", _ojm, h_oj_ind or o_oj_ind or "n/a", _ojflag,
              len(glob.glob(soff + "/gpt5/*/result.json")), len(glob.glob(senf + "/gpt5/*/result.json")), hn))
     print("-" * 80)
     print("  %-28s %9s %9s  %s" % ("", "OFF", "ENFORCE", "Δ"))

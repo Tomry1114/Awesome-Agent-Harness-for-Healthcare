@@ -147,6 +147,9 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
         _harness_runtime_errors.append("build_kernel: %r" % _he)
 
     trajectory, last_obs, last_res, finished = [], None, None, False
+    pending_harness_feedback = None   # CONTRACT(1): ADDITIVE harness feedback handed to the agent next turn
+    max_repair_turns = int(os.environ.get("MH_MAX_REPAIR_TURNS", "4"))   # CONTRACT(2): cap on REVISE/BLOCK turns
+    _repair_turns = 0
     deliv = DeliverableScaffold(task)  # PB deliverable scaffolding (Codex #1: extracted from the generic runner; no-op for non-PB)
     _fail_sig = None; _fail_n = 0; _aborted = False  # circuit breaker: abort on repeated identical failing call
     _last_tool_ev = None  # for consumed_by_agent backfill (#review: rendered != consumed)
@@ -169,7 +172,9 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
             _last_tool_ev["delivery_record"]["consumed_by_agent"] = True
             _last_tool_ev = None
         action = agent.act({"goal": task.get("goal"), "context": task.get("context"),
-                            "tools": env.available_tools(), "last_observation": last_obs, "last_result": last_res})
+                            "tools": env.available_tools(), "last_observation": last_obs, "last_result": last_res,
+                            "harness_feedback": pending_harness_feedback})
+        pending_harness_feedback = None   # consumed this turn
         if not isinstance(action, dict) or "type" not in action:  # #7 agent contract violation
             trajectory.append({"step": step, "event_type": "agent_error", "error": "invalid_action", "raw": str(action)[:200], "status": "error"})
             finished = True; break
@@ -189,9 +194,19 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
                                            "reason": "hook_error", "status": "error"}); _aborted = True; break
                 if _hf is not None:
                     trajectory.extend(_hf.events)
-                    if _hf.type in ("REVISE", "BLOCK"):
-                        last_res = {"harness_decision": _hf.type, "harness_feedback": _hf.feedback}
-                        last_obs = json.dumps(last_res, ensure_ascii=False)[:int(os.environ.get("MH_OBS_MAX_LEN", "10000"))]
+                    if _hf.type in ("REVISE", "BLOCK"):   # ADDITIVE: keep last_obs/last_res (env state) intact
+                        _repair_turns += 1
+                        pending_harness_feedback = {"decision": _hf.type,
+                            "reason": (_hf.feedback or {}).get("reason") or (_hf.feedback or {}).get("message"),
+                            "missing_obligations": (_hf.feedback or {}).get("missing_obligations", []),
+                            "stage": "before_final"}
+                        if _repair_turns > max_repair_turns:
+                            # CONTRACT(5): a terminal ANSWER (no side effect) must NEVER be erased -> deliver WITH flag.
+                            trajectory.append({"step": step, "event_type": "final_answer", "thought": action.get("answer", ""),
+                                               "status": "ok", "verification_flag": "unverified_grounding",
+                                               "harness_feedback": _hf.feedback,
+                                               "canonical_action": _canon.canonical_action(action, env_type)})
+                            finished = True; break
                         continue
                     if _hf.type == "ESCALATE":
                         trajectory.append({"step": step, "event_type": "harness_escalation",
@@ -219,9 +234,14 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
                                        "reason": "hook_error", "status": "error"}); _aborted = True; break
             if _hb is not None:
                 trajectory.extend(_hb.events)
-                if _hb.type in ("REVISE", "BLOCK"):     # do NOT execute the tool; feed feedback back
-                    last_res = {"harness_decision": _hb.type, "harness_feedback": _hb.feedback}
-                    last_obs = json.dumps(last_res, ensure_ascii=False)[:int(os.environ.get("MH_OBS_MAX_LEN", "10000"))]
+                if _hb.type in ("REVISE", "BLOCK"):     # do NOT execute the tool; ADDITIVE feedback (env obs intact)
+                    _repair_turns += 1
+                    pending_harness_feedback = {"decision": _hb.type,
+                        "reason": (_hb.feedback or {}).get("reason") or (_hb.feedback or {}).get("message"),
+                        "missing_obligations": (_hb.feedback or {}).get("missing_obligations", []),
+                        "stage": "before_action"}
+                    if _repair_turns > max_repair_turns:
+                        trajectory.append({"step": step, "event_type": "repair_budget_exhausted", "stage": "before_action", "status": "ok"}); finished = True; break
                     continue
                 if _hb.type == "ESCALATE":
                     trajectory.append({"step": step, "event_type": "harness_escalation",
@@ -290,8 +310,10 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
                 trajectory.append({"step": step, "event_type": "harness_escalation",
                                    "stage": "after_action", "feedback": _hpost.feedback, "status": "error"})
                 _aborted = True; break
-            if _hpost.type in ("REVISE", "BLOCK") and _hpost.feedback:   # fold into next obs
-                obs = (obs + "\n[HARNESS] " + json.dumps(_hpost.feedback, ensure_ascii=False))[:int(os.environ.get("MH_OBS_MAX_LEN", "10000"))]
+            if _hpost.type in ("REVISE", "BLOCK") and _hpost.feedback:   # fold into next obs (RESERVE room)
+                _max = int(os.environ.get("MH_OBS_MAX_LEN", "10000"))
+                _htxt = "\n[HARNESS] " + json.dumps(_hpost.feedback, ensure_ascii=False)
+                obs = (_htxt[:_max] if len(_htxt) >= _max else obs[:_max - len(_htxt)] + _htxt)
         _last_tool_ev = _ev   # mark consumed only if a later agent.act() runs (circuit-break -> stays False)
         if _err:
             _sig = (action["tool"], json.dumps(action.get("args", {}), sort_keys=True), _ev.get("error_type"))

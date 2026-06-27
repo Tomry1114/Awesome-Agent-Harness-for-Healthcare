@@ -100,11 +100,21 @@ class HarnessKernel:
         if eff != D.ALLOW and self._n_interventions >= self.budget["max_interventions_per_task"]:
             note = "budget_exhausted_interventions"
             eff = D.ESCALATE if self.mode == "enforce" else D.ALLOW
-        # MAX_REVISIONS_PER_ACTION: a commit-stage REVISE that keeps re-firing is a stuck revision loop.
-        # Count effective REVISEs per (reason_code, capability) for the commit stages; once the count
-        # exceeds the budget, escalate that decision to ESCALATE instead of looping REVISE forever.
-        elif eff == D.REVISE and stage in ("after_action", "before_final"):
-            rkey = (decision.reason_code, decision.capability)
+        # MAX_REVISIONS_PER_ACTION: a REVISE that keeps re-firing on the SAME proposal is a stuck loop.
+        # CONTRACT(3) identity = (semantic_type, resource, target_entity, payload_hash, evidence_version,
+        # reason_code) [+ capability, kept from the prior key so two capabilities don't share a counter].
+        # Because payload_hash and evidence_version are IN the key, the counter RESETS automatically the
+        # moment the agent revises its answer/args OR new evidence is added (genuine progress) — only a
+        # TRULY identical repeated rejection accumulates toward the cap. Applies to EVERY feedback stage
+        # (P0-7: a before_action loop is now bounded by the same per-FINGERPRINT key, not a global one).
+        elif eff == D.REVISE:
+            sem = self.ctx.sem
+            ev_ver = self.ledger.evidence_version
+            if sem is not None:
+                rkey = (sem.semantic_type, sem.resource, sem.target_entity,
+                        _payload_fingerprint(sem), ev_ver, decision.reason_code, decision.capability)
+            else:
+                rkey = (None, None, None, None, ev_ver, decision.reason_code, decision.capability)
             n = self._rev_for_action.get(rkey, 0) + 1
             self._rev_for_action[rkey] = n
             if n > self.budget["max_revisions_per_action"]:
@@ -313,6 +323,20 @@ def _action_name(action):
     if action.get("type") == "final":
         return "final"
     return action.get("tool") or action.get("action") or action.get("type") or ""
+
+
+def _payload_fingerprint(sem):
+    """Stable, leak-safe hash of the agent's OWN proposed payload — the answer TEXT on a final, the
+    normalized ARGS on a tool action. Lets the revision-identity key tell an IDENTICAL repeated rejection
+    (accumulates toward the ESCALATE cap) from a revised one (resets the counter). Never reads gold."""
+    import hashlib, json
+    raw = sem.raw if (sem is not None and isinstance(sem.raw, dict)) else {}
+    payload = raw.get("answer") if raw.get("type") == "final" else raw.get("args")
+    try:
+        s = json.dumps(payload, sort_keys=True, default=str)
+    except Exception:
+        s = repr(payload)
+    return hashlib.sha1(s.encode("utf-8")).hexdigest()
 
 
 def _feedback(decision):

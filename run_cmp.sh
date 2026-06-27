@@ -29,7 +29,7 @@ done
 # ---- MedCTA (perceptual; native judge gpt-5.4; harness judge independent) ----
 for M in off enforce; do
   HJ=""; [ "$M" = "enforce" ] && HJ="gpt-5.4-mini"
-  MH_HARNESS_MODE=$M MH_HARNESS_JUDGE_MODEL=$HJ MH_TOOL_MODE=real MH_JUDGE=gpt-5.4 \
+  MH_HARNESS_MODE=$M MH_HARNESS_JUDGE_MODEL=$HJ MH_TOOL_MODE=real MH_GACC=1 MH_GACC_MODEL=gpt-5.4 \
      $PY runner/run_batch.py --bench MedCTA --agent gpt5 --limit 10 --out res5_mcta_$M/ 2>&1
   echo "[done MCTA $M $(date)]"
 done
@@ -37,7 +37,7 @@ done
 # ---- HealthAdminBench (interactive_gui; native judge gpt-5.4; harness judge independent) ----
 for M in off enforce; do
   HJ=""; [ "$M" = "enforce" ] && HJ="gpt-5.4-mini"
-  MH_HARNESS_MODE=$M MH_HARNESS_JUDGE_MODEL=$HJ MH_GUI_MODE=real MH_PORTAL_BASE=$PORTAL MH_JUDGE=gpt-5.4 \
+  MH_HARNESS_MODE=$M MH_HARNESS_JUDGE_MODEL=$HJ MH_GUI_MODE=real MH_PORTAL_BASE=$PORTAL MH_GACC=1 MH_GACC_MODEL=gpt-5.4 \
      $PY runner/run_batch.py --bench HealthAdminBench --agent gpt5 --limit 10 --out res5_hab_$M/ 2>&1
   echo "[done HAB $M $(date)]"
 done

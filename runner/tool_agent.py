@@ -219,6 +219,14 @@ class ToolProtocolAgent:
         return {"type": "final", "answer": (a.group(1).strip() if a else out.strip())}
 
     def act(self, state):
+        _hfb = state.get("harness_feedback")
+        if isinstance(_hfb, dict):   # CONTRACT(1): surface harness verdict IN ADDITION to the env observation
+            _msg = "[HARNESS %s] %s" % (_hfb.get("decision", "REVISE"), _hfb.get("reason") or "")
+            _mo = _hfb.get("missing_obligations")
+            if _mo:
+                _msg += "; missing: " + json.dumps(_mo, ensure_ascii=False)
+            _msg += "\nRevise accordingly; the ENVIRONMENT observation below is still current."
+            self.messages.append({"role": "user", "content": _msg})
         _lr0 = state.get("last_result")
         _fb = _lr0.get("feedback") if isinstance(_lr0, dict) else None
         if _fb:  # runner deliverable-enforcement feedback: incorporate and re-decide

@@ -123,6 +123,14 @@ class ApiToolAgent(ToolProtocolAgent):
         return {"content": "API_BRAIN_ERROR"}
 
     def act_fc(self, state):
+        _hfb = state.get("harness_feedback")
+        if isinstance(_hfb, dict):   # CONTRACT(1): function-calling brain also sees the harness verdict (additive)
+            _msg = "[HARNESS %s] %s" % (_hfb.get("decision", "REVISE"), _hfb.get("reason") or "")
+            _mo = _hfb.get("missing_obligations")
+            if _mo:
+                _msg += "; missing: " + json.dumps(_mo, ensure_ascii=False)
+            _msg += "\nRevise accordingly; the ENVIRONMENT observation below is still current."
+            self.messages.append({"role": "user", "content": _msg})
         if self._fc_call_id is not None:
             lr = state.get("last_result")
             obs = lr.get("output") if isinstance(lr, dict) and "output" in lr else lr

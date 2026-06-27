@@ -31,6 +31,9 @@ class Ledger:
         self.opportunities = {}
         self._opp_seen = set()              # (key, step) already counted -> one opportunity per ACTION
         self._evk = 0
+        self.evidence_version = 0           # CONTRACT(3): bumped on every add_evidence; part of the
+                                            # revision-identity key so a stuck-revision counter RESETS
+                                            # when new evidence lands (the agent made progress)
 
     def bump_opportunity(self, key, step=None, n=1):
         """Count one opportunity. When a step is given, the same (key, step) counts ONCE — so a single
@@ -64,6 +67,7 @@ class Ledger:
     # ---- evidence ------------------------------------------------------------
     def add_evidence(self, type, value, subject_id=None, source_event=None, source_type=None, extra=None):
         self._evk += 1
+        self.evidence_version += 1          # CONTRACT(3): progress signal for revision-identity reset
         rec = {"evidence_id": "ev-%d" % self._evk, "type": type, "value": value,
                "subject_id": subject_id, "source_event": source_event, "source_type": source_type}
         if extra:

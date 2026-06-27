@@ -90,36 +90,70 @@ class VerifyAndCommit(Capability):
         ptype = (post.get("type") if isinstance(post, dict) else post) if post else None
         if not ptype:
             return None
+        # SIDE-EFFECTING flag (P0-5 / CONTRACT 5): a terminal answer with effect 'none' (e.g. a read-only
+        # "answer") has NO side effect and must NEVER be erased to nothing — run.py delivers it WITH a
+        # verification flag instead of aborting. effect != none (perceptual/irreversible diagnosis,
+        # create/submit) stays fail-closed. We only STAMP the flag here; run.py owns deliver-vs-abort.
+        _side_effecting = bool(ctx.sem and getattr(ctx.sem, "effect", "none") not in (None, "none"))
         if not ctx.judge_fn or not ctx.spend_semantic():
             ctx.ledger.add_unresolved_risk("semantic_claim_support",
                                            "claim<->evidence not verified (no judge / budget spent)")
             ctx.verification = None
-            # the contract REQUIRES semantic support but none is available -> UNKNOWN, not a free pass:
-            # ESCALATE (observe records, assist revises, enforce terminates). If the operator wants enforce
-            # on perceptual commits, they must supply a judge.
+            # the contract REQUIRES semantic support but none is available -> UNKNOWN, not a free pass.
+            # ESCALATE (observe records, assist revises, enforce terminates safely). run.py aborts ONLY a
+            # SIDE-EFFECTING commit; a no-side-effect answer is delivered WITH the unverified_grounding flag.
             return self._decide(
                 D.ESCALATE, rule_id=ptype, reason_code="unverifiable_commit", deterministic=True,
+                extra={"side_effecting": _side_effecting, "verification_flag": "unverified_grounding"},
                 reason="final answer requires evidence-support verification but no judge/budget is available",
-                feedback="This answer needs claim<->evidence verification, which is unavailable; escalating.")
+                feedback="This answer needs claim<->evidence verification, which is unavailable.")
         # filter the ledger to ONLY the evidence the postcondition selector allows (e.g. perception/image,
         # VALIDATED) — the judge never sees unrelated (e.g. external web) evidence.
         selector = (post.get("evidence_selector") if isinstance(post, dict) else None) or {}
         evid = [e for e in ctx.ledger.evidence if _selected(e, selector)]
-        from ..engines.semantic import verify_claim_support
-        v = verify_claim_support(answer, evid, judge_fn=ctx.judge_fn)
+        from ..engines.semantic import verify_claim_support, SUPPORTED, CONTRADICTED, INSUFFICIENT
+        # task_goal/public_context come from contract.meta, filled by the ORACLE-BLIND compiler from the
+        # PUBLIC task fields (ALLOWED_TASK_FIELDS, leak-checked) — NEVER gold_answer/reference. The judge
+        # still only audits evidence-SUPPORT, not general correctness.
+        _meta = (ctx.contract.meta if (ctx.contract and ctx.contract.meta) else {})
+        _task_goal = _meta.get("goal")
+        _public_context = _meta.get("public_context")
+        v = verify_claim_support(_task_goal, _public_context, answer, evid, judge_fn=ctx.judge_fn)
         ctx.verification = v.supported
-        if v.supported is True:
+        _extra = {"semantic": v.to_dict(), "relation": v.relation, "side_effecting": _side_effecting}
+        if v.supported is True or v.relation == SUPPORTED:
             return None
-        if v.supported is False and (v.confidence or 0) >= 0.5:
+        # CONTRADICTED with high confidence -> the ONLY HARD revise (answer conflicts with the evidence).
+        # Keep reason_code 'unsupported_claim' so the governance violation metric stays counted.
+        if v.relation == CONTRADICTED and (v.confidence or 0) >= 0.5:
             return self._decide(
                 D.REVISE, rule_id=ptype, reason_code="unsupported_claim", deterministic=False,
-                extra={"semantic": v.to_dict()},
-                reason="final answer not supported by the selected evidence: %s" % v.reason,
-                feedback="Your answer is not supported by the evidence you gathered (%s) — re-examine "
+                extra=_extra,
+                reason="final answer is contradicted by the selected evidence: %s" % v.reason,
+                feedback="Your answer conflicts with the evidence you gathered (%s) — re-examine "
                          "before answering." % v.reason)
+        # INSUFFICIENT (evidence under-covers the answer) -> a LIMITED revise; run.py permits at most one,
+        # then DELIVERS the answer WITH the 'unverified_grounding' flag (the answer is not wrong, only not
+        # fully grounded). Under-coverage must NOT be punished like a contradiction.
+        if v.relation == INSUFFICIENT:
+            ctx.ledger.add_unresolved_risk("semantic_claim_support",
+                                           "selected evidence under-covers the answer (insufficient grounding)")
+            _ins = dict(_extra); _ins["verification_flag"] = "unverified_grounding"
+            return self._decide(
+                D.REVISE, rule_id=ptype, reason_code="insufficient_grounding", deterministic=False,
+                extra=_ins,
+                reason="selected evidence does not fully cover the final answer: %s" % v.reason,
+                feedback="The evidence you gathered does not fully support your answer (%s) — gather more "
+                         "grounding or qualify the claim." % v.reason)
+        # UNKNOWN / low-confidence (incl. a low-confidence contradiction) -> record unresolved risk + flag;
+        # do NOT treat as wrong. run.py aborts ONLY a SIDE-EFFECTING commit; a no-side-effect answer is
+        # delivered WITH the unresolved_risk flag.
+        ctx.ledger.add_unresolved_risk("semantic_claim_support",
+                                       "claim<->evidence support is low-confidence/unknown")
+        _unk = dict(_extra); _unk["verification_flag"] = "unresolved_risk"
         return self._decide(
             D.ESCALATE, rule_id="semantic_low_confidence", reason_code="unjudgeable", deterministic=False,
-            extra={"semantic": v.to_dict()},
+            extra=_unk,
             reason="claim<->evidence support is low-confidence/unknown: %s" % v.reason)
 
 
