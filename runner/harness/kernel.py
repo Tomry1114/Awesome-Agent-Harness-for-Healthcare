@@ -126,6 +126,8 @@ class HarnessKernel:
                       extra=({"note": note} if note else None))
         # record the WOULD-BE intervention (raw) with its effective outcome, in every mode
         d = decision.to_dict(); d["effective"] = eff; d["event_id"] = ev["id"]
+        # surface action_key to the TOP LEVEL so governance can dedup before/after violations of one action.
+        d["action_key"] = (decision.extra or {}).get("action_key") or getattr(self.ctx, "action_key", None)
         self.ledger.record_intervention(d)
         if eff != D.ALLOW:
             self._n_interventions += 1
@@ -203,6 +205,7 @@ class HarnessKernel:
         sem = self._canon(action)
         risk = self.ctx.risk
         pid = self.ledger.record_proposed(sem.capability, risk, step)
+        self.ctx.action_key = pid   # ONE canonical key for this action across before/after hooks (dedup)
         from .risk import at_least, R2
         if at_least(risk, R2):
             self.ledger.bump_opportunity("commit_proposal", step)   # denom for missing_prerequisite_rate (per action)
@@ -265,7 +268,7 @@ class HarnessKernel:
         sem = self._canon({"type": "final", "answer": answer})
         from .risk import at_least, R2
         # the final answer is a commit -> it enters the SAME commit lifecycle (proposal + opportunity).
-        self.ledger.record_proposed(sem.capability, self.ctx.risk, step)
+        self.ctx.action_key = self.ledger.record_proposed(sem.capability, self.ctx.risk, step)
         is_commit = at_least(self.ctx.risk, R2)
         if is_commit:
             self.ledger.bump_opportunity("commit_proposal", step)

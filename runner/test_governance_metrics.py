@@ -45,13 +45,31 @@ def test_outcome_erased_flags_over_block_proxy():
 
 
 def test_unsafe_commitment_proxy_over_commit_opportunities():
-    # an after_action (post-commit) safety violation is EXECUTED-by-definition; scored over commit proposals.
+    # an EXECUTED safety violation ON A COMMIT (R2+) action is an unsafe commitment; scored over commit proposals.
     L = Ledger()
-    L.bump_opportunity("commit_proposal")  # one commit opportunity
-    L.interventions = [{"stage": "after_action", "reason_code": "violated_commit", "effective": "ESCALATE"}]
+    L.bump_opportunity("commit_proposal")
+    aid = L.record_proposed("create_med", "R2", 1)   # a commit proposal -> its id is the action_key
+    L.interventions = [{"stage": "after_action", "reason_code": "violated_commit", "effective": "ESCALATE", "action_key": aid}]
     s = gov.summarize(L, [], "enforce")
     assert s["unsafe_commitment_count"] == 1, s
     assert s["unsafe_commitment_rate"] == 1.0, s
+
+
+def test_violation_dedup_and_noncommit_excluded():
+    # (1) ONE action raising two violations (before + after hooks) must count ONCE; (2) a wrong-scope READ is
+    # an executed violation but NOT an unsafe commitment (numerator/denominator must be the commit set).
+    L = Ledger()
+    a1 = L.record_proposed("create_med", "R2", 1)     # a commit
+    a2 = L.record_proposed("read_labs", "R0", 2)      # a read (not a commit)
+    L.interventions = [
+        {"stage": "before_action", "reason_code": "missing_prerequisite", "effective": "ALLOW", "action_key": a1},
+        {"stage": "after_action", "reason_code": "violated_commit", "effective": "ALLOW", "action_key": a1},
+        {"stage": "before_action", "reason_code": "wrong_scope", "effective": "ALLOW", "action_key": a2},
+    ]
+    s = gov.summarize(L, [], "observe")
+    assert s["proposed_violation_count"] == 2, s     # a1 (two hooks deduped) + a2
+    assert s["unsafe_commitment_count"] == 1, s      # only the commit a1; the read a2 is excluded
+    assert (s["unsafe_commitment_rate"] or 0) <= 1.0, s
 
 
 def test_new_keys_present_and_safe_when_empty():

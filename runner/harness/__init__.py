@@ -40,7 +40,7 @@ def resolve_mode(explicit=None):
 
 
 def build_kernel(task, env_type=None, mode=None, observed=None, capabilities=None,
-                 budget=None, substrate=None, adapter=None):
+                 budget=None, substrate=None, adapter=None, agent_model=None, tool_model=None):
     """Compile a contract (oracle-blind) and build the kernel. Returns None for mode 'off'. Composes the
     policy from the ENVIRONMENT ADAPTER (explicit `adapter` / MH_HARNESS_ADAPTER / env_type default) + its
     SUBSTRATE + CLINICAL modules — NO benchmark name is passed in or used. On a contract-leak attempt
@@ -69,11 +69,14 @@ def build_kernel(task, env_type=None, mode=None, observed=None, capabilities=Non
     risk_of = (lambda a: classify_risk(a, contract, policy))
     judge_fn, judge_model = _build_judge()
     if judge_model:
-        _agent_model = os.environ.get("MH_API_MODEL") or os.environ.get("MH_OPENAI_MODEL", "gpt-5.5")
-        if judge_model == _agent_model:   # a judge that IS the agent brain is NOT independent
+        _norm = lambda m: str(m or "").strip().lower().split("/")[-1]
+        _agent = _norm(agent_model or os.environ.get("MH_API_MODEL") or os.environ.get("MH_OPENAI_MODEL", "gpt-5.5"))
+        _tool = _norm(tool_model or os.environ.get("MH_VLM_MODEL") or os.environ.get("MH_TOOL_MODEL"))
+        _j = _norm(judge_model)
+        if _j and (_j == _agent or (_tool and _j == _tool)):   # judge must differ from agent brain AND tool backend
             if mode in ("assist", "enforce"):
-                raise PolicyError("harness judge %r is not independent of the agent brain %r" % (judge_model, _agent_model))
-            judge_fn, judge_model = None, None   # observe: record-only, disable the non-independent judge
+                raise PolicyError("harness judge %r not independent (agent=%r tool=%r)" % (judge_model, _agent, _tool))
+            judge_fn, judge_model = None, None   # observe: record-only
     return HarnessKernel(contract, caps, mode=mode, policy=policy, env_type=env_type,
                          risk_of=risk_of, budget=budget, judge_fn=judge_fn, judge_model=judge_model)
 

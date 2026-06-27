@@ -140,7 +140,8 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
             # the same substrate with different tool names) — task.environment.adapter, else the default.
             _adapter = (task.get("environment") or {}).get("adapter") if isinstance(task, dict) else None
             _harness = _Harness.build_kernel(task, env_type=env_type, adapter=_adapter,
-                                             mode=os.environ.get("MH_HARNESS_MODE"))
+                                             mode=os.environ.get("MH_HARNESS_MODE"),
+                                             agent_model=getattr(agent, "model", None))
     except Exception as _he:
         _harness = None
         _harness_build_failed = True
@@ -213,7 +214,7 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
                                                "harness_feedback": _hf.feedback,
                                                "canonical_action": _canon.canonical_action(action, env_type)})
                             try: _harness.record_flagged_final(action.get("answer", ""), flag="unverified_grounding", step=step)
-                            except Exception: pass
+                            except Exception as _re: _harness_runtime_errors.append("record_flagged_final: %r" % _re)
                             finished = True; break
                         continue
                     if _hf.type == "ESCALATE":
@@ -224,7 +225,7 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
                                                "harness_feedback": _hf.feedback,
                                                "canonical_action": _canon.canonical_action(action, env_type)})
                             try: _harness.record_flagged_final(action.get("answer", ""), flag=_xe.get("verification_flag", "unresolved_risk"), step=step)
-                            except Exception: pass
+                            except Exception as _re: _harness_runtime_errors.append("record_flagged_final: %r" % _re)
                             finished = True; break
                         trajectory.append({"step": step, "event_type": "harness_escalation",   # operational write -> fail-closed
                                            "feedback": _hf.feedback, "status": "error"})
@@ -240,7 +241,8 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
         if action["type"] != "tool_call" or not action.get("tool"):
             trajectory.append({"step": step, "event_type": "agent_error", "error": "bad_action_type", "raw": str(action)[:200], "status": "error"})
             finished = True; break
-        if _env_budget_spent and not (getattr(deliv, "active", False) and deliv._missing(env)):   # but never block a still-required deliverable write
+        _deliv_write = (action.get("tool") == "write_file" and getattr(deliv, "active", False) and deliv._missing(env))
+        if _env_budget_spent and not _deliv_write:   # past the tool budget: allow ONLY a still-required deliverable write
             _repair_turns += 1
             pending_harness_feedback = {"decision": "REVISE", "stage": "runtime_budget", "missing_obligations": [],
                 "reason": "Environment-action budget is exhausted. Do NOT call another tool; give your best "
