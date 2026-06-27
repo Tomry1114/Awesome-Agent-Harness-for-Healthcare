@@ -13,19 +13,21 @@ values) are unverifiable when the substrate only exposes an opaque state token -
 
 
 def evaluate(predicate, before_state, after_state, sem=None):
-    """Returns True (verified), False (violated), or None (cannot verify with the available state)."""
+    """Returns True (verified), False (violated), or None (cannot verify with the available state). The
+    core knows ONLY generic predicate types — NO domain aliases (no 'case_status_not_draft' etc.). A
+    structured predicate over an opaque state token -> None (UNKNOWN), never auto-downgraded to a bare
+    state change."""
     if isinstance(predicate, str):
         predicate = {"type": predicate}
     t = (predicate or {}).get("type")
-    if t in ("state_transition", "created_resource_read_back", "case_status_not_draft",
-             "key_claims_supported_by_image_evidence", None):
-        # the deterministic floor available on any substrate: did the observable state change?
+    if t in ("state_transition", None):
         return _changed(before_state, after_state)
-    if t in ("object_exists", "field_equals", "no_unexpected_side_effect", "target_consistency"):
+    if t in ("object_exists", "field_equals", "field_not_equals", "no_unexpected_side_effect",
+             "target_consistency"):
         if not isinstance(after_state, dict):
-            return None                       # opaque state token -> cannot verify structurally
+            return None                       # opaque state token -> cannot verify structurally -> UNKNOWN
         return _structured(t, predicate, before_state, after_state)
-    return None
+    return None                               # unknown / domain-specific type -> not a core predicate
 
 
 def _changed(before, after):
@@ -42,6 +44,8 @@ def _structured(t, p, before, after):
         return bool(_get(after, p.get("path")))
     if t == "field_equals":
         return _get(after, p.get("path")) == p.get("expected")
+    if t == "field_not_equals":
+        return _get(after, p.get("path")) != p.get("unexpected")
     if t == "target_consistency":
         return _get(after, p.get("path")) == p.get("expected")
     if t == "no_unexpected_side_effect":

@@ -25,4 +25,7 @@ commit_points:
   - match: {semantic_type: submit}
     risk: R2
     requires: []
-    postcondition: {type: case_status_not_draft}   # submit must change workflow state (state floor)
+    # generic predicate, named honestly for what it measures: submit must change observable state.
+    # (A field-level check `{type: field_not_equals, path: case.status, unexpected: Draft}` needs the env
+    # to expose STRUCTURED canonical state; with only a state token it returns UNKNOWN -> P-future.)
+    postcondition: {type: state_transition}
