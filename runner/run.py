@@ -11,6 +11,16 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, HERE)
 import environments, agents, scoring
+
+def _resolve_git_sha():
+    # the code SHA this run executed -> result.json provenance -> cmp_report flags a MIXED-SHA bundle.
+    try:
+        import subprocess
+        _root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        return subprocess.check_output(["git", "rev-parse", "--short", "HEAD"], cwd=_root,
+                                       stderr=subprocess.DEVNULL).decode().strip()
+    except Exception:
+        return os.environ.get("MH_GIT_SHA")
 from pb_policy import DeliverableScaffold
 from environments import _canon_fhir_tool
 
@@ -160,7 +170,7 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
     max_repair_turns = int(os.environ.get("MH_MAX_REPAIR_TURNS", "4"))   # CONTRACT(2): cap on REVISE/BLOCK turns
     _repair_turns = 0
     _env_actions = 0   # CONTRACT(2): EXECUTED environment actions; repair turns do NOT count against this
-    _insufficient_revises = 0   # CONTRACT: INSUFFICIENT grounding gets at most ONE revise, then deliver-with-flag
+    _insufficient_seen = {}   # CONTRACT: INSUFFICIENT grounding gets at most ONE revise PER evidence_version
     _deliv_writes_used = 0   # at most ONE reserved over-budget deliverable write (off/enforce budget parity)
     deliv = DeliverableScaffold(task)  # PB deliverable scaffolding (Codex #1: extracted from the generic runner; no-op for non-PB)
     _fail_sig = None; _fail_n = 0; _aborted = False  # circuit breaker: abort on repeated identical failing call
@@ -209,15 +219,18 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
                     trajectory.extend(_hf.events)
                     if _hf.type in ("REVISE", "BLOCK"):   # ADDITIVE: keep last_obs/last_res (env state) intact
                         _repair_turns += 1
+                        _insuff_exceeded = False
                         if getattr(getattr(_hf, "raw", None), "reason_code", None) == "insufficient_grounding":
-                            _insufficient_revises += 1
+                            _evk = (_harness.ledger.evidence_version if _harness is not None else 0)
+                            _insufficient_seen[_evk] = _insufficient_seen.get(_evk, 0) + 1
+                            _insuff_exceeded = _insufficient_seen[_evk] > 1   # a 2nd insufficient on the SAME evidence
                         pending_harness_feedback = {"decision": _hf.type,
                             "reason": (_hf.feedback or {}).get("reason") or (_hf.feedback or {}).get("message"),
                             "missing_obligations": (_hf.feedback or {}).get("missing_obligations", []),
                             "stage": "before_final"}
-                        # INSUFFICIENT grounding gets at most ONE revise; the global repair budget likewise never
-                        # ERASES a no-side-effect terminal answer -> deliver WITH flag and record it in the ledger.
-                        if _insufficient_revises > 1 or _repair_turns > max_repair_turns:
+                        # INSUFFICIENT -> ONE revise per evidence_version (a NEW evidence version earns another);
+                        # the global repair budget likewise never ERASES a no-side-effect terminal answer.
+                        if _insuff_exceeded or _repair_turns > max_repair_turns:
                             trajectory.append({"step": step, "event_type": "final_answer", "thought": action.get("answer", ""),
                                                "status": "ok", "verification_flag": "unverified_grounding",
                                                "harness_feedback": _hf.feedback,
@@ -578,7 +591,7 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
                   "judge_decoding": judge_decoding, "judges": judges,
                   "uses_hidden_reference": uses_hidden_ref, "scorer_validation_only": validation_only,
                   "fidelity": fidelity, "medcta_config": _medcta_cfg, "capabilities": _caps,
-                  "prompt_provenance": _prompt_prov}
+                  "prompt_provenance": _prompt_prov, "git_sha": _resolve_git_sha()}
     result = scoring.build_result(task, trajectory, results, provenance)
     # Harness RUNTIME STATUS — always honest about what the harness actually did this run:
     #   requested_mode : the MH_HARNESS_MODE the operator asked for (default 'off').

@@ -102,5 +102,22 @@ finally:
     _H_mod.build_kernel = _orig
 check("T5_runner_passes_tool_model_to_kernel", _cap.get("tool_model") is not None)
 
+# T6: INSUFFICIENT grounding -> at most ONE revise per evidence_version, then deliver-with-flag (no loop/erase).
+_insuff = lambda pr: '{"relation": "insufficient", "supported": false, "confidence": 0.9, "reason": "under-covers"}'
+_orig_bk6 = _H_mod.build_kernel
+def _bk_insuff(*a, **k):
+    kk = _orig_bk6(*a, **k)
+    if kk is not None:
+        kk.ctx.judge_fn = _insuff
+    return kk
+_H_mod.build_kernel = _bk_insuff
+try:
+    traj6, ag6 = _run([tool, final, final, final], mode="enforce", max_steps=6)
+finally:
+    _H_mod.build_kernel = _orig_bk6
+_f6 = _final(traj6)
+check("T6_insufficient_one_revise_per_ev_then_flagged_delivery",
+      len(_f6) == 1 and bool(_f6[0].get("verification_flag")))
+
 print("\nloop exec conformance: %d/%d passed" % (PASS, PASS + FAIL))
 sys.exit(0 if FAIL == 0 else 1)
