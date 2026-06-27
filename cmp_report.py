@@ -1,8 +1,9 @@
-"""Formal harness-vs-no-harness comparison. Reads PER-TASK result.json (never just the aggregate), filters
-to ELIGIBLE runs, enforces an IDENTICAL paired task set across modes, reports each rate BOTH macro (eligible
-per-task mean) and POOLED (sum integer numerators / sum denominators, never mean-of-rounded-rates), and
-prints 0/1 metrics as count AND rate with the denominator. A non-paired / degraded / mixed-SHA bundle is
-FLAGGED, not silently averaged. Usage: python cmp_report.py [prefix]   (prefix default res6)."""
+"""Formal harness-vs-no-harness comparison — FAIL-CLOSED. Reads PER-TASK result.json, filters to ELIGIBLE
+runs (evaluated + schema valid is True + harness active/no-errors/req==eff for harness modes), and declares
+a bundle VALID only when: EVERY declared mode is present, all present modes share ONE identical eligible
+task set, the git_sha is single across all tasks, and agent/tool/judge identities are single-valued. An
+INVALID bundle still prints its numbers but with a loud INVALID banner — never silently comparable. Rates
+are macro (eligible mean) AND pooled (sum int numerators / sum denominators). Usage: cmp_report.py [prefix]."""
 import json, glob, os, sys
 
 PREFIX = sys.argv[1] if len(sys.argv) > 1 else "res6"
@@ -11,7 +12,6 @@ MODES_BY_DS = {"PhysicianBench": ["off", "enforce"],
                "HealthAdminBench": ["off", "enforce"]}
 STEM = {"PhysicianBench": "pb", "MedCTA": "mcta", "HealthAdminBench": "hab"}
 MODS = ["Execution", "Tooling", "Context", "Lifecycle", "Observability", "Verification", "Governance"]
-# pooled rate -> (integer numerator field, denominator field) in harness.metrics
 POOL = {"wrong_scope_action_rate": ("wrong_scope_count", "wrong_scope_opportunities"),
         "missing_prerequisite_rate": ("missing_prerequisite_count", "missing_prerequisite_opportunities"),
         "verified_commit_rate": ("verified_commit_count", "n_commits"),
@@ -25,7 +25,7 @@ def eligible(d, mode):
     if d.get("evaluation_status") not in ("complete", "completed", "evaluated"):
         return False, "not_evaluated"
     sv = d.get("schema_validation")
-    if isinstance(sv, dict) and sv.get("valid") is False:
+    if isinstance(sv, dict) and sv.get("valid") is not True:   # fail-closed: present schema must be VALID
         return False, "schema_invalid"
     if mode != "off":
         h = d.get("harness") or {}
@@ -39,11 +39,10 @@ def eligible(d, mode):
 
 
 def load(ds, mode):
-    """Return per-mode aggregate over ELIGIBLE tasks: task_ids, pooled num/den, macro sums, native, provenance."""
     base = "%s_%s_%s/gpt5" % (PREFIX, STEM[ds], mode)
     out = {"n": 0, "tids": set(), "excl": {}, "pnum": {}, "pden": {}, "macro": {}, "mcnt": {},
-           "cp_pass": 0, "cp_tot": 0, "gacc": [], "pass1": [], "delivered": 0, "agent": None, "judge": None,
-           "sha": set(), "tool": None}
+           "cp_pass": 0, "cp_tot": 0, "gacc": [], "pass1": [], "delivered": 0,
+           "agents": set(), "tools": set(), "judges": set(), "shas": set()}
     for f in glob.glob(base + "/*/result.json"):
         d = json.load(open(f))
         tid = d.get("task_id") or os.path.basename(os.path.dirname(f))
@@ -53,13 +52,14 @@ def load(ds, mode):
             continue
         out["n"] += 1; out["tids"].add(tid)
         prov = d.get("provenance") or {}
-        out["agent"] = out["agent"] or prov.get("agent_model") or d.get("agent_model")
-        out["tool"] = out["tool"] or prov.get("tool_model") or prov.get("tool_backend_model")
-        if prov.get("git_sha"): out["sha"].add(prov.get("git_sha"))
+        if prov.get("agent_model"): out["agents"].add(prov["agent_model"])
+        if prov.get("tool_backend_model"): out["tools"].add(prov["tool_backend_model"])
+        if prov.get("git_sha"): out["shas"].add(prov["git_sha"])
         h = d.get("harness") or {}
-        out["judge"] = out["judge"] or (h.get("audit") or {}).get("runtime_judge_model")
+        jm = (h.get("audit") or {}).get("runtime_judge_model")
+        if jm: out["judges"].add(jm)
         m = h.get("metrics") or {}
-        for k in (set(POOL) | {"escalation_rate", "n_interventions", "n_findings", "n_commits"}):
+        for k in (set(POOL) | {"escalation_rate"}):
             v = m.get(k)
             if isinstance(v, (int, float)) and not isinstance(v, bool):
                 out["macro"][k] = out["macro"].get(k, 0) + v; out["mcnt"][k] = out["mcnt"].get(k, 0) + 1
@@ -68,21 +68,21 @@ def load(ds, mode):
             if isinstance(num, int) and isinstance(den, int) and den > 0:
                 out["pnum"][k] = out["pnum"].get(k, 0) + num; out["pden"][k] = out["pden"].get(k, 0) + den
         out["delivered"] += int(m.get("answer_delivered_count") or m.get("answer_delivered") or 0)
-        # native (per task)
         nm = d.get("native_metrics") or {}
         if isinstance(nm.get("checkpoint_passed"), int): out["cp_pass"] += nm["checkpoint_passed"]
         if isinstance(nm.get("checkpoint_scored"), int): out["cp_tot"] += nm["checkpoint_scored"]
-        g = nm.get("gacc_mean")
-        if isinstance(g, (int, float)): out["gacc"].append(g)
-        no = (d.get("native_outcome") or {})
-        p1 = no.get("pass_at_1") if isinstance(no, dict) else None
-        if isinstance(p1, (int, float)): out["pass1"].append(p1)
+        if isinstance(nm.get("gacc_mean"), (int, float)): out["gacc"].append(nm["gacc_mean"])
+        no = d.get("native_outcome") or {}
+        if isinstance(no.get("pass_at_1"), (int, float)): out["pass1"].append(no["pass_at_1"])
     return out
 
 
-def report_json(ds, mode):
+def report_native(ds, mode):
     p = "%s_%s_%s/gpt5/report.json" % (PREFIX, STEM[ds], mode)
-    return json.load(open(p)) if os.path.exists(p) else None
+    if not os.path.exists(p): return None
+    r = json.load(open(p)); nm = r.get("native_metrics") or {}; o = (r.get("outcome") or {}).get("score")
+    return {"outcome": o, "checkpoint": nm.get("checkpoint_pass_rate"), "gacc": nm.get("gacc_mean"),
+            "pass1": nm.get("pass_at_1"), "dims": r.get("harness_dimensions") or {}}
 
 
 def f(v):
@@ -92,48 +92,54 @@ def f(v):
 print("FORMAL COMPARISON  prefix=%s" % PREFIX)
 for ds, modes in MODES_BY_DS.items():
     agg = {m: load(ds, m) for m in modes}
+    rep = {m: report_native(ds, m) for m in modes}
     present = [m for m in modes if agg[m]["n"]]
+    missing_modes = [m for m in modes if not agg[m]["n"]]
     sets = {m: agg[m]["tids"] for m in present}
-    paired = (len({frozenset(s) for s in sets.values()}) <= 1) if sets else False
-    shas = set().union(*[agg[m]["sha"] for m in present]) if present else set()
-    print("=" * 92)
-    a0 = next((agg[m] for m in present), {})
-    print("%-16s agent=%s tool=%s judge=%s  sha=%s" % (
-        ds, a0.get("agent"), a0.get("tool"), a0.get("judge"),
-        ("|".join(sorted(shas)) or "n/a") + ("" if len(shas) <= 1 else "  MIXED-SHA!")))
+    same_set = (len({frozenset(s) for s in sets.values()}) <= 1) if sets else False
+    shas = set().union(*[agg[m]["shas"] for m in present]) if present else set()
+    agents = set().union(*[agg[m]["agents"] for m in present]) if present else set()
+    tools = set().union(*[agg[m]["tools"] for m in present]) if present else set()
+    judges = set().union(*[agg[m]["judges"] for m in present]) if present else set()
+    reasons = []
+    if missing_modes: reasons.append("MISSING_MODES:%s" % ",".join(missing_modes))
+    if not same_set: reasons.append("UNPAIRED_TASK_SETS")
+    if len(shas) > 1: reasons.append("MIXED_SHA:%s" % "|".join(sorted(shas)))
+    if len(agents) > 1: reasons.append("MIXED_AGENT")
+    if len(tools) > 1: reasons.append("MIXED_TOOL")
+    if len(judges) > 1: reasons.append("MIXED_JUDGE")
+    valid = not reasons
+    print("=" * 96)
+    print("%-16s agent=%s tool=%s judge=%s sha=%s"
+          % (ds, "|".join(sorted(agents)) or "?", "|".join(sorted(tools)) or "none",
+             "|".join(sorted(judges)) or "none", "|".join(sorted(shas)) or "n/a"))
     print("eligible n: " + " ".join("%s=%d" % (m, agg[m]["n"]) for m in modes)
-          + "   PAIRED=%s" % ("yes" if paired else "NO -> INVALID_BUNDLE"))
+          + "   BUNDLE=%s" % ("VALID" if valid else ("INVALID [" + " ".join(reasons) + "]")))
     for m in modes:
         if agg[m]["excl"]: print("  excluded[%s]: %s" % (m, agg[m]["excl"]))
-    if not paired:
-        print("  WARNING: modes do not share one identical eligible task set — comparison NOT valid.")
-    # native (pooled)
-    print("  %-26s %s" % ("NATIVE (pooled over eligible):", ""))
+    if not valid:
+        print("  *** INVALID BUNDLE — numbers below are NOT a valid comparison (fail-closed). ***")
+    print("  NATIVE (per-task pooled over eligible | report.json fallback):")
     for m in modes:
-        a = agg[m]
-        cp = (a["cp_pass"] / a["cp_tot"]) if a["cp_tot"] else None
-        gm = (sum(a["gacc"]) / len(a["gacc"])) if a["gacc"] else None
-        p1 = (sum(a["pass1"]) / len(a["pass1"])) if a["pass1"] else None
-        print("    %-8s checkpoint=%s gacc=%s pass@1=%s answer_delivered=%d/%d"
-              % (m, f(cp), f(gm), f(p1), a["delivered"], a["n"]))
-    # dimensions (from report.json; flagged when not fully paired/eligible)
-    print("  %-26s" % "7 DIMENSIONS (report.json):")
-    reps = {m: report_json(ds, m) for m in modes}
+        a = agg[m]; rj = rep[m] or {}
+        cp = (a["cp_pass"] / a["cp_tot"]) if a["cp_tot"] else rj.get("checkpoint")
+        gm = (sum(a["gacc"]) / len(a["gacc"])) if a["gacc"] else rj.get("gacc")
+        p1 = (sum(a["pass1"]) / len(a["pass1"])) if a["pass1"] else rj.get("pass1")
+        print("    %-8s outcome=%s checkpoint=%s gacc=%s pass@1=%s answer_delivered=%d/%d"
+              % (m, f(rj.get("outcome")), f(cp), f(gm), f(p1), a["delivered"], a["n"]))
+    print("  7 DIMENSIONS (report.json — NOT eligibility-filtered):")
     for dim in MODS:
-        cells = " ".join("%s=%s" % (m, f(((((reps[m] or {}).get("harness_dimensions") or {}).get(dim) or {}).get("score"))))
-                         for m in modes)
-        print("    %-12s %s" % (dim, cells))
-    # harness metrics: macro | pooled
-    print("  %-26s" % "HARNESS metrics  macro | pooled:")
+        print("    %-12s %s" % (dim, " ".join("%s=%s" % (m, f(((rep[m] or {}).get("dims", {}).get(dim) or {}).get("score")))
+                                              for m in modes)))
+    print("  HARNESS  macro|pooled:")
     for k in list(POOL) + ["escalation_rate"]:
         cells = []
         for m in modes:
             a = agg[m]
-            mac = (a["macro"][k] / a["mcnt"][k]) if a["mcnt"].get(k) else None
-            poo = (a["pnum"][k] / a["pden"][k]) if a["pden"].get(k) else None
-            cells.append("%s=%s|%s" % (m, f(round(mac, 3) if mac is not None else None),
-                                       f(round(poo, 3) if poo is not None else None)))
+            mac = round(a["macro"][k] / a["mcnt"][k], 3) if a["mcnt"].get(k) else None
+            poo = round(a["pnum"][k] / a["pden"][k], 3) if a["pden"].get(k) else None
+            cells.append("%s=%s|%s" % (m, f(mac), f(poo)))
         print("    %-24s %s" % (k, " ".join(cells)))
-print("=" * 92)
-print("Reading: pooled = sum(count)/sum(opportunity) over ELIGIBLE paired tasks. unsafe_commitment_rate is")
-print("violations on COMMIT actions only. A NON-paired / MIXED-SHA / degraded bundle is flagged, not averaged.")
+print("=" * 96)
+print("VALID requires: all declared modes present + one identical eligible task set + single git_sha +")
+print("single agent/tool/judge identity. 7 dims are from report.json (not eligibility-filtered) — noted.")

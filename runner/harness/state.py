@@ -31,7 +31,9 @@ class Ledger:
         self.opportunities = {}
         self._opp_seen = set()              # (key, step) already counted -> one opportunity per ACTION
         self._evk = 0
-        self.evidence_version = 0           # CONTRACT(3): bumped on every add_evidence; part of the
+        self.evidence_version = 0           # bumped on EVERY add_evidence (incl. ATTEMPTED/foreign)
+        self.validated_evidence_version = 0  # bumped ONLY on VALIDATED, non-foreign evidence = real progress
+        # CONTRACT(3): legacy note kept below; the validated counter is the one the repair budget keys on.
                                             # revision-identity key so a stuck-revision counter RESETS
                                             # when new evidence lands (the agent made progress)
 
@@ -67,7 +69,10 @@ class Ledger:
     # ---- evidence ------------------------------------------------------------
     def add_evidence(self, type, value, subject_id=None, source_event=None, source_type=None, extra=None):
         self._evk += 1
-        self.evidence_version += 1          # CONTRACT(3): progress signal for revision-identity reset
+        self.evidence_version += 1          # every event (even a failed/foreign read) bumps this
+        _x = extra or {}
+        if _x.get("status") == "VALIDATED" and _x.get("scope_relation") != "foreign":
+            self.validated_evidence_version += 1   # genuine progress only -> a failing tool cannot refresh repair budget
         rec = {"evidence_id": "ev-%d" % self._evk, "type": type, "value": value,
                "subject_id": subject_id, "source_event": source_event, "source_type": source_type}
         if extra:

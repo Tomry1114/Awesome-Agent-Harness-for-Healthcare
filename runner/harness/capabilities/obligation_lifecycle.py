@@ -29,34 +29,8 @@ class ObligationLifecycle(Capability):
     def before_action(self, action, ctx):
         return self._gate(ctx, "commit_requires_obligations")
 
-    def _facet_gate(self, ctx):
-        # PERCEPTUAL only: once base image-grounding exists, nudge about the SPECIFIC evidence facet the
-        # QUESTION needs but the evidence does not yet cover (localization / measurement / vascular / ...).
-        # Facets derive from the PUBLIC goal/context only (never gold) -> early, actionable, general.
-        c = ctx.contract
-        meta = (c.meta if c else {}) or {}
-        if meta.get("substrate") != "perceptual":
-            return None
-        from ..facets import required_facets, missing_facets
-        req = required_facets(meta.get("goal"), meta.get("public_context"))
-        if not req:
-            return None
-        miss = missing_facets(req, ctx.ledger.evidence)
-        if not miss:
-            return None
-        names = ", ".join(miss)
-        return D.HarnessDecision(
-            D.REVISE, capability=self.name, rule_id="evidence_facet_coverage", reason_code="missing_facet",
-            deterministic=True, missing_obligations=["facet:%s" % m for m in miss],
-            reason="answer needs perception evidence for: %s" % names,
-            feedback="Your evidence does not yet cover: %s. Inspect the image specifically for %s before "
-                     "answering (e.g. a targeted regional / measurement inspection)." % (names, names))
-
     def before_final(self, answer, ctx):
-        base = self._gate(ctx, "final_requires_obligations")
-        if base is not None:
-            return base                 # base grounding/obligations missing -> generic message first
-        return self._facet_gate(ctx)    # base met -> nudge the SPECIFIC missing facet (perceptual)
+        return self._gate(ctx, "final_requires_obligations")
 
     def _gate(self, ctx, default_rule):
         cp = ctx.contract.commit_point_for(ctx.sem) if (ctx.contract and ctx.sem) else None

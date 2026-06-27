@@ -221,7 +221,7 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
                         _repair_turns += 1
                         _insuff_exceeded = False
                         if getattr(getattr(_hf, "raw", None), "reason_code", None) == "insufficient_grounding":
-                            _evk = (_harness.ledger.evidence_version if _harness is not None else 0)
+                            _evk = (_harness.ledger.validated_evidence_version if _harness is not None else 0)
                             _insufficient_seen[_evk] = _insufficient_seen.get(_evk, 0) + 1
                             _insuff_exceeded = _insufficient_seen[_evk] > 1   # a 2nd insufficient on the SAME evidence
                         pending_harness_feedback = {"decision": _hf.type,
