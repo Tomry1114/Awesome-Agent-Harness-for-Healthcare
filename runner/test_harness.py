@@ -843,6 +843,48 @@ def test_nonindependent_judge_rejected_in_enforce():
             os.environ.pop(_k, None) if _v is None else os.environ.__setitem__(_k, _v)
 
 
+def test_judge_rejected_when_shared_with_tool_backend():
+    # independence must hold against the PERCEPTION/TOOL backend too, not only the agent brain.
+    task = {"task_id": "m", "goal": "g", "context": {}, "environment": {"type": "tool_sandbox"}, "available_tools": []}
+    _old = (os.environ.get("MH_HARNESS_JUDGE_MODEL"), os.environ.get("MH_API_MODEL"))
+    try:
+        os.environ["MH_API_MODEL"] = "brain"; os.environ["MH_HARNESS_JUDGE_MODEL"] = "vlm-x"
+        raised = False
+        try:
+            H.build_kernel(task, env_type="tool_sandbox", mode="enforce", tool_model="vlm-x")
+        except H.PolicyError:
+            raised = True
+        assert raised, "a judge == tool backend must be rejected in enforce"
+    finally:
+        for _k, _v in zip(("MH_HARNESS_JUDGE_MODEL", "MH_API_MODEL"), _old):
+            os.environ.pop(_k, None) if _v is None else os.environ.__setitem__(_k, _v)
+
+
+def test_findings_use_canonical_action_key():
+    contract = build_contract(TASK, env_type="fhir", policy=POLICY)
+    k = HarnessKernel(contract, [ScopeEvidenceBinding(), ObligationLifecycle(), VerifyAndCommit()],
+                      mode="observe", policy=POLICY, env_type="fhir")
+    create = {"type": "tool", "tool": "create_medication_request", "args": {"patient": "Patient/123"}}
+    k.before_action(create, {"a": 0}, step=1)
+    assert k.ledger.findings, "expected a finding"
+    assert all(str(f.get("action_key", "")).startswith("action-") for f in k.ledger.findings), \
+        "findings must use the canonical action_key (action-N), not a separate act%d identity"
+
+
+def test_pb_is_required_write_exact_path():
+    import pb_policy
+    _o = os.environ.get("MH_DELIV_SCAFFOLD")
+    try:
+        os.environ["MH_DELIV_SCAFFOLD"] = "1"
+        d = pb_policy.DeliverableScaffold({"goal": "Write your note to output/assessment.txt now"})
+        assert d.active
+        assert d.is_required_write({"tool": "write_file", "args": {"path": "output/assessment.txt"}})
+        assert not d.is_required_write({"tool": "write_file", "args": {"path": "output/wrong.txt"}})
+        assert not d.is_required_write({"tool": "fhir_read", "args": {}})
+    finally:
+        os.environ.pop("MH_DELIV_SCAFFOLD", None) if _o is None else os.environ.__setitem__("MH_DELIV_SCAFFOLD", _o)
+
+
 def _run():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     passed = 0

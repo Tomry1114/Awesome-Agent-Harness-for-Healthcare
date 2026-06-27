@@ -51,6 +51,17 @@ def _run(actions, mode=None, max_steps=2):
 def _types(traj): return [e.get("event_type") for e in traj]
 def _final(traj): return [e for e in traj if e.get("event_type") == "final_answer"]
 def _tools(traj): return [e for e in traj if e.get("event_type") == "tool_call"]
+import harness as _H_mod
+
+def _capture_build_kernel():
+    cap = {}
+    _orig = _H_mod.build_kernel
+    def _wrapped(*a, **k):
+        cap.update(k)
+        return _orig(*a, **k)
+    _H_mod.build_kernel = _wrapped
+    return cap, _orig
+
 PASS = 0; FAIL = 0
 def check(name, cond):
     global PASS, FAIL
@@ -82,6 +93,14 @@ _f3 = _final(traj3)
 check("T3_epistemic_escalated_final_is_delivered", len(_f3) == 1)
 check("T3_delivered_with_verification_flag", bool(_f3 and _f3[0].get("verification_flag")))
 check("T3_not_aborted_to_nothing", "harness_escalation" not in _types(traj3) or len(_f3) == 1)
+
+# T5: run.py resolves the ACTUAL perception/tool backend model and passes it to build_kernel (independence).
+_cap, _orig = _capture_build_kernel()
+try:
+    _run([tool, final], mode="enforce", max_steps=4)
+finally:
+    _H_mod.build_kernel = _orig
+check("T5_runner_passes_tool_model_to_kernel", _cap.get("tool_model") is not None)
 
 print("\nloop exec conformance: %d/%d passed" % (PASS, PASS + FAIL))
 sys.exit(0 if FAIL == 0 else 1)

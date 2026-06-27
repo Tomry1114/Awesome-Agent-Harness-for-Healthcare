@@ -83,6 +83,18 @@ def test_new_keys_present_and_safe_when_empty():
     assert s["answer_delivered"] == 0 and s["outcome_preservation"] == 1, s  # no answer + no block = not erased
 
 
+def test_escalation_rate_deduped_by_action():
+    L = Ledger()
+    a = L.record_proposed("create_med", "R2", 1)
+    # observe records the SAME action escalated at before+after -> escalation count must be 1 (rate <= 1).
+    L.interventions = [
+        {"stage": "before_action", "decision": "ESCALATE", "effective": "ALLOW", "action_key": a},
+        {"stage": "after_action", "decision": "ESCALATE", "effective": "ALLOW", "action_key": a},
+    ]
+    s = gov.summarize(L, [], "observe")
+    assert (s["escalation_rate"] or 0) <= 1.0, s
+
+
 def _run():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     passed = 0

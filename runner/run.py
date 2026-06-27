@@ -139,9 +139,17 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
             # substrate from env_type; a specific environment ADAPTER may be named per-task (two datasets of
             # the same substrate with different tool names) — task.environment.adapter, else the default.
             _adapter = (task.get("environment") or {}).get("adapter") if isinstance(task, dict) else None
+            _tool_model = None
+            if env_type == "tool_sandbox":   # perception tool backend (VLM) -> the ACTUAL model the tools call
+                try:
+                    import vlm_backend as _vb
+                    _bk = _vb.get_backend()
+                    _tool_model = getattr(_bk, "model", None) or getattr(_bk, "model_path", None)
+                except Exception:
+                    _tool_model = None
             _harness = _Harness.build_kernel(task, env_type=env_type, adapter=_adapter,
                                              mode=os.environ.get("MH_HARNESS_MODE"),
-                                             agent_model=getattr(agent, "model", None))
+                                             agent_model=getattr(agent, "model", None), tool_model=_tool_model)
     except Exception as _he:
         _harness = None
         _harness_build_failed = True
@@ -153,6 +161,7 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
     _repair_turns = 0
     _env_actions = 0   # CONTRACT(2): EXECUTED environment actions; repair turns do NOT count against this
     _insufficient_revises = 0   # CONTRACT: INSUFFICIENT grounding gets at most ONE revise, then deliver-with-flag
+    _deliv_writes_used = 0   # at most ONE reserved over-budget deliverable write (off/enforce budget parity)
     deliv = DeliverableScaffold(task)  # PB deliverable scaffolding (Codex #1: extracted from the generic runner; no-op for non-PB)
     _fail_sig = None; _fail_n = 0; _aborted = False  # circuit breaker: abort on repeated identical failing call
     _last_tool_ev = None  # for consumed_by_agent backfill (#review: rendered != consumed)
@@ -241,8 +250,10 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
         if action["type"] != "tool_call" or not action.get("tool"):
             trajectory.append({"step": step, "event_type": "agent_error", "error": "bad_action_type", "raw": str(action)[:200], "status": "error"})
             finished = True; break
-        _deliv_write = (action.get("tool") == "write_file" and getattr(deliv, "active", False) and deliv._missing(env))
-        if _env_budget_spent and not _deliv_write:   # past the tool budget: allow ONLY a still-required deliverable write
+        _deliv_write = (deliv.is_required_write(action) and deliv._missing(env) and _deliv_writes_used < 1)
+        if _env_budget_spent and _deliv_write:
+            _deliv_writes_used += 1   # consume the single reserved deliverable slot (success or fail)
+        if _env_budget_spent and not _deliv_write:   # past the tool budget: allow ONLY the one exact deliverable write
             _repair_turns += 1
             pending_harness_feedback = {"decision": "REVISE", "stage": "runtime_budget", "missing_obligations": [],
                 "reason": "Environment-action budget is exhausted. Do NOT call another tool; give your best "

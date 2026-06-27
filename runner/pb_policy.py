@@ -23,6 +23,15 @@ class DeliverableScaffold:
     def active(self):
         return bool(self.path)
 
+    def is_required_write(self, action):
+        # True ONLY for the exact required deliverable write (right tool + right filename) so the over-budget
+        # exception covers one precise action, not any write_file. Keeps the runner from naming a raw tool.
+        if not self.active or (action or {}).get("tool") != "write_file":
+            return False
+        supplied = os.path.normpath(str(((action.get("args") or {}).get("path") or ""))).lstrip("/")
+        required = os.path.normpath(str(self.path or "")).lstrip("/")
+        return bool(required) and os.path.basename(supplied) == os.path.basename(required)
+
     def _want(self, env):
         ws = getattr(env, "workspace", "") or ""
         return os.path.join(ws, os.path.basename(self.path)) if ws else ""

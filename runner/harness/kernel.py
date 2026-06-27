@@ -183,7 +183,7 @@ class HarnessKernel:
         contributes to BOTH rates, not only the higher-priority one."""
         for d in decisions:
             if d.type != D.ALLOW:
-                self.ledger.record_finding({"action_key": "act%d" % self.ctx.step,
+                self.ledger.record_finding({"action_key": getattr(self.ctx, "action_key", None) or ("act%d" % self.ctx.step),
                                             "reason_code": d.reason_code, "capability": d.capability,
                                             "decision": d.type, "rule_id": d.rule_id, "stage": stage})
 
