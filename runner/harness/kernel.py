@@ -57,6 +57,7 @@ class HarnessKernel:
         self._rev_for_action = {}
         self._capability_errors = []     # capability-hook exceptions (fail-closed: see _cap_error)
         self._last_obs = None            # most recent canonical_observation -> prospective GUI scope
+        self._open_repairs = {}          # commit identity -> REVISE event id, for the repair causal chain
         self._evk = 0
         for cap in self.capabilities:
             cap.on_contract(self.ctx)
@@ -128,6 +129,22 @@ class HarnessKernel:
                                  rule_id="capability_error", reason_code="capability_error",
                                  reason="capability_error:%r" % ex, deterministic=True)
 
+    def _track_repair(self, winner, eff):
+        """Causal repair chain: a missing-prerequisite REVISE on a commit, followed later by the SAME commit
+        (semantic_type+resource) passing once its obligations are satisfied, is a `repaired` resolution.
+        Mode-independent (keys on the RAW verdict), so observe measures would-be repairs too."""
+        sem = self.ctx.sem
+        if not (sem and sem.is_commit()):
+            return
+        key = (sem.semantic_type, sem.resource)
+        if winner.type != D.ALLOW and getattr(winner, "reason_code", None) == "missing_prerequisite":
+            if key not in self._open_repairs:
+                self.ledger.bump_opportunity("repair")           # an action that COULD be repaired
+            self._open_repairs[key] = (eff.events[0]["id"] if eff.events else None)
+        elif winner.type == D.ALLOW and key in self._open_repairs:
+            orig = self._open_repairs.pop(key)
+            self.ledger.resolutions.append(self.resolution_event(orig, "repaired"))
+
     def _record_findings(self, decisions, stage):
         """Record EVERY non-ALLOW finding (not just the hook winner) so a lower-priority finding survives
         for metrics — e.g. a commit that is BOTH wrong-subject (BLOCK) and missing-prerequisite (REVISE)
@@ -171,6 +188,7 @@ class HarnessKernel:
         winner = D.combine(decisions, stage="before_action")
         eff = self._apply_mode(winner, "before_action")
         eff.feedback = _feedback(winner) if eff.type != D.ALLOW else None
+        self._track_repair(winner, eff)
         return eff
 
     def after_action(self, action, result, before_state, after_state, step=0, canonical_observation=None,
@@ -223,6 +241,7 @@ class HarnessKernel:
         winner = D.combine(decisions, stage="before_final")
         eff = self._apply_mode(winner, "before_final")
         eff.feedback = _feedback(winner) if eff.type != D.ALLOW else None
+        self._track_repair(winner, eff)
         # an ACCEPTED final answer (effective ALLOW) is a committed action.
         if is_commit and eff.type == D.ALLOW:
             self.ledger.record_commit(sem.capability, step, verified=self.ctx.verification,

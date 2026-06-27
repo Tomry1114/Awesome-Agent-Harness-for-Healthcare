@@ -25,6 +25,7 @@ class Ledger:
                                             # is not erased when a higher one (e.g. wrong_scope) wins the hook.
         self.commit_history = []            # [{"action","step","verified":bool,...}]
         self.unresolved_risks = []          # [{"rule_id","reason","risk"}]
+        self.resolutions = []               # [harness_resolution dicts] — a REVISE later repaired (causal)
         # per-metric OPPORTUNITY counts (denominators): each metric is rate = numerator / its own
         # opportunity set, never / task-count. e.g. commit_proposal, subject_bearing_action, eligible_revise.
         self.opportunities = {}
@@ -111,4 +112,5 @@ class Ledger:
                 "obligations": self.obligations, "workflow_state": self.workflow_state,
                 "proposed_actions": self.proposed_actions, "interventions": self.interventions,
                 "commit_history": self.commit_history, "unresolved_risks": self.unresolved_risks,
+                "resolutions": self.resolutions,
                 "opportunities": self.opportunities}

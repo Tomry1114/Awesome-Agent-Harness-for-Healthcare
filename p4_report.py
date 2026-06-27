@@ -12,8 +12,10 @@ def load_report(mode):
 
 
 def harness_metrics(mode):
-    """mean of per-task harness.metrics across the bundle (read from result.json)."""
-    acc = {}
+    """ELIGIBLE-OPPORTUNITY mean of per-task harness.metrics: each metric is averaged ONLY over the tasks
+    where it is DEFINED (not None), divided by its OWN count — never by the total task count. A metric that
+    is None for half the tasks (its opportunity set was empty there) must not be diluted toward 0."""
+    acc, cnt = {}, {}
     n = 0
     for f in glob.glob("res4_mcta_%s/gpt5/*/result.json" % mode):
         h = (json.load(open(f)).get("harness") or {}).get("metrics") or {}
@@ -22,9 +24,12 @@ def harness_metrics(mode):
         n += 1
         for k in HMET:
             v = h.get(k)
-            if isinstance(v, (int, float)):
+            if isinstance(v, (int, float)) and not isinstance(v, bool):
                 acc[k] = acc.get(k, 0) + v
-    return {k: round(acc[k] / n, 3) for k in acc} if n else {}, n
+                cnt[k] = cnt.get(k, 0) + 1
+    means = {k: round(acc[k] / cnt[k], 3) for k in acc}       # per-metric eligible mean
+    cov = {k: "%d/%d" % (cnt.get(k, 0), n) for k in HMET}     # coverage (how many tasks defined it)
+    return means, n, cov
 
 
 def dim(r, m):
@@ -46,11 +51,11 @@ print("-" * 78)
 for d in MODS:
     print("%-26s %-9s %-9s %-9s %-9s" % (d, *[dim(reps[m], d) if reps[m] else None for m in MODES]))
 print("-" * 78)
-print("HARNESS metrics (per-task mean):")
+print("HARNESS metrics (eligible-opportunity mean  [coverage = tasks where defined]):")
 for k in HMET:
-    print("  %-24s %-9s %-9s %-9s %-9s" % (k, *[hm[m][0].get(k) for m in MODES]))
+    print("  %-24s %s" % (k, " ".join("%s=%s[%s]" % (m, hm[m][0].get(k), hm[m][2].get(k)) for m in MODES)))
 print("-" * 78)
 print("interventions tasks-with-harness: " + " ".join("%s=%s" % (m, hm[m][1]) for m in MODES))
 print("\nReading: off=Base (no harness). observe records what the harness WOULD do (effective ALLOW).")
-print("assist=feedback only. enforce=full gates. Claim: harness lifts Verification/Context/grounding")
-print("while preserving Outcome; over-block stays low.")
+print("assist=feedback only. enforce=full gates. Each metric is averaged over its OWN eligible tasks")
+print("(coverage shown in []); over_block_rate is None (needs a held-out legality oracle).")

@@ -465,6 +465,44 @@ def test_invalid_mode_raises():
         pass
 
 
+def test_repair_chain_records_repaired():
+    """A missing-prereq REVISE on a commit, then obligations satisfied + the commit accepted, is a causal
+    `repaired` resolution -> repair_success_rate = repaired / repairable-opportunities."""
+    pol = H.load_policy(env_type="fhir")
+    task = {"task_id": "t", "goal": "order", "context": {"patient_ref": "Patient/1"}, "environment": {"type": "fhir"}}
+    contract = build_contract(task, env_type="fhir", policy=pol)
+    k = HarnessKernel(contract, [ScopeEvidenceBinding(), ObligationLifecycle(), VerifyAndCommit()],
+                      mode="enforce", policy=pol, env_type="fhir")
+    create = {"type": "tool", "tool": "fhir_medication_request_create", "args": {"patient": "Patient/1"}}
+    assert k.before_action(create, step=0).type == D.REVISE          # opens a repair opportunity
+    k.after_action({"type": "tool", "tool": "fhir_allergy_intolerance_search_active", "args": {"patient": "Patient/1"}},
+                   "pen", {"a": 0}, {"a": 1}, step=1, result_ok=True)
+    k.after_action({"type": "tool", "tool": "fhir_medication_request_search_orders", "args": {"patient": "Patient/1"}},
+                   "lis", {"a": 1}, {"a": 2}, step=2, result_ok=True)
+    assert k.before_action(create, step=3).type == D.ALLOW           # now passes -> repaired
+    assert any(r["resolution"] == "repaired" for r in k.ledger.resolutions)
+    s = gov.summarize(k.ledger, [], "enforce")
+    assert s["repair_success_rate"] == 1.0 and s["repair_opportunities"] == 1, s
+
+
+def test_violation_split_executed_vs_prevented():
+    """observe EXECUTES a would-be violation (effective ALLOW); enforce PREVENTS it (effective BLOCK)."""
+    pol = H.load_policy(env_type="fhir")
+    task = {"task_id": "t", "goal": "g", "context": {"patient_ref": "Patient/1"}, "environment": {"type": "fhir"}}
+    contract = build_contract(task, env_type="fhir", policy=pol)
+    wrong = {"type": "tool", "tool": "fhir_observation_search_labs", "args": {"patient": "Patient/999"}}
+    ko = HarnessKernel(contract, [ScopeEvidenceBinding(), ObligationLifecycle(), VerifyAndCommit()],
+                       mode="observe", policy=pol, env_type="fhir")
+    ko.before_action(wrong, step=0)
+    so = gov.summarize(ko.ledger, [], "observe")
+    assert so["executed_violation_count"] == 1 and so["prevented_violation_count"] == 0, so
+    ke = HarnessKernel(contract, [ScopeEvidenceBinding(), ObligationLifecycle(), VerifyAndCommit()],
+                       mode="enforce", policy=pol, env_type="fhir")
+    ke.before_action(wrong, step=0)
+    se = gov.summarize(ke.ledger, [], "enforce")
+    assert se["prevented_violation_count"] == 1 and se["executed_violation_count"] == 0, se
+
+
 def _run():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     passed = 0
