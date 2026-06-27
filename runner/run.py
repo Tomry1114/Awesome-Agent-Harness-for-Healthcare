@@ -150,6 +150,7 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
     pending_harness_feedback = None   # CONTRACT(1): ADDITIVE harness feedback handed to the agent next turn
     max_repair_turns = int(os.environ.get("MH_MAX_REPAIR_TURNS", "4"))   # CONTRACT(2): cap on REVISE/BLOCK turns
     _repair_turns = 0
+    _env_actions = 0   # CONTRACT(2): EXECUTED environment actions; repair turns do NOT count against this
     deliv = DeliverableScaffold(task)  # PB deliverable scaffolding (Codex #1: extracted from the generic runner; no-op for non-PB)
     _fail_sig = None; _fail_n = 0; _aborted = False  # circuit breaker: abort on repeated identical failing call
     _last_tool_ev = None  # for consumed_by_agent backfill (#review: rendered != consumed)
@@ -165,7 +166,9 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
         _io = env.initial_observation()
         if _io is not None:
             last_res = _io; last_obs = json.dumps(_io, ensure_ascii=False)[:int(os.environ.get("MH_OBS_MAX_LEN", "10000"))]
-    for step in range(0 if _harness_infra_error else max_steps):
+    for step in range(0 if _harness_infra_error else (max_steps + max_repair_turns)):
+        if _env_actions >= max_steps:   # CONTRACT(2): full ENV-action budget spent (repair turns were extra headroom)
+            break
         _bw = deliv.budget_warning(env, step, max_steps, trajectory)
         if _bw is not None: last_res, last_obs = _bw
         if _last_tool_ev is not None:          # the previous tool observation is about to be consumed
@@ -324,6 +327,7 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
                 _aborted = True; break
         else:
             _fail_sig = None; _fail_n = 0
+        _env_actions += 1   # an environment action actually executed this turn
         last_obs = obs; last_res = res
     if not finished and not _aborted:  # #8 ran out of steps without a final answer (circuit-breaker abort logs its own event)
         trajectory.append({"step": max_steps, "event_type": "agent_error", "error": "max_steps_exceeded", "status": "error"})
