@@ -300,7 +300,11 @@ class HarnessKernel:
                 "n_semantic_checks": self.budget["max_semantic_checks"] - self.ctx.semantic_remaining,
                 "status": ("degraded" if (self._capability_errors or self.policy.get("_errors")) else "active"),
                 "capability_errors": self._capability_errors,
-                "policy_errors": self.policy.get("_errors", [])}
+                "policy_errors": self.policy.get("_errors", []),
+                # the harness's semantic judge model + how many times it was called — so the report can
+                # verify INDEPENDENCE (judge != agent brain != tool backend) instead of asserting it.
+                "runtime_judge_model": self.ctx.judge_model,
+                "runtime_judge_calls": self.budget["max_semantic_checks"] - self.ctx.semantic_remaining}
 
 
 def _action_name(action):

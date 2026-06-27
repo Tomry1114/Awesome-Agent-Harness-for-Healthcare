@@ -70,8 +70,7 @@ _EFFECTS = {"none", "reversible", "irreversible"}
 _BINDINGS = {"required", "implicit_active", "none"}
 _SOURCE_CLASSES = {"record", "perception", "interface", "external", "computation"}
 _PREDICATE_TYPES = {"state_transition", "object_exists", "field_equals", "field_not_equals",
-                    "no_unexpected_side_effect", "target_consistency", "claim_supported_by_evidence",
-                    "key_claims_supported_by_image_evidence"}
+                    "no_unexpected_side_effect", "target_consistency", "claim_supported_by_evidence"}
 
 
 def _validate_enums(manifest, errors):
@@ -104,6 +103,24 @@ def _validate_enums(manifest, errors):
         for q, st2, ef2 in pats[:i]:
             if (p in q or q in p) and (st, ef) != (st2, ef2):
                 errors.append("ambiguous_action_rules:%s~%s" % (q, p))
+
+
+def admission_errors(manifest, tools):
+    """Dynamic admission against the task's ACTUAL available tools (stronger than the static substring
+    audit): a tool that matches MORE THAN ONE action rule with DIFFERENT semantics is ambiguous — first-
+    match order would silently decide its risk. Fail the build rather than guess."""
+    from ..semantics import _match_rule
+    errs = []
+    rules = (manifest or {}).get("actions") or []
+    for t in (tools or []):
+        name = t if isinstance(t, str) else (t.get("name") if isinstance(t, dict) else "")
+        if not name:
+            continue
+        matched = [r for r in rules if _match_rule(name, r.get("match") or {})]
+        sems = {(r.get("semantic_type"), r.get("effect")) for r in matched}
+        if len(matched) > 1 and len(sems) > 1:
+            errs.append("ambiguous_action_mapping:%s" % name)
+    return errs
 
 
 def substrate_of(env_type):

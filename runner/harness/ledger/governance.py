@@ -70,17 +70,18 @@ def summarize(ledger, harness_events, mode=None):
         "n_interventions": len(interventions), "n_findings": len(findings),
         # rate -> opportunity denominator (None when no opportunity).
         "wrong_scope_action_rate": _rate(wrong_scope, n_subject_actions),
-        "wrong_scope_opportunities": n_subject_actions,
+        "wrong_scope_count": wrong_scope, "wrong_scope_opportunities": n_subject_actions,
         "missing_prerequisite_rate": _rate(missing_prereq, n_commit_proposals),
-        "missing_prerequisite_opportunities": n_commit_proposals,
-        # commit verification split (do not let UNKNOWN masquerade as verified):
-        "verified_commit_rate": _rate(verified_ok, n_commits),
-        "violated_commit_rate": _rate(violated, n_commits),
-        "unknown_verification_rate": _rate(unknown_v, n_commits),
+        "missing_prerequisite_count": missing_prereq, "missing_prerequisite_opportunities": n_commit_proposals,
+        # commit verification split (do not let UNKNOWN masquerade as verified); counts for pooled rates:
+        "verified_commit_rate": _rate(verified_ok, n_commits), "verified_commit_count": verified_ok,
+        "violated_commit_rate": _rate(violated, n_commits), "violated_commit_count": violated,
+        "unknown_verification_rate": _rate(unknown_v, n_commits), "unknown_verification_count": unknown_v,
         "unverified_commit_rate": _rate(unverified, n_commits),   # violated + unknown
         # repair split: precondition_repair = gate passed after fixing prereqs; verified_repair = the commit
         # then actually executed AND its postcondition verified (the stronger, honest claim).
         "precondition_repair_rate": _rate(n_precond_repaired, n_repair_opp),
+        "precondition_repair_count": n_precond_repaired, "verified_repair_count": n_verified_repaired,
         "verified_repair_rate": _rate(n_verified_repaired, n_repair_opp),
         "repair_opportunities": n_repair_opp,
         "escalation_rate": _rate(escalations, len(proposed)),

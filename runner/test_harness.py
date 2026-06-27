@@ -681,6 +681,16 @@ def test_wrong_scope_rate_capped_at_one():
     assert s["wrong_scope_action_rate"] is not None and s["wrong_scope_action_rate"] <= 1.0, s
 
 
+def test_admission_rejects_ambiguous_tool():
+    """A tool that matches >1 action rule with DIFFERENT semantics is ambiguous (first-match would silently
+    decide its risk) -> admission error; a tool matching one rule is fine."""
+    from harness.engines.policy import admission_errors
+    manifest = {"actions": [{"match": {"tool_pattern": "order"}, "semantic_type": "read", "effect": "none"},
+                            {"match": {"tool": "med_order"}, "semantic_type": "create", "effect": "irreversible"}]}
+    assert any("ambiguous_action_mapping" in e for e in admission_errors(manifest, ["med_order"]))
+    assert not admission_errors(manifest, ["other_order"])
+
+
 def _run():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     passed = 0
