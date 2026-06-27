@@ -16,6 +16,18 @@ class VerifyAndCommit(Capability):
     name = "verify_commit"
 
     def before_action(self, action, ctx):
+        # FAIL-CLOSED: a tool action that no manifest rule (or default_action) maps is UNKNOWN to the
+        # adapter. It must NOT default-allow as R0/none -> escalate so an unmapped/high-risk tool is
+        # caught instead of slipping through. (The final answer is always mapped, so it is excluded.)
+        if ctx.sem and not ctx.sem.mapped and ctx.sem.semantic_type != "answer":
+            return self._decide(D.ESCALATE, rule_id="unmapped_action", reason_code="unmapped_action",
+                                deterministic=True,
+                                reason="tool action %r is not mapped by the substrate manifest "
+                                       "(no action rule or default_action); cannot adjudicate its risk"
+                                       % (getattr(ctx.sem, "capability", None),),
+                                feedback="This tool is not declared in the substrate manifest, so its "
+                                         "risk/semantics are unknown and it cannot be auto-verified; "
+                                         "escalating (fail-closed).")
         if ctx.risk == R3:
             return self._decide(D.ESCALATE, rule_id="unjudgeable_high_risk", reason_code="unjudgeable",
                                 deterministic=True,

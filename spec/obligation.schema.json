@@ -3,15 +3,72 @@
   "title": "Obligation",
   "description": "A process obligation tracked in the Evidence-State Ledger.",
   "type": "object",
-  "required": ["id", "state"],
+  "additionalProperties": true,
+  "required": [
+    "id",
+    "state"
+  ],
   "properties": {
-    "id": {"type": "string"},
-    "state": {"type": "string", "enum": ["PENDING", "SATISFIED", "VIOLATED", "WAIVED", "UNKNOWN"]},
-    "kind": {"type": ["string", "null"], "enum": ["evidence", "workflow", null]},
-    "requires": {"type": "array", "items": {"type": "string"}},
-    "satisfied_by": {"type": ["object", "null"],
-      "properties": {"tool": {"type": "string"}, "resource_type": {"type": "string"}}},
-    "note": {"type": ["string", "null"]},
-    "event_ids": {"type": "array", "items": {"type": "string"}}
+    "id": {
+      "type": "string"
+    },
+    "state": {
+      "type": "string",
+      "enum": [
+        "PENDING",
+        "SATISFIED",
+        "VIOLATED",
+        "WAIVED",
+        "UNKNOWN"
+      ]
+    },
+    "kind": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "enum": [
+        "evidence",
+        "workflow",
+        null
+      ]
+    },
+    "requires": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "satisfied_by": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": true,
+      "description": "Capability descriptor of evidence that satisfies the obligation.",
+      "properties": {
+        "source_class": {
+          "type": "string"
+        },
+        "resource": {
+          "type": "string"
+        },
+        "modality": {
+          "type": "string"
+        }
+      }
+    },
+    "note": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "event_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
   }
 }

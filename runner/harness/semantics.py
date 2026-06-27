@@ -20,10 +20,10 @@ EFFECT_RISK = {"none": "R0", "reversible": "R1", "irreversible": "R2"}
 
 class SemanticAction:
     __slots__ = ("semantic_type", "effect", "source_class", "modality", "resource", "target_entity",
-                 "capability", "raw")
+                 "capability", "raw", "mapped")
 
     def __init__(self, semantic_type="other", effect="none", source_class=None, modality=None,
-                 resource=None, target_entity=None, capability=None, raw=None):
+                 resource=None, target_entity=None, capability=None, raw=None, mapped=False):
         self.semantic_type = semantic_type
         self.effect = effect
         self.source_class = source_class
@@ -32,6 +32,7 @@ class SemanticAction:
         self.target_entity = target_entity
         self.capability = capability
         self.raw = raw
+        self.mapped = mapped   # True iff a manifest rule (or default_action) governs this action, or it is the final answer
 
     def is_commit(self):
         return self.effect == "irreversible" or self.semantic_type in ("create", "update", "submit", "answer")
@@ -39,7 +40,8 @@ class SemanticAction:
     def to_dict(self):
         return {"semantic_type": self.semantic_type, "effect": self.effect,
                 "source_class": self.source_class, "modality": self.modality, "resource": self.resource,
-                "target_entity": self.target_entity, "capability": self.capability}
+                "target_entity": self.target_entity, "capability": self.capability,
+                "mapped": self.mapped}
 
 
 def _action_tool(action):
@@ -76,23 +78,41 @@ def canonicalize(action, manifest, observation=None):
 
     sem = SemanticAction(capability=tool, raw=action)
     if is_final:
-        # the final answer is the answer commit; manifest may override effect/modality.
+        # the final answer is the answer commit; manifest may override effect/modality. It is always mapped.
         sem.semantic_type, sem.effect = "answer", "irreversible"
+        sem.mapped = True
 
     # first matching action rule wins
+    matched = False
     for rule in (manifest.get("actions") or []):
         if _match_rule(tool, rule.get("match") or {}) or (is_final and (rule.get("match") or {}).get("type") == "final"):
-            sem.semantic_type = rule.get("semantic_type", sem.semantic_type)
-            sem.effect = rule.get("effect", sem.effect)
-            pe = rule.get("produces_evidence") or {}
-            sem.source_class = pe.get("source_class", sem.source_class)   # only reads that BIND evidence
-            sem.modality = pe.get("modality", sem.modality)
-            # resource = the action's domain kind (for commit matching), independent of evidence binding
-            sem.resource = rule.get("resource") or _resolve_resource(action, rule, pe)
+            _apply_rule_body(sem, action, rule)
+            sem.mapped = True
+            matched = True
             break
+
+    # FAIL-CLOSED: no rule matched. A manifest MAY declare a manifest-level `default_action` (same shape
+    # as a rule body) to govern otherwise-unmapped tools; absent that, the action stays mapped=False so a
+    # capability can fail closed (escalate) instead of silently allowing an unknown/high-risk tool.
+    if not matched and not is_final:
+        da = manifest.get("default_action")
+        if isinstance(da, dict) and da:
+            _apply_rule_body(sem, action, da)
+            sem.mapped = True
 
     sem.target_entity = _extract_subject(action, manifest, observation)
     return sem
+
+
+def _apply_rule_body(sem, action, rule):
+    """Apply a manifest action rule body (or default_action) to the SemanticAction."""
+    sem.semantic_type = rule.get("semantic_type", sem.semantic_type)
+    sem.effect = rule.get("effect", sem.effect)
+    pe = rule.get("produces_evidence") or {}
+    sem.source_class = pe.get("source_class", sem.source_class)   # only reads that BIND evidence
+    sem.modality = pe.get("modality", sem.modality)
+    # resource = the action's domain kind (for commit matching), independent of evidence binding
+    sem.resource = rule.get("resource") or _resolve_resource(action, rule, pe)
 
 
 def _resolve_resource(action, rule, pe):

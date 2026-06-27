@@ -55,6 +55,7 @@ class HarnessKernel:
         self._n_interventions = 0
         self._n_semantic = 0
         self._rev_for_action = {}
+        self._capability_errors = []     # capability-hook exceptions (fail-closed: see _cap_error)
         self._evk = 0
         for cap in self.capabilities:
             cap.on_contract(self.ctx)
@@ -95,6 +96,16 @@ class HarnessKernel:
         if eff != D.ALLOW and self._n_interventions >= self.budget["max_interventions_per_task"]:
             note = "budget_exhausted_interventions"
             eff = D.ESCALATE if self.mode == "enforce" else D.ALLOW
+        # MAX_REVISIONS_PER_ACTION: a commit-stage REVISE that keeps re-firing is a stuck revision loop.
+        # Count effective REVISEs per (reason_code, capability) for the commit stages; once the count
+        # exceeds the budget, escalate that decision to ESCALATE instead of looping REVISE forever.
+        elif eff == D.REVISE and stage in ("after_action", "before_final"):
+            rkey = (decision.reason_code, decision.capability)
+            n = self._rev_for_action.get(rkey, 0) + 1
+            self._rev_for_action[rkey] = n
+            if n > self.budget["max_revisions_per_action"]:
+                note = "max_revisions_exceeded"
+                eff = D.ESCALATE
         ev = self._ev("harness_decision", stage, decision, mode_applied=eff,
                       extra=({"note": note} if note else None))
         # record the WOULD-BE intervention (raw) with its effective outcome, in every mode
@@ -103,6 +114,16 @@ class HarnessKernel:
         if eff != D.ALLOW:
             self._n_interventions += 1
         return Effective(eff, feedback=decision.feedback, raw=decision, events=[ev])
+
+    def _cap_error(self, cap, stage, ex):
+        """A capability hook RAISED. Fail closed: record the error AND emit an ESCALATE (reason_code
+        'capability_error'). The mode logic then yields ALLOW+record under observe but a real ESCALATE
+        under enforce — a buggy capability is never silently treated as ALLOW."""
+        err = "%s.%s: capability_error:%r" % (getattr(cap, "name", "?"), stage, ex)
+        self._capability_errors.append(err)
+        return D.HarnessDecision(D.ESCALATE, capability=getattr(cap, "name", None),
+                                 rule_id="capability_error", reason_code="capability_error",
+                                 reason="capability_error:%r" % ex, deterministic=True)
 
     # ---- public hooks --------------------------------------------------------
     def _canon(self, action, observation=None):
@@ -127,7 +148,7 @@ class HarnessKernel:
             try:
                 d = cap.before_action(action, self.ctx)
             except Exception as ex:                       # a buggy capability must never crash the run
-                d = D.HarnessDecision(D.ALLOW, capability=cap.name, reason="capability_error:%r" % ex)
+                d = self._cap_error(cap, "before_action", ex)
             if d is not None:
                 d.stage = "before_action"
                 d.extra.setdefault("action_key", pid)
@@ -148,7 +169,7 @@ class HarnessKernel:
             try:
                 d = cap.after_action(action, result, before_state, after_state, self.ctx)
             except Exception as ex:
-                d = D.HarnessDecision(D.ALLOW, capability=cap.name, reason="capability_error:%r" % ex)
+                d = self._cap_error(cap, "after_action", ex)
             if d is not None:
                 d.stage = "after_action"
                 decisions.append(d)
@@ -177,7 +198,7 @@ class HarnessKernel:
             try:
                 d = cap.before_final(answer, self.ctx)
             except Exception as ex:
-                d = D.HarnessDecision(D.ALLOW, capability=cap.name, reason="capability_error:%r" % ex)
+                d = self._cap_error(cap, "before_final", ex)
             if d is not None:
                 d.stage = "before_final"
                 decisions.append(d)
@@ -206,7 +227,10 @@ class HarnessKernel:
     def audit(self):
         return {"mode": self.mode, "contract": self.contract.to_dict() if self.contract else None,
                 "ledger": self.ledger.to_dict(), "budget": self.budget,
-                "n_interventions": self._n_interventions, "n_semantic_checks": self._n_semantic}
+                "n_interventions": self._n_interventions,
+                "n_semantic_checks": self.budget["max_semantic_checks"] - self.ctx.semantic_remaining,
+                "status": "degraded" if self._capability_errors else "active",
+                "capability_errors": self._capability_errors}
 
 
 def _action_name(action):

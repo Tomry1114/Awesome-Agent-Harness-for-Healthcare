@@ -165,13 +165,19 @@ def test_unverifiable_commit_not_recorded_verified():
     assert k.ledger.commit_history[-1]["verified"] is None, k.ledger.commit_history[-1]
 
 
-def test_capability_error_does_not_crash():
+def test_capability_error_escalates_in_enforce():
+    """Fail-closed: a crashing capability must NOT silently become ALLOW. Under enforce it ESCALATEs
+    (and is recorded as a capability error); under observe it records but stays effective-ALLOW."""
     class Boom(ScopeEvidenceBinding):
         def before_action(self, action, ctx):
             raise RuntimeError("boom")
     contract = build_contract(TASK, env_type="fhir", policy=POLICY)
     k = HarnessKernel(contract, [Boom()], mode="enforce", policy=POLICY, env_type="fhir")
-    assert k.before_action({"type": "tool", "tool": "fhir_search", "args": {}}, step=0).type == D.ALLOW
+    assert k.before_action({"type": "tool", "tool": "fhir_search", "args": {}}, step=0).type == D.ESCALATE
+    assert k._capability_errors and k.audit()["status"] == "degraded"
+    k2 = HarnessKernel(contract, [Boom()], mode="observe", policy=POLICY, env_type="fhir")
+    assert k2.before_action({"type": "tool", "tool": "fhir_search", "args": {}}, step=0).type == D.ALLOW
+    assert k2._capability_errors and k2.audit()["status"] == "degraded"
 
 
 # ---- real SUBSTRATE packs (P1/P2/P3): same harness core, only adapter + pack differ ----------------

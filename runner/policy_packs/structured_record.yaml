@@ -29,6 +29,10 @@ manifest:
       semantic_type: read
       effect: none
       produces_evidence: {source_class: record, modality: record}
+    - match: {tool: get_lab_reference_range}                # reference-range lookup: a read, no commit
+      semantic_type: read
+      effect: none
+      produces_evidence: {source_class: record, modality: record}
     - match: {tool_pattern: medication_request_create}      # the high-risk commit (no evidence binding)
       semantic_type: create
       effect: irreversible

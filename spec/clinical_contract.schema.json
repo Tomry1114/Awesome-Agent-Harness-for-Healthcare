@@ -1,41 +1,200 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "ClinicalProcessContract",
-  "description": "Per-task executable description of a CORRECT PROCESS. NOT a gold answer / reference trajectory.",
+  "description": "Per-task executable description of a CORRECT PROCESS, compiled from task-visible info + the environment policy pack ONLY. NOT a gold answer / reference trajectory. Obligations & commit points are expressed in CAPABILITY terms (source_class/resource/modality/semantic_type/effect), never tool names.",
   "type": "object",
-  "required": ["contract_id"],
+  "additionalProperties": true,
+  "required": [
+    "contract_id"
+  ],
   "properties": {
-    "contract_id": {"type": "string"},
+    "contract_id": {
+      "type": "string"
+    },
     "subject": {
-      "type": ["object", "null"],
-      "properties": {"type": {"type": ["string", "null"]}, "id": {"type": ["string", "null"]}}
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": true,
+      "description": "The assigned subject (operand) {type,id}.",
+      "properties": {
+        "type": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
     },
     "evidence_obligations": {
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["id"],
+        "additionalProperties": true,
+        "required": [
+          "id"
+        ],
         "properties": {
-          "id": {"type": "string"},
-          "satisfied_by": {"type": "object",
-            "properties": {"tool": {"type": "string"}, "resource_type": {"type": "string"}}}
+          "id": {
+            "type": "string"
+          },
+          "satisfied_by": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "additionalProperties": true,
+            "description": "Capability descriptor of evidence that satisfies the obligation.",
+            "properties": {
+              "source_class": {
+                "type": "string"
+              },
+              "resource": {
+                "type": "string"
+              },
+              "modality": {
+                "type": "string"
+              }
+            }
+          }
         }
       }
     },
     "workflow_obligations": {
       "type": "array",
-      "items": {"type": "object", "required": ["id"],
-        "properties": {"id": {"type": "string"}, "requires": {"type": "array", "items": {"type": "string"}}}}
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": [
+          "id"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "requires": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      }
     },
     "commit_points": {
       "type": "array",
-      "items": {"type": "object", "required": ["action"],
+      "description": "High-risk actions matched by canonical SemanticAction (NOT tool name).",
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
         "properties": {
-          "action": {"type": "string"},
-          "risk": {"type": "string", "enum": ["R0", "R1", "R2", "R3"]},
-          "requires": {"type": "array", "items": {"type": "string"}},
-          "postcondition": {"type": ["string", "null"]}}}
+          "match": {
+            "type": "object",
+            "additionalProperties": true,
+            "description": "Every declared field must equal the action's. Absent match => bare commit (irreversible).",
+            "properties": {
+              "semantic_type": {
+                "type": "string"
+              },
+              "effect": {
+                "type": "string"
+              },
+              "resource": {
+                "type": "string"
+              }
+            }
+          },
+          "risk": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "R0",
+              "R1",
+              "R2",
+              "R3",
+              null
+            ]
+          },
+          "requires": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "requires_rule": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "postcondition": {
+            "$ref": "#/definitions/postcondition"
+          }
+        }
+      }
     },
-    "meta": {"type": "object"}
+    "meta": {
+      "type": "object",
+      "additionalProperties": true
+    }
+  },
+  "definitions": {
+    "postcondition": {
+      "description": "A typed predicate verified after the commit. May be a bare type string or an object. Structured predicates over an opaque state token return UNKNOWN (never auto-pass).",
+      "oneOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "type": {
+              "type": "string",
+              "description": "state_transition | object_exists | field_equals | field_not_equals | no_unexpected_side_effect | target_consistency | claim_supported_by_evidence | ..."
+            },
+            "evidence_selector": {
+              "type": "object",
+              "additionalProperties": true,
+              "description": "Restricts which evidence (by capability) the judge may use to support a claim.",
+              "properties": {
+                "source_class": {
+                  "type": "string"
+                },
+                "resource": {
+                  "type": "string"
+                },
+                "modality": {
+                  "type": "string"
+                }
+              }
+            },
+            "path": {
+              "type": "string"
+            },
+            "expected": {},
+            "unexpected": {},
+            "allowed_changed": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      ]
+    }
   }
 }

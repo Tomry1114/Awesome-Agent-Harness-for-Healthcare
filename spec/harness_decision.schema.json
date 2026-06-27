@@ -1,20 +1,108 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "HarnessDecision",
-  "description": "A capability verdict on a proposed action / final answer.",
+  "description": "A capability verdict on a proposed action / final answer. Precedence ESCALATE>BLOCK>REVISE>ALLOW.",
   "type": "object",
-  "required": ["decision"],
+  "additionalProperties": true,
+  "required": [
+    "decision"
+  ],
   "properties": {
-    "decision": {"type": "string", "enum": ["ALLOW", "REVISE", "BLOCK", "ESCALATE"]},
-    "stage": {"type": ["string", "null"], "enum": ["before_action", "after_action", "before_final", null]},
-    "capability": {"type": ["string", "null"]},
-    "rule_id": {"type": ["string", "null"]},
-    "reason": {"type": ["string", "null"]},
-    "missing_obligations": {"type": "array", "items": {"type": "string"}},
-    "suggested_capabilities": {"type": "array", "items": {"type": "string"}},
+    "decision": {
+      "type": "string",
+      "enum": [
+        "ALLOW",
+        "REVISE",
+        "BLOCK",
+        "ESCALATE"
+      ]
+    },
+    "stage": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "enum": [
+        "before_action",
+        "after_action",
+        "before_final",
+        null
+      ]
+    },
+    "capability": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "rule_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Audit-only identifier."
+    },
+    "reason_code": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Structured category for metrics (rule_id is audit-only)."
+    },
+    "reason": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "missing_obligations": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "suggested_capabilities": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
     "feedback": {},
-    "deterministic": {"type": ["boolean", "null"]},
-    "risk": {"type": ["string", "null"], "enum": ["R0", "R1", "R2", "R3", null]},
-    "effective": {"type": ["string", "null"], "enum": ["ALLOW", "REVISE", "BLOCK", "ESCALATE", null]}
+    "deterministic": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "risk": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "enum": [
+        "R0",
+        "R1",
+        "R2",
+        "R3",
+        null
+      ]
+    },
+    "effective": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "enum": [
+        "ALLOW",
+        "REVISE",
+        "BLOCK",
+        "ESCALATE",
+        null
+      ]
+    },
+    "extra": {
+      "type": "object",
+      "additionalProperties": true
+    }
   }
 }

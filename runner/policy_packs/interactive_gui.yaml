@@ -11,6 +11,10 @@ manifest:
       semantic_type: inspect
       effect: none
       produces_evidence: {source_class: interface, modality: administrative}
+    - match: {tool_any: [snapshot, scroll, back, done, download]}   # read-only navigation / page re-read
+      semantic_type: inspect
+      effect: none
+      produces_evidence: {source_class: interface, modality: administrative}
     - match: {tool_any: [type, upload]}
       semantic_type: update
       effect: reversible

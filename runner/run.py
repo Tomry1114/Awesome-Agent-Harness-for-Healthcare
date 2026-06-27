@@ -119,14 +119,20 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
     # ---- Clinical Process Harness (Part 2), gated by MH_HARNESS_MODE (default 'off' -> _harness=None,
     #      ZERO behavior change). A harness build/runtime error must never break a run (fail open).
     _harness = None
+    _harness_requested_mode = "off"     # the mode the operator REQUESTED (before any build failure)
+    _harness_runtime_errors = []        # build/hook errors — surfaced in result["harness"]["runtime_errors"]
+    _harness_build_failed = False
     try:
         import harness as _Harness
-        if _Harness.resolve_mode(os.environ.get("MH_HARNESS_MODE")) != "off":
+        _harness_requested_mode = _Harness.resolve_mode(os.environ.get("MH_HARNESS_MODE"))
+        if _harness_requested_mode != "off":
             # the harness governs by SUBSTRATE (env_type) only — no benchmark name is passed in.
             _harness = _Harness.build_kernel(task, env_type=env_type,
                                              mode=os.environ.get("MH_HARNESS_MODE"))
-    except Exception:
+    except Exception as _he:
         _harness = None
+        _harness_build_failed = True
+        _harness_runtime_errors.append("build_kernel: %r" % _he)
 
     trajectory, last_obs, last_res, finished = [], None, None, False
     deliv = DeliverableScaffold(task)  # PB deliverable scaffolding (Codex #1: extracted from the generic runner; no-op for non-PB)
@@ -155,8 +161,9 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
             if _harness is not None:                    # final answer is a commit point
                 try:
                     _hf = _harness.before_final(action.get("answer", ""), step=step)
-                except Exception:
+                except Exception as _he:
                     _hf = None
+                    _harness_runtime_errors.append("before_final: %r" % _he)
                 if _hf is not None:
                     trajectory.extend(_hf.events)
                     if _hf.type in ("REVISE", "BLOCK"):
@@ -181,8 +188,9 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
         if _harness is not None:
             try:
                 _hb = _harness.before_action(action, _state_hash(env), step=step)
-            except Exception:
+            except Exception as _he:
                 _hb = None
+                _harness_runtime_errors.append("before_action: %r" % _he)
             if _hb is not None:
                 trajectory.extend(_hb.events)
                 if _hb.type in ("REVISE", "BLOCK"):     # do NOT execute the tool; feed feedback back
@@ -205,8 +213,9 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
                 _hpost = _harness.after_action(action, res, _state_before, _state_after, step=step,
                                                canonical_observation=_canon.canonical_observation(res, env_type),
                                                result_ok=not (isinstance(res, dict) and res.get("error")))
-            except Exception:
+            except Exception as _he:
                 _hpost = None
+                _harness_runtime_errors.append("after_action: %r" % _he)
         _src_full = json.dumps(res, ensure_ascii=False)
         obs = _src_full[:int(os.environ.get("MH_OBS_MAX_LEN", "10000"))]  # official mini_agent caps tool output to LLM at 10k (was 200 -> agent could not see search results -> over-read)
         _err = res.get("error") if isinstance(res, dict) else None
@@ -468,14 +477,38 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
                   "fidelity": fidelity, "medcta_config": _medcta_cfg, "capabilities": _caps,
                   "prompt_provenance": _prompt_prov}
     result = scoring.build_result(task, trajectory, results, provenance)
+    # Harness RUNTIME STATUS — always honest about what the harness actually did this run:
+    #   requested_mode : the MH_HARNESS_MODE the operator asked for (default 'off').
+    #   effective_mode : the kernel's live mode, or 'off' when no kernel was built.
+    #   status         : 'active' / 'degraded' (a capability error occurred) / 'failed' (enforce was
+    #                    requested but the kernel failed to build -> fail closed, do NOT pretend active)
+    #                    / 'off' (nothing was requested).
+    #   runtime_errors : every build/hook error string collected during the run.
     if _harness is not None:
         try:
             from harness.ledger import governance as _hgov
             _h_events = [ev for ev in trajectory if str(ev.get("event_type", "")).startswith("harness_")]
-            result["harness"] = {"mode": _harness.mode, "audit": _harness.audit(),
+            _h_audit = _harness.audit()
+            _h_status = _h_audit.get("status", "active")
+            result["harness"] = {"mode": _harness.mode,
+                                 "requested_mode": _harness_requested_mode,
+                                 "effective_mode": _harness.mode,
+                                 "status": "degraded" if (_h_status == "degraded" or _harness_runtime_errors) else "active",
+                                 "runtime_errors": _harness_runtime_errors,
+                                 "audit": _h_audit,
                                  "metrics": _hgov.summarize(_harness.ledger, _h_events, mode=_harness.mode)}
-        except Exception:
-            pass
+        except Exception as _he:
+            _harness_runtime_errors.append("audit/summarize: %r" % _he)
+            result["harness"] = {"mode": getattr(_harness, "mode", _harness_requested_mode),
+                                 "requested_mode": _harness_requested_mode,
+                                 "effective_mode": getattr(_harness, "mode", _harness_requested_mode),
+                                 "status": "degraded", "runtime_errors": _harness_runtime_errors}
+    elif _harness_requested_mode != "off" or _harness_runtime_errors:
+        # a harness WAS requested (or errored) but no kernel is live -> report it, never silently 'off'.
+        result["harness"] = {"mode": "off", "requested_mode": _harness_requested_mode,
+                             "effective_mode": "off",
+                             "status": "failed" if (_harness_build_failed and _harness_requested_mode == "enforce") else "off",
+                             "runtime_errors": _harness_runtime_errors}
     _sv = validate_result(result)
     # validate_result is contracted to return a dict (valid result, schema errors, OR fail-closed
     # 'jsonschema dependency missing'). If anything unexpected leaks through, treat it as NOT valid
