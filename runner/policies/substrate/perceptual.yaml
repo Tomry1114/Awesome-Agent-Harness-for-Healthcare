@@ -6,8 +6,7 @@ name: perceptual
 evidence_obligations: []
 workflow_obligations: []
 
-commit_points:
-  - match: {semantic_type: answer}
-    risk: R2
-    requires: []
-    postcondition: {type: state_transition}   # generic floor; a clinical module prepends a stronger one
+# The bare substrate imposes NO commit postcondition on the answer (a final answer has no observable state
+# transition). The answer's risk comes from the adapter's final rule (effect: irreversible); grounding /
+# claim-support is layered by the evidence_grounding clinical module.
+commit_points: []

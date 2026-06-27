@@ -25,24 +25,42 @@ class ClinicalProcessContract:
         return ([o.get("id") for o in self.evidence_obligations if o.get("id")] +
                 [o.get("id") for o in self.workflow_obligations if o.get("id")])
 
+    def _cp_matches(self, cp, sem):
+        m = cp.get("match")
+        if m is None:
+            return getattr(sem, "is_commit", lambda: False)()
+        for field in ("semantic_type", "effect", "resource"):
+            if field in m and m[field] != getattr(sem, field, None):
+                return False
+        return True
+
+    def matching_commit_points(self, sem):
+        """ALL commit points that constrain this action (a clinical rule AND the substrate's generic
+        invariant can both apply)."""
+        return [cp for cp in self.commit_points if self._cp_matches(cp, sem)]
+
     def commit_point_for(self, sem):
-        """Match a commit point by the canonical SemanticAction (NOT a tool name). A commit point declares
-        `match: {effect: irreversible}` and/or `{semantic_type: submit}` and/or `{resource: ...}`; every
-        declared field must equal the action's. (If `match` is absent, an `effect: irreversible` action
-        matches a bare commit point.)"""
-        for cp in self.commit_points:
-            m = cp.get("match")
-            if m is None:
-                if getattr(sem, "is_commit", lambda: False)():
-                    return cp
-                continue
-            ok = True
-            for field in ("semantic_type", "effect", "resource"):
-                if field in m and m[field] != getattr(sem, field, None):
-                    ok = False; break
-            if ok:
-                return cp
-        return None
+        """The COMPOSED commit point for an action: every matching rule's constraints are MERGED, never
+        first-match-wins. risk = max; requires = union; postconditions = ALL (AND-ed by the verifier).
+        Returns None when no rule matches."""
+        cps = self.matching_commit_points(sem)
+        if not cps:
+            return None
+        order = {"R0": 0, "R1": 1, "R2": 2, "R3": 3}
+        risk = max((cp.get("risk", "R2") for cp in cps), key=lambda r: order.get(r, 2))
+        requires, posts, rule_ids = [], [], []
+        for cp in cps:
+            for r in (cp.get("requires") or []):
+                if r not in requires:
+                    requires.append(r)
+            if cp.get("postcondition"):
+                posts.append(cp["postcondition"])
+            if cp.get("requires_rule"):
+                rule_ids.append(cp["requires_rule"])
+        return {"risk": risk, "requires": requires, "postconditions": posts,
+                "postcondition": (posts[0] if posts else None),   # back-compat single view
+                "requires_rule": (rule_ids[0] if rule_ids else None), "rule_ids": rule_ids,
+                "match": {"composed_from": len(cps)}}
 
     @classmethod
     def from_dict(cls, d):

@@ -29,7 +29,7 @@ class ScopeEvidenceBinding(Capability):
                 feedback="This action does not name a subject; specify the subject it applies to before committing.")
         if not active or target is None:
             return None
-        if _norm(target) != _norm(active):
+        if not _same_subject(target, active):
             return self._decide(
                 D.BLOCK, rule_id="subject_scope_mismatch", reason_code="wrong_scope", deterministic=True,
                 reason="action operates on %s but the active subject is %s" % (target, active),
@@ -46,7 +46,7 @@ class ScopeEvidenceBinding(Capability):
         # before_action didn't count it), count the opportunity here and check the displayed subject.
         if active and shown is not None and not _arg_subject(action, ctx.manifest):
             ctx.ledger.bump_opportunity("subject_bearing_action")
-            if _norm(shown) != _norm(active):
+            if not _same_subject(shown, active):
                 return self._decide(
                     D.REVISE, rule_id="subject_scope_mismatch", reason_code="wrong_scope", deterministic=True,
                     reason="page now shows %s but the assigned subject is %s" % (shown, active),
@@ -69,7 +69,7 @@ class ScopeEvidenceBinding(Capability):
                 subj = None
             valid = ((ctx.result_ok is not False) and _nonempty(result)
                      and (binding != "required" or sem.target_entity is not None))
-            rel = ("matched" if (subj is not None and active is not None and _norm(subj) == _norm(active))
+            rel = ("matched" if (subj is not None and active is not None and _same_subject(subj, active))
                    else ("foreign" if (subj is not None and active is not None) else "unknown"))
             ctx.ledger.add_evidence(type=(sem.resource or sem.capability), value=_summarize(result),
                                     subject_id=subj, source_event="step-%d" % ctx.step,
@@ -91,8 +91,22 @@ def _arg_subject(action, manifest):
     return None
 
 
-def _norm(x):
-    return str(x or "").strip().lower().split("/")[-1]
+def _ref(x):
+    """Parse a subject ref into (type, id). 'Patient/123' -> ('patient','123'); '123' -> (None,'123')."""
+    t = str(x or "").strip().lower()
+    if "/" in t:
+        a, b = t.rsplit("/", 1)
+        return (a, b)
+    return (None, t)
+
+
+def _same_subject(a, b):
+    """Typed identity: ids must match; if BOTH carry a type, the types must match too (so Patient/123 !=
+    Encounter/123, while Patient/123 == 123 when one side is untyped)."""
+    (ta, ia), (tb, ib) = _ref(a), _ref(b)
+    if ia != ib:
+        return False
+    return not (ta and tb and ta != tb)
 
 
 def _nonempty(result):

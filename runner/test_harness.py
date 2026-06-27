@@ -404,6 +404,39 @@ def test_findings_keep_lower_priority():
     assert "wrong_scope" in rcs and "missing_prerequisite" in rcs, rcs
 
 
+def test_commit_point_merge_composes_modules():
+    """A MedicationRequest create is constrained by BOTH the clinical module AND the substrate's generic
+    write invariant -> the merged commit point unions their requires and keeps all postconditions."""
+    pol = H.load_policy(env_type="fhir")
+    task = {"task_id": "t", "goal": "order", "context": {"patient_ref": "Patient/1"}, "environment": {"type": "fhir"}}
+    contract = build_contract(task, env_type="fhir", policy=pol)
+    create = canonicalize({"type": "tool", "tool": "fhir_medication_request_create", "args": {"patient": "Patient/1"}},
+                          pol["manifest"])
+    cp = contract.commit_point_for(create)
+    assert cp["match"]["composed_from"] == 2, cp           # medication_safety + substrate generic
+    assert "medication_safety_review" in cp["requires"]
+    assert len(cp["postconditions"]) >= 1
+
+
+def test_final_answer_not_a_commit_in_record_substrate():
+    """A plain 'task done' in an EHR is a terminal_response, NOT an irreversible commit (no commit point,
+    no commit recorded). Only an adapter that declares the final irreversible (perceptual) makes it one."""
+    pol = H.load_policy(env_type="fhir")
+    task = {"task_id": "t", "goal": "review labs", "context": {"patient_ref": "Patient/1"}, "environment": {"type": "fhir"}}
+    contract = build_contract(task, env_type="fhir", policy=pol)
+    k = HarnessKernel(contract, [ScopeEvidenceBinding(), ObligationLifecycle(), VerifyAndCommit()],
+                      mode="enforce", policy=pol, env_type="fhir")
+    assert k.before_final("done, labs reviewed", step=0).type == D.ALLOW
+    assert k.ledger.commit_history == [], k.ledger.commit_history
+
+
+def test_typed_subject_identity():
+    from harness.capabilities.scope_evidence import _same_subject
+    assert _same_subject("Patient/123", "Patient/123")
+    assert _same_subject("Patient/123", "123")            # one side untyped -> compare id only
+    assert not _same_subject("Patient/123", "Encounter/123")   # same id, different TYPE -> not the same
+
+
 def _run():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     passed = 0

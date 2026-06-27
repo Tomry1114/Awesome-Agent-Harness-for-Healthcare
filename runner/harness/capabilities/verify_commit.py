@@ -39,20 +39,24 @@ class VerifyAndCommit(Capability):
         if not at_least(ctx.risk or R2, R2):
             return None
         cp = ctx.contract.commit_point_for(ctx.sem) if (ctx.contract and ctx.sem) else None
-        post = (cp or {}).get("postcondition")
-        verdict = eval_predicate(post, before_state, after_state, ctx.sem)   # True / False / None
+        posts = (cp or {}).get("postconditions") or []
+        # AND every merged postcondition: any False -> violated; else any None -> unknown; else verified.
+        verdicts = [eval_predicate(p, before_state, after_state, ctx.sem) for p in posts] or [None]
+        verdict = (False if any(v is False for v in verdicts)
+                   else (None if any(v is None for v in verdicts) else True))
         ctx.verification = verdict      # explicit tri-state -> the kernel records this, not winner==ALLOW
-        rid = post.get("type") if isinstance(post, dict) else (post or "post_commit")
+        _bad = next((p for p, v in zip(posts, verdicts) if v is False), None)
+        rid = (_bad.get("type") if isinstance(_bad, dict) else _bad) or "post_commit"
         if verdict is False:
             return self._decide(
                 D.REVISE, rule_id=rid, reason_code="violated_commit", deterministic=True,
                 reason="commit postcondition not satisfied (observable state unchanged / inconsistent)",
                 feedback="The commit did not produce the expected state change — re-check and retry.")
-        if verdict is None and post is not None:
+        if verdict is None and posts:
             # a declared postcondition that could NOT be evaluated (state unobservable). UNKNOWN must not
             # silently pass in enforce -> ESCALATE (observe records, assist revises, enforce terminates safely).
             return self._decide(
-                D.ESCALATE, rule_id=rid, reason_code="unverifiable_commit", deterministic=True,
+                D.ESCALATE, rule_id="post_commit", reason_code="unverifiable_commit", deterministic=True,
                 reason="commit postcondition could not be verified (state not observable)",
                 feedback="This commit's effect cannot be verified from the available state; escalating.")
         return None                     # True (verified) -> no block
@@ -64,9 +68,11 @@ class VerifyAndCommit(Capability):
         if cp and ctx.ledger.pending_prerequisites(cp.get("requires", [])):
             ctx.verification = None
             return None
-        post = (cp or {}).get("postcondition")
-        ptype = post.get("type") if isinstance(post, dict) else post
-        if not ptype or "support" not in str(ptype):
+        # find a claim-support postcondition among ALL merged postconditions for this commit.
+        posts = (cp or {}).get("postconditions") or []
+        post = next((p for p in posts if "support" in str(p.get("type") if isinstance(p, dict) else p)), None)
+        ptype = (post.get("type") if isinstance(post, dict) else post) if post else None
+        if not ptype:
             return None
         if not ctx.judge_fn or not ctx.spend_semantic():
             ctx.ledger.add_unresolved_risk("semantic_claim_support",

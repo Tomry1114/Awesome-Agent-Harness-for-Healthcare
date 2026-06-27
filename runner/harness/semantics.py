@@ -37,7 +37,9 @@ class SemanticAction:
         self.mapped = mapped   # True iff a manifest rule (or default_action) governs this action, or it is the final answer
 
     def is_commit(self):
-        return self.effect == "irreversible" or self.semantic_type in ("create", "update", "submit", "answer")
+        # a final ANSWER is a commit ONLY when the adapter declares it irreversible (e.g. a perceptual
+        # diagnosis); a plain "task done" terminal_response in an EHR/GUI is not a commit.
+        return self.effect == "irreversible" or self.semantic_type in ("create", "update", "submit")
 
     def to_dict(self):
         return {"semantic_type": self.semantic_type, "effect": self.effect,
@@ -83,8 +85,9 @@ def canonicalize(action, manifest, observation=None):
     # generic scratchpad write is `none` even though the substrate default is `required`).
     sem.subject_binding = (manifest.get("subject") or {}).get("binding", "implicit_active")
     if is_final:
-        # the final answer is the answer commit; manifest may override effect/modality. It is always mapped.
-        sem.semantic_type, sem.effect = "answer", "irreversible"
+        # default: a terminal RESPONSE (not a commit). An adapter's final rule may declare it irreversible
+        # (effect: irreversible) to make it a real commit (e.g. a perceptual diagnosis). Always mapped.
+        sem.semantic_type, sem.effect = "answer", "none"
         sem.mapped = True
 
     # first matching action rule wins

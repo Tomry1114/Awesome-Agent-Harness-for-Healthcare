@@ -86,7 +86,12 @@ def _evidence_satisfies(ledger, req, active=None):
 
 
 def _eq(a, b):
-    return str(a or "").strip().lower().split("/")[-1] == str(b or "").strip().lower().split("/")[-1]
+    """Typed identity: ids must match; if both carry a type, types must match too."""
+    def _ref(x):
+        t = str(x or "").strip().lower()
+        return tuple(t.rsplit("/", 1)) if "/" in t else (None, t)
+    (ta, ia), (tb, ib) = _ref(a), _ref(b)
+    return ia == ib and not (ta and tb and ta != tb)
 
 
 def _expand_missing(ledger, missing):
