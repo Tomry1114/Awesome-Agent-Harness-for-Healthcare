@@ -53,7 +53,10 @@ def summarize(ledger, harness_events, mode=None):
     _VIO = {"wrong_scope", "missing_prerequisite", "violated_commit", "unverifiable_commit",
             "unmapped_action", "subject_unspecified", "unsupported_claim"}
     vio = [iv for iv in interventions if iv.get("reason_code") in _VIO]
-    proposed_v = len(vio)
+    # dedup by ACTION: one commit can raise two interventions (e.g. before_action missing_prerequisite +
+    # after_action unverifiable_commit) -> count UNIQUE offending actions so a per-action rate cannot exceed 1.
+    def _akey(iv): return iv.get("action_key") or id(iv)
+    proposed_v = len({_akey(iv) for iv in vio})
 
     def _executed(iv):
         # a PRE-commit violation is executed only if it slipped through (effective ALLOW); a POST-commit
@@ -61,7 +64,7 @@ def summarize(ledger, harness_events, mode=None):
         if iv.get("stage") == "after_action":
             return True
         return iv.get("effective") == "ALLOW"
-    executed_v = sum(1 for iv in vio if _executed(iv))
+    executed_v = len({_akey(iv) for iv in vio if _executed(iv)})
     post_commit_fail = sum(1 for iv in vio if iv.get("stage") == "after_action")
 
     # ---- P0-9: combined repair success + outcome preservation + over-block PROXY ----------------

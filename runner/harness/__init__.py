@@ -68,6 +68,12 @@ def build_kernel(task, env_type=None, mode=None, observed=None, capabilities=Non
     caps = _make_capabilities(capabilities or DEFAULT_CAPABILITIES)
     risk_of = (lambda a: classify_risk(a, contract, policy))
     judge_fn, judge_model = _build_judge()
+    if judge_model:
+        _agent_model = os.environ.get("MH_API_MODEL") or os.environ.get("MH_OPENAI_MODEL", "gpt-5.5")
+        if judge_model == _agent_model:   # a judge that IS the agent brain is NOT independent
+            if mode in ("assist", "enforce"):
+                raise PolicyError("harness judge %r is not independent of the agent brain %r" % (judge_model, _agent_model))
+            judge_fn, judge_model = None, None   # observe: record-only, disable the non-independent judge
     return HarnessKernel(contract, caps, mode=mode, policy=policy, env_type=env_type,
                          risk_of=risk_of, budget=budget, judge_fn=judge_fn, judge_model=judge_model)
 

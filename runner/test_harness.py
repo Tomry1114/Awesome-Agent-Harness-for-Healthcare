@@ -807,6 +807,42 @@ def test_revision_identity_resets_on_progress():
     assert k4._apply_mode(rev, "before_action").type == D.REVISE  # different args -> fresh counter
 
 
+def test_flagged_final_recorded_as_delivered():
+    # graceful degradation: run.py delivers a no-side-effect answer WITH a flag via kernel.record_flagged_final.
+    # It must surface as a final-answer commit (verified=None) -> answer_delivered=1, outcome_preservation=1,
+    # so the metric layer never reports a delivered answer as erased.
+    pol = H.load_policy(env_type="tool_sandbox")
+    task = {"task_id": "m", "goal": "finding?", "context": {}, "environment": {"type": "tool_sandbox"}}
+    contract = build_contract(task, env_type="tool_sandbox", policy=pol)
+    k = HarnessKernel(contract, [ScopeEvidenceBinding(), ObligationLifecycle(), VerifyAndCommit()],
+                      mode="enforce", policy=pol, env_type="tool_sandbox")
+    k.record_flagged_final("a 3cm nodule", flag="unresolved_risk", step=2)
+    fa = [c for c in k.ledger.commit_history if c.get("detail") == "final_answer"]
+    assert len(fa) == 1 and fa[0].get("verified") is None and fa[0].get("verification_flag") == "unresolved_risk"
+    m = gov.summarize(k.ledger, [], "enforce")
+    assert m["answer_delivered"] == 1 and m["outcome_preservation"] == 1
+
+
+def test_nonindependent_judge_rejected_in_enforce():
+    # a harness judge that IS the agent brain is not independent: enforce/assist must REFUSE to build (fail
+    # before the experiment), observe disables the judge rather than letting it shape Outcome.
+    task = {"task_id": "m", "goal": "g", "context": {}, "environment": {"type": "tool_sandbox"}, "available_tools": []}
+    _old = (os.environ.get("MH_HARNESS_JUDGE_MODEL"), os.environ.get("MH_API_MODEL"))
+    try:
+        os.environ["MH_API_MODEL"] = "collide-model"; os.environ["MH_HARNESS_JUDGE_MODEL"] = "collide-model"
+        raised = False
+        try:
+            H.build_kernel(task, env_type="tool_sandbox", mode="enforce")
+        except H.PolicyError:
+            raised = True
+        assert raised, "judge == agent brain must be rejected in enforce"
+        k = H.build_kernel(task, env_type="tool_sandbox", mode="observe")   # observe: builds, judge disabled
+        assert k is not None and k.ctx.judge_model is None
+    finally:
+        for _k, _v in zip(("MH_HARNESS_JUDGE_MODEL", "MH_API_MODEL"), _old):
+            os.environ.pop(_k, None) if _v is None else os.environ.__setitem__(_k, _v)
+
+
 def _run():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     passed = 0

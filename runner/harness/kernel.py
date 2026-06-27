@@ -290,6 +290,15 @@ class HarnessKernel:
             self._close_verified_repair()    # a final-answer commit verifies + closes its repair too
         return eff
 
+    def record_flagged_final(self, answer, flag="unresolved_risk", step=0):
+        """run.py delivered a no-side-effect terminal answer WITH a verification flag (graceful degradation,
+        CONTRACT(5)) instead of via effective-ALLOW. Record it as a final-answer commit with verified=None
+        (delivered but NOT verified) so answer_delivered / outcome_preservation / unknown_verification see it."""
+        sem = self._canon({"type": "final", "answer": answer})
+        self.ledger.record_commit(sem.capability, step, verified=None, detail="final_answer")
+        if self.ledger.commit_history:
+            self.ledger.commit_history[-1]["verification_flag"] = flag
+
     def build_observation(self, tool_result, post_eff):
         """Fold any retrospective harness feedback into what the agent sees next."""
         if post_eff is None or post_eff.type == D.ALLOW or not post_eff.feedback:

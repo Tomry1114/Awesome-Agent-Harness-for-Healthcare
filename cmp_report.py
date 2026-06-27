@@ -3,9 +3,11 @@ native_metrics set, all 7 process dimensions, and the harness intervention metri
 result.json harness.metrics). Pure read of artifacts. MCTA enforce reads res5b (evidence-truncation fix)."""
 import json, glob, os
 # (stem_off, stem_enforce) — MCTA enforce uses the fixed re-run res5b.
-DS = [("PhysicianBench", "res5_pb_off", "res5_pb_enforce"),
-      ("MedCTA", "res5_mcta_off", "res5b_mcta_enforce"),
-      ("HealthAdminBench", "res5_hab_off", "res5_hab_enforce")]
+import sys as _sys
+_P = _sys.argv[1] if len(_sys.argv) > 1 else "res6"   # run prefix (argv) -> never read a stale hardcoded dir
+DS = [("PhysicianBench", "%s_pb_off" % _P, "%s_pb_enforce" % _P),
+      ("MedCTA", "%s_mcta_off" % _P, "%s_mcta_enforce" % _P),
+      ("HealthAdminBench", "%s_hab_off" % _P, "%s_hab_enforce" % _P)]
 MODS = ["Execution", "Tooling", "Context", "Lifecycle", "Observability", "Verification", "Governance"]
 HM = ["n_proposed_actions", "n_commits", "n_interventions", "n_findings", "escalation_rate",
       "wrong_scope_action_rate", "missing_prerequisite_rate", "unverified_commit_rate",

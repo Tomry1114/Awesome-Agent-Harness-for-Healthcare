@@ -151,6 +151,7 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
     max_repair_turns = int(os.environ.get("MH_MAX_REPAIR_TURNS", "4"))   # CONTRACT(2): cap on REVISE/BLOCK turns
     _repair_turns = 0
     _env_actions = 0   # CONTRACT(2): EXECUTED environment actions; repair turns do NOT count against this
+    _insufficient_revises = 0   # CONTRACT: INSUFFICIENT grounding gets at most ONE revise, then deliver-with-flag
     deliv = DeliverableScaffold(task)  # PB deliverable scaffolding (Codex #1: extracted from the generic runner; no-op for non-PB)
     _fail_sig = None; _fail_n = 0; _aborted = False  # circuit breaker: abort on repeated identical failing call
     _last_tool_ev = None  # for consumed_by_agent backfill (#review: rendered != consumed)
@@ -198,16 +199,21 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
                     trajectory.extend(_hf.events)
                     if _hf.type in ("REVISE", "BLOCK"):   # ADDITIVE: keep last_obs/last_res (env state) intact
                         _repair_turns += 1
+                        if getattr(getattr(_hf, "raw", None), "reason_code", None) == "insufficient_grounding":
+                            _insufficient_revises += 1
                         pending_harness_feedback = {"decision": _hf.type,
                             "reason": (_hf.feedback or {}).get("reason") or (_hf.feedback or {}).get("message"),
                             "missing_obligations": (_hf.feedback or {}).get("missing_obligations", []),
                             "stage": "before_final"}
-                        if _repair_turns > max_repair_turns:
-                            # CONTRACT(5): a terminal ANSWER (no side effect) must NEVER be erased -> deliver WITH flag.
+                        # INSUFFICIENT grounding gets at most ONE revise; the global repair budget likewise never
+                        # ERASES a no-side-effect terminal answer -> deliver WITH flag and record it in the ledger.
+                        if _insufficient_revises > 1 or _repair_turns > max_repair_turns:
                             trajectory.append({"step": step, "event_type": "final_answer", "thought": action.get("answer", ""),
                                                "status": "ok", "verification_flag": "unverified_grounding",
                                                "harness_feedback": _hf.feedback,
                                                "canonical_action": _canon.canonical_action(action, env_type)})
+                            try: _harness.record_flagged_final(action.get("answer", ""), flag="unverified_grounding", step=step)
+                            except Exception: pass
                             finished = True; break
                         continue
                     if _hf.type == "ESCALATE":
@@ -217,6 +223,8 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
                                                "status": "ok", "verification_flag": _xe.get("verification_flag", "unresolved_risk"),
                                                "harness_feedback": _hf.feedback,
                                                "canonical_action": _canon.canonical_action(action, env_type)})
+                            try: _harness.record_flagged_final(action.get("answer", ""), flag=_xe.get("verification_flag", "unresolved_risk"), step=step)
+                            except Exception: pass
                             finished = True; break
                         trajectory.append({"step": step, "event_type": "harness_escalation",   # operational write -> fail-closed
                                            "feedback": _hf.feedback, "status": "error"})
@@ -232,7 +240,7 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
         if action["type"] != "tool_call" or not action.get("tool"):
             trajectory.append({"step": step, "event_type": "agent_error", "error": "bad_action_type", "raw": str(action)[:200], "status": "error"})
             finished = True; break
-        if _env_budget_spent:   # P0-1/CONTRACT(2): tool budget exhausted -> allow ONLY a final turn; refuse new tools
+        if _env_budget_spent and not (getattr(deliv, "active", False) and deliv._missing(env)):   # but never block a still-required deliverable write
             _repair_turns += 1
             pending_harness_feedback = {"decision": "REVISE", "stage": "runtime_budget", "missing_obligations": [],
                 "reason": "Environment-action budget is exhausted. Do NOT call another tool; give your best "
