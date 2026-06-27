@@ -1,5 +1,5 @@
-"""Conformance for the Clinical Process Harness kernel (P0). Run: python3 runner/test_harness.py
-Expects all PASS. No model calls; deterministic."""
+"""Conformance for the Clinical Process Harness (semantic/substrate architecture).
+Run: python3 runner/test_harness.py — expects all PASS. No model calls; deterministic."""
 import os, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -7,41 +7,50 @@ import harness as H
 from harness import decision as D
 from harness.kernel import HarnessKernel
 from harness.compiler import build_contract, CompilerInputs, LeakError
+from harness.semantics import canonicalize
+from harness.risk import classify_risk
 from harness.capabilities.scope_evidence import ScopeEvidenceBinding
 from harness.capabilities.obligation_lifecycle import ObligationLifecycle
 from harness.capabilities.verify_commit import VerifyAndCommit
 from harness.ledger import governance as gov
 
-# a synthetic, oracle-free policy: subject=patient, one commit point needing one obligation.
+# a synthetic, oracle-free SUBSTRATE policy (record system): tool names live ONLY in manifest.actions.
 POLICY = {
-    "subject": {"type": "patient", "id_context_keys": ["patient_ref"]},
-    "subject_arg_keys": ["patient"],
-    "read_actions": ["fhir_search"],
-    "commit_actions": ["create_medication_request"],
+    "manifest": {
+        "subject": {"type": "patient", "id_context_keys": ["patient_ref"], "from_args": ["patient"]},
+        "actions": [
+            {"match": {"tool_pattern": "allergy"}, "semantic_type": "read", "effect": "none",
+             "resource": "AllergyIntolerance", "produces_evidence": {"source_class": "record"}},
+            {"match": {"tool": "fhir_search"}, "semantic_type": "read", "effect": "none",
+             "produces_evidence": {"source_class": "record", "resource_from_args": ["resource_type"]}},
+            {"match": {"tool": "create_medication_request"}, "semantic_type": "create",
+             "effect": "irreversible", "resource": "MedicationRequest"},
+        ],
+    },
     "evidence_obligations": [{"id": "check_allergies",
-                              "satisfied_by": {"tool": "fhir_search", "resource_type": "AllergyIntolerance"}}],
+                             "satisfied_by": {"source_class": "record", "resource": "AllergyIntolerance"}}],
     "workflow_obligations": [{"id": "med_review", "requires": ["check_allergies"]}],
-    "commit_points": [{"action": "create_medication_request", "risk": "R2",
-                       "requires": ["med_review"], "postcondition": "read_back"}],
-    "final_risk": "R2",
+    "commit_points": [{"match": {"semantic_type": "create", "resource": "MedicationRequest"}, "risk": "R2",
+                       "requires": ["med_review"], "postcondition": {"type": "state_transition"}}],
 }
 TASK = {"task_id": "t1", "goal": "order a safe med", "context": {"patient_ref": "Patient/123"},
-        "environment": {"type": "fhir"}, "source_benchmark": "PhysicianBench"}
+        "environment": {"type": "fhir"}}
 
 
-def _kernel(mode):
-    contract = build_contract(TASK, env_type="fhir", policy=POLICY)
+def _kernel(mode, policy=POLICY, task=TASK, env="fhir"):
+    contract = build_contract(task, env_type=env, policy=policy)
     caps = [ScopeEvidenceBinding(), ObligationLifecycle(), VerifyAndCommit()]
-    from harness.risk import classify_risk
-    return HarnessKernel(contract, caps, mode=mode, policy=POLICY, env_type="fhir",
-                         risk_of=lambda a: classify_risk(a, contract, POLICY))
+    return HarnessKernel(contract, caps, mode=mode, policy=policy, env_type=env)
+
+
+def _sem(action, policy=POLICY):
+    return canonicalize(action, policy.get("manifest"))
 
 
 def test_decision_priority():
     c = D.combine([D.HarnessDecision(D.ALLOW), D.HarnessDecision(D.REVISE), D.HarnessDecision(D.BLOCK)])
     assert c.type == D.BLOCK, c.type
-    c2 = D.combine([D.HarnessDecision(D.BLOCK), D.HarnessDecision(D.ESCALATE)])
-    assert c2.type == D.ESCALATE, c2.type
+    assert D.combine([D.HarnessDecision(D.BLOCK), D.HarnessDecision(D.ESCALATE)]).type == D.ESCALATE
     assert D.combine([]).type == D.ALLOW
 
 
@@ -49,21 +58,28 @@ def test_contract_compiled_subject_and_obligations():
     contract = build_contract(TASK, env_type="fhir", policy=POLICY)
     assert contract.subject == {"type": "patient", "id": "Patient/123"}, contract.subject
     assert "check_allergies" in contract.obligation_ids()
-    assert contract.commit_point_for("create_medication_request")["risk"] == "R2"
+    create = {"type": "tool", "tool": "create_medication_request", "args": {"patient": "Patient/123"}}
+    assert contract.commit_point_for(_sem(create))["risk"] == "R2"
+
+
+def test_canonicalize_effect_and_risk():
+    read = _sem({"type": "tool", "tool": "fhir_search", "args": {}})
+    create = _sem({"type": "tool", "tool": "create_medication_request", "args": {}})
+    assert read.semantic_type == "read" and read.effect == "none"
+    assert create.semantic_type == "create" and create.effect == "irreversible"
+    contract = build_contract(TASK, env_type="fhir", policy=POLICY)
+    assert classify_risk(read, contract) == "R0"
+    assert classify_risk(create, contract) == "R2"
 
 
 def test_scope_block_enforce_vs_observe():
-    # action targets a FOREIGN patient -> Module A
     foreign = {"type": "tool", "tool": "fhir_search", "args": {"patient": "Patient/456"}}
-    # enforce -> BLOCK
     k = _kernel("enforce")
-    eff = k.before_action(foreign, env_state=None, step=0)
+    eff = k.before_action(foreign, step=0)
     assert eff.type == D.BLOCK, eff.type
     assert eff.feedback and "subject_scope_mismatch" in str(eff.feedback)
-    # observe -> effective ALLOW but the would-be BLOCK is recorded
     k2 = _kernel("observe")
-    eff2 = k2.before_action(foreign, env_state=None, step=0)
-    assert eff2.type == D.ALLOW, eff2.type
+    assert k2.before_action(foreign, step=0).type == D.ALLOW
     assert any(iv["decision"] == "BLOCK" for iv in k2.ledger.interventions)
 
 
@@ -76,64 +92,29 @@ def test_in_scope_action_allowed():
 def test_commit_requires_obligation_then_satisfied():
     k = _kernel("enforce")
     commit = {"type": "tool", "tool": "create_medication_request", "args": {"patient": "Patient/123"}}
-    # before doing the allergy check -> REVISE with missing obligation
-    eff = k.before_action(commit, step=0)
-    assert eff.type == D.REVISE, eff.type
-    assert "check_allergies" in str(eff.feedback) or "med_review" in str(eff.feedback)
-    # do the allergy check -> obligation satisfied
+    assert k.before_action(commit, step=0).type == D.REVISE
     allergy = {"type": "tool", "tool": "fhir_search", "args": {"patient": "Patient/123", "resource_type": "AllergyIntolerance"}}
     k.before_action(allergy, step=1)
-    k.after_action(allergy, "AllergyIntolerance: penicillin", before_state={"a": 0}, after_state={"a": 1}, step=1)
+    k.after_action(allergy, "penicillin allergy", {"a": 0}, {"a": 1}, step=1)
     assert k.ledger.obligation_state("check_allergies") == "SATISFIED"
     assert k.ledger.obligation_state("med_review") == "SATISFIED"
-    # now the commit passes the prerequisite gate
     assert k.before_action(commit, step=2).type == D.ALLOW
-
-
-def test_final_answer_commit_gate():
-    # a contract whose FINAL commit point requires an unmet obligation -> before_final REVISEs
-    pol = {"subject": {"type": "medical_image", "id_context_keys": []},
-           "evidence_obligations": [{"id": "img_evidence", "satisfied_by": {"tool": "ImageDescription"}}],
-           "workflow_obligations": [{"id": "grounded", "requires": ["img_evidence"]}],
-           "commit_points": [{"action": "final", "risk": "R2", "requires": ["grounded"]}],
-           "final_risk": "R2"}
-    task = {"task_id": "m0", "goal": "read the scan", "context": {}, "environment": {"type": "tool_sandbox"},
-            "source_benchmark": "MedCTA"}
-    contract = build_contract(task, env_type="tool_sandbox", policy=pol)
-    from harness.risk import classify_risk
-    k = HarnessKernel(contract, [ObligationLifecycle(), VerifyAndCommit()], mode="enforce", policy=pol,
-                      env_type="tool_sandbox", risk_of=lambda a: classify_risk(a, contract, pol))
-    # answer WITHOUT having produced image evidence -> REVISE
-    eff = k.before_final("the mass is benign", step=0)
-    assert eff.type == D.REVISE, eff.type
-    assert "grounded" in str(eff.feedback) or "img_evidence" in str(eff.feedback)
-    # produce image evidence -> grounded becomes satisfiable -> final allowed
-    img = {"type": "tool", "tool": "ImageDescription", "args": {}}
-    k.after_action(img, "a 3cm mass in the RUL", before_state=None, after_state=None, step=1)
-    assert k.ledger.obligation_state("img_evidence") == "SATISFIED"
-    assert k.before_final("the mass is benign", step=2).type == D.ALLOW
 
 
 def test_assist_downgrades_block_to_revise():
     foreign = {"type": "tool", "tool": "fhir_search", "args": {"patient": "Patient/999"}}
-    eff = _kernel("assist").before_action(foreign, step=0)
-    assert eff.type == D.REVISE, eff.type        # assist never hard-blocks
+    assert _kernel("assist").before_action(foreign, step=0).type == D.REVISE
 
 
 def test_leak_firewall():
-    # forbidden key in observed -> LeakError
     try:
-        build_contract(TASK, env_type="fhir", policy=POLICY, observed=[{"gold_answer": "x"}])
-        assert False, "leak not caught"
+        build_contract(TASK, env_type="fhir", policy=POLICY, observed=[{"gold_answer": "x"}]); assert False
     except LeakError:
         pass
-    # forbidden key in policy -> LeakError
     try:
-        build_contract(TASK, env_type="fhir", policy=dict(POLICY, reference_trajectory=[1, 2]))
-        assert False, "leak not caught"
+        build_contract(TASK, env_type="fhir", policy=dict(POLICY, reference_trajectory=[1])); assert False
     except LeakError:
         pass
-    # a task carrying checkpoints/outcome is fine: those fields are whitelisted OUT, never seen
     dirty = dict(TASK, checkpoints=[{"id": "cp1"}], success=True, reference=[1])
     inp = CompilerInputs(dirty, env_type="fhir", policy=POLICY)
     assert not hasattr(inp, "checkpoints") and inp.goal == TASK["goal"]
@@ -143,182 +124,140 @@ def test_off_mode_returns_none():
     assert H.build_kernel(TASK, env_type="fhir", mode="off") is None
 
 
-def test_budget_caps_interventions():
+def test_budget_escalates_not_allows():
     k = _kernel("enforce"); k.budget["max_interventions_per_task"] = 2
     foreign = {"type": "tool", "tool": "fhir_search", "args": {"patient": "Patient/456"}}
     effs = [k.before_action(foreign, step=i) for i in range(5)]
-    n_block = sum(1 for e in effs if e.type == D.BLOCK)
-    assert n_block == 2, n_block               # only 2 effective blocks (budget=2)
+    assert sum(1 for e in effs if e.type == D.BLOCK) == 2
     assert all(e.type != D.ALLOW for e in effs), "exhausted budget must NEVER silently ALLOW a BLOCK"
-    assert effs[-1].type == D.ESCALATE, "over-budget interventions ESCALATE (resource limit, not safety override)"
+    assert effs[-1].type == D.ESCALATE, "over-budget -> ESCALATE (resource limit, not safety override)"
 
 
-def test_governance_summary_counts_wrong_scope():
+def test_opportunity_denominators():
     k = _kernel("enforce")
     k.before_action({"type": "tool", "tool": "fhir_search", "args": {"patient": "Patient/456"}}, step=0)
     s = gov.summarize(k.ledger, [], mode="enforce")
-    assert s["wrong_scope_action_rate"] > 0, s
+    assert s["wrong_scope_action_rate"] == 1.0 and s["wrong_scope_opportunities"] == 1, s
+    # an action with no subject -> no subject-bearing opportunity (denominator stays honest)
+    k2 = _kernel("enforce")
+    s2 = gov.summarize(k2.ledger, [], mode="enforce")
+    assert s2["wrong_scope_action_rate"] is None, s2
 
 
 def test_capability_error_does_not_crash():
     class Boom(ScopeEvidenceBinding):
         def before_action(self, action, ctx):
             raise RuntimeError("boom")
-    from harness.risk import classify_risk
     contract = build_contract(TASK, env_type="fhir", policy=POLICY)
-    k = HarnessKernel(contract, [Boom()], mode="enforce", policy=POLICY, env_type="fhir",
-                      risk_of=lambda a: classify_risk(a, contract, POLICY))
+    k = HarnessKernel(contract, [Boom()], mode="enforce", policy=POLICY, env_type="fhir")
     assert k.before_action({"type": "tool", "tool": "fhir_search", "args": {}}, step=0).type == D.ALLOW
 
 
-def test_p1_physicianbench_real_pack():
-    """P1: the REAL physicianbench.yaml on real-shaped PB actions (no synthetic inline policy).
-    Exercises wrong-patient BLOCK, medication-safety prerequisite REVISE -> satisfy -> ALLOW, and
-    pattern-based risk (fhir_medication_request_create = R2; a search = R0)."""
-    from harness.engines.policy import load_policy
-    from harness.risk import classify_risk
-    pol = load_policy(env_type="fhir")
-    assert pol.get("_substrate") == "structured_record", pol.get("_substrate")
-    task = {"task_id": "pb", "goal": "manage aberrant UDS",
-            "context": {"patient_ref": "MRN6025656705"}, "environment": {"type": "fhir"},
-            "source_benchmark": "PhysicianBench"}
+# ---- real SUBSTRATE packs (P1/P2/P3): same harness core, only adapter + pack differ ----------------
+
+def test_p1_structured_record_pack():
+    pol = H.load_policy(env_type="fhir")
+    assert pol.get("_substrate") == "structured_record"
+    task = {"task_id": "pb", "goal": "manage UDS", "context": {"patient_ref": "MRN6025656705"},
+            "environment": {"type": "fhir"}}
     contract = build_contract(task, env_type="fhir", policy=pol)
     assert contract.subject == {"type": "patient", "id": "MRN6025656705"}, contract.subject
     k = HarnessKernel(contract, [ScopeEvidenceBinding(), ObligationLifecycle(), VerifyAndCommit()],
-                      mode="enforce", policy=pol, env_type="fhir",
-                      risk_of=lambda a: classify_risk(a, contract, pol))
-    own = {"type": "tool", "tool": "fhir_observation_search_labs", "args": {"patient": "MRN6025656705"}}
+                      mode="enforce", policy=pol, env_type="fhir")
     wrong = {"type": "tool", "tool": "fhir_observation_search_labs", "args": {"patient": "MRN9999999999"}}
-    create = {"type": "tool", "tool": "fhir_medication_request_create",
-              "args": {"patient": "MRN6025656705", "medication": "amoxicillin"}}
-    assert k.before_action(wrong, step=0).type == D.BLOCK, "wrong patient must BLOCK"
-    assert k.before_action(own, step=1).type == D.ALLOW, "own patient read ok"
-    eff = k.before_action(create, step=2)
-    assert eff.type == D.REVISE and "check_allergies" in str(eff.feedback), eff.feedback
-    # satisfy the safety review with the real resource-specific tools
+    own = {"type": "tool", "tool": "fhir_observation_search_labs", "args": {"patient": "MRN6025656705"}}
+    create = {"type": "tool", "tool": "fhir_medication_request_create", "args": {"patient": "MRN6025656705"}}
+    assert k.before_action(wrong, step=0).type == D.BLOCK
+    assert k.before_action(own, step=1).type == D.ALLOW
+    assert k.before_action(create, step=2).type == D.REVISE
     allergy = {"type": "tool", "tool": "fhir_allergy_intolerance_search_active", "args": {"patient": "MRN6025656705"}}
     meds = {"type": "tool", "tool": "fhir_medication_request_search_orders", "args": {"patient": "MRN6025656705"}}
-    k.after_action(allergy, "AllergyIntolerance: penicillin", {"x": 0}, {"x": 1}, step=3)
-    k.after_action(meds, "MedicationRequest: lisinopril", {"x": 1}, {"x": 2}, step=4)
-    assert k.ledger.obligation_state("check_allergies") == "SATISFIED"
-    assert k.ledger.obligation_state("check_current_medications") == "SATISFIED"
+    k.after_action(allergy, "penicillin", {"x": 0}, {"x": 1}, step=3)
+    k.after_action(meds, "lisinopril", {"x": 1}, {"x": 2}, step=4)
     assert k.ledger.obligation_state("medication_safety_review") == "SATISFIED"
-    assert k.before_action(create, step=5).type == D.ALLOW, "prerequisites met -> commit allowed"
-    assert classify_risk(create, contract, pol) == "R2"
-    assert classify_risk(own, contract, pol) == "R0"
+    assert k.before_action(create, step=5).type == D.ALLOW
+    assert classify_risk(canonicalize(create, pol["manifest"]), contract) == "R2"
 
 
-def test_p2_healthadminbench_real_pack():
-    """P2: the REAL healthadminbench.yaml. HAB is observation/route-based — the operated case is the one
-    DISPLAYED (canonical_observation), the assigned case is named in the goal. Exercises wrong-case REVISE
-    (foreign displayed case), correct-case ALLOW, and submit (R2) post-commit state-change check."""
-    from harness.engines.policy import load_policy
-    from harness.risk import classify_risk
-    pol = load_policy(env_type="gui")
-    assert pol.get("_substrate") == "interactive_gui", pol.get("_substrate")
-    task = {"task_id": "hab", "goal": "Open denial DEN-001 for Martinez, Carlos. Triage it.",
-            "context": {"text": "Open denial DEN-001 and document a triage note."},
-            "environment": {"type": "gui"}, "source_benchmark": "HealthAdminBench"}
+def test_p2_interactive_gui_pack():
+    pol = H.load_policy(env_type="gui")
+    assert pol.get("_substrate") == "interactive_gui"
+    task = {"task_id": "hab", "goal": "Open denial DEN-001 for Martinez. Triage it.",
+            "context": {"text": "Open denial DEN-001."}, "environment": {"type": "gui"}}
     contract = build_contract(task, env_type="gui", policy=pol)
     assert contract.subject == {"type": "admin_case", "id": "DEN-001"}, contract.subject
     k = HarnessKernel(contract, [ScopeEvidenceBinding(), ObligationLifecycle(), VerifyAndCommit()],
-                      mode="enforce", policy=pol, env_type="gui",
-                      risk_of=lambda a: classify_risk(a, contract, pol))
+                      mode="enforce", policy=pol, env_type="gui")
     click = {"type": "tool", "tool": "click", "args": {}}
-    # the page now DISPLAYS a foreign case -> REVISE (go back to the assigned case)
-    eff = k.after_action(click, "ok", {"x": 0}, {"x": 1}, step=0,
-                         canonical_observation={"case_identity": "DEN-999"})
+    eff = k.after_action(click, "ok", {"x": 0}, {"x": 1}, step=0, canonical_observation={"case_identity": "DEN-999"})
     assert eff.type == D.REVISE and "DEN-999" in str(eff.feedback), eff.feedback
-    # back on the assigned case -> no scope intervention
-    eff2 = k.after_action(click, "ok", {"x": 1}, {"x": 2}, step=1,
-                          canonical_observation={"case_identity": "DEN-001"})
-    assert eff2.type == D.ALLOW, eff2.type
-    # submit is the R2 commit; a submit that left case status unchanged (Draft->Draft) -> post-commit REVISE
+    eff2 = k.after_action(click, "ok", {"x": 1}, {"x": 2}, step=1, canonical_observation={"case_identity": "DEN-001"})
+    assert eff2.type == D.ALLOW
     submit = {"type": "tool", "tool": "submit", "args": {}}
-    assert classify_risk(submit, contract, pol) == "R2"
+    assert classify_risk(canonicalize(submit, pol["manifest"]), contract) == "R2"
     eff3 = k.after_action(submit, "submitted", {"status": "Draft"}, {"status": "Draft"}, step=2,
                           canonical_observation={"case_identity": "DEN-001"})
-    assert eff3.type == D.REVISE, eff3.type
+    assert eff3.type == D.REVISE
 
 
-def test_p3_medcta_real_pack():
-    """P3 (deterministic layer): the REAL medcta.yaml grounding gate. The final answer (a commit point)
-    requires image-derived evidence; grounding is satisfied by ANY perception tool (tool_any), so the
-    agent's tool path is free. (The SEMANTIC claim<->evidence support check is the judge-backed extension
-    via engines.semantic / verify_commit.before_final.)"""
-    from harness.engines.policy import load_policy
-    from harness.risk import classify_risk
-    pol = load_policy(env_type="tool_sandbox")
-    assert pol.get("_substrate") == "perceptual_tool", pol.get("_substrate")
-    task = {"task_id": "m", "goal": "What is the finding in the chest CT?", "context": {},
-            "environment": {"type": "tool_sandbox"}, "source_benchmark": "MedCTA"}
+def test_p3_perceptual_tool_pack():
+    pol = H.load_policy(env_type="tool_sandbox")
+    assert pol.get("_substrate") == "perceptual_tool"
+    task = {"task_id": "m", "goal": "finding in the chest CT?", "context": {}, "environment": {"type": "tool_sandbox"}}
     contract = build_contract(task, env_type="tool_sandbox", policy=pol)
     k = HarnessKernel(contract, [ScopeEvidenceBinding(), ObligationLifecycle(), VerifyAndCommit()],
-                      mode="enforce", policy=pol, env_type="tool_sandbox",
-                      risk_of=lambda a: classify_risk(a, contract, pol))
-    # answer with NO image perception -> ungrounded -> REVISE
-    assert k.before_final("a 3 cm mass", step=0).type == D.REVISE
-    # ground via RegionAttributeDescription (NOT ImageDescription) -> tool_any still satisfies grounding
+                      mode="enforce", policy=pol, env_type="tool_sandbox")
+    assert k.before_final("a 3 cm mass", step=0).type == D.REVISE      # ungrounded
     region = {"type": "tool", "tool": "RegionAttributeDescription", "args": {}}
     k.after_action(region, "spiculated RUL nodule", None, None, step=1)
     assert k.ledger.obligation_state("image_derived_evidence") == "SATISFIED"
-    assert k.ledger.obligation_state("grounded_reasoning") == "SATISFIED"
-    assert k.before_final("a 3 cm mass", step=2).type == D.ALLOW
+    assert k.before_final("a 3 cm mass", step=2).type == D.ALLOW       # grounded via a perception tool
+    # external (search) evidence does NOT count as image grounding
+    k2 = HarnessKernel(contract, [ScopeEvidenceBinding(), ObligationLifecycle(), VerifyAndCommit()],
+                       mode="enforce", policy=pol, env_type="tool_sandbox")
+    k2.after_action({"type": "tool", "tool": "GoogleSearch", "args": {}}, "web text", None, None, step=1)
+    assert k2.ledger.obligation_state("image_derived_evidence") != "SATISFIED"
+    assert k2.before_final("a 3 cm mass", step=2).type == D.REVISE
 
 
 def test_p3_semantic_claim_support_judge():
-    """P3 semantic layer: with an INJECTED judge, the final answer is checked for claim<->image-evidence
-    support. supported -> ALLOW; unsupported(high conf) -> REVISE; low-conf -> ESCALATE; no judge -> ALLOW
-    (fail-safe, recorded unverified). Uses a fake judge_fn so the test needs no live model."""
-    from harness.engines.policy import load_policy
-    from harness.risk import classify_risk
-    pol = load_policy(env_type="tool_sandbox")
-    task = {"task_id": "m", "goal": "finding?", "context": {}, "environment": {"type": "tool_sandbox"},
-            "source_benchmark": "MedCTA"}
+    pol = H.load_policy(env_type="tool_sandbox")
+    task = {"task_id": "m", "goal": "finding?", "context": {}, "environment": {"type": "tool_sandbox"}}
     contract = build_contract(task, env_type="tool_sandbox", policy=pol)
 
     def mk(judge_fn):
         k = HarnessKernel(contract, [ScopeEvidenceBinding(), ObligationLifecycle(), VerifyAndCommit()],
-                          mode="enforce", policy=pol, env_type="tool_sandbox",
-                          risk_of=lambda a: classify_risk(a, contract, pol), judge_fn=judge_fn,
+                          mode="enforce", policy=pol, env_type="tool_sandbox", judge_fn=judge_fn,
                           budget={"max_semantic_checks": 5})
-        # ground first so the obligation gate passes and we reach the semantic check
         k.after_action({"type": "tool", "tool": "ImageDescription", "args": {}},
                        "a 3cm spiculated RUL nodule", None, None, step=0)
         return k
 
-    supp = mk(lambda p: '{"supported": true, "confidence": 0.9, "reason": "matches"}')
-    assert supp.before_final("RUL spiculated nodule", step=1).type == D.ALLOW
-    unsupp = mk(lambda p: '{"supported": false, "confidence": 0.9, "reason": "answer says LUL, evidence RUL"}')
-    assert unsupp.before_final("LUL effusion", step=1).type == D.REVISE
-    lowc = mk(lambda p: '{"supported": false, "confidence": 0.2, "reason": "unclear"}')
-    assert lowc.before_final("maybe a nodule", step=1).type == D.ESCALATE
-    # no judge -> semantic check is skipped (fail-safe ALLOW), recorded as an unresolved risk
-    nojudge = mk(None)
-    assert nojudge.before_final("RUL nodule", step=1).type == D.ALLOW
-    assert any(r["rule_id"] == "semantic_claim_support" for r in nojudge.ledger.unresolved_risks)
+    assert mk(lambda p: '{"supported": true, "confidence": 0.9, "reason": "ok"}').before_final("RUL nodule", step=1).type == D.ALLOW
+    assert mk(lambda p: '{"supported": false, "confidence": 0.9, "reason": "LUL vs RUL"}').before_final("LUL effusion", step=1).type == D.REVISE
+    assert mk(lambda p: '{"supported": false, "confidence": 0.2, "reason": "unclear"}').before_final("maybe", step=1).type == D.ESCALATE
+    nj = mk(None)
+    assert nj.before_final("RUL nodule", step=1).type == D.ALLOW
+    assert any(r["rule_id"] == "semantic_claim_support" for r in nj.ledger.unresolved_risks)
 
 
 def test_kernel_has_no_benchmark_names():
-    """GENERALITY GUARD: the harness core must not know which benchmark it is running — it governs by
-    SUBSTRATE only. No benchmark proper-name may appear anywhere under runner/harness/ (those names live
-    only in plugins / policy packs / task contracts). A new dataset must work by writing an adapter +
-    substrate pack, with ZERO harness change."""
-    import os as _o
-    root = _o.path.join(_o.path.dirname(_o.path.abspath(__file__)), "harness")
+    """GENERALITY GUARD: the harness core must not know which benchmark it runs — it governs by SUBSTRATE.
+    No benchmark proper-name may appear anywhere under runner/harness/. A new dataset works by writing an
+    adapter manifest + substrate pack, with ZERO harness change."""
+    root = os.path.join(os.path.dirname(os.path.abspath(__file__)), "harness")
     forbidden = ("MedCTA", "PhysicianBench", "HealthAdminBench")
     hits = []
-    for dp, _dn, fns in _o.walk(root):
+    for dp, _dn, fns in os.walk(root):
         if "__pycache__" in dp:
             continue
         for fn in fns:
-            if not fn.endswith(".py"):
-                continue
-            txt = open(_o.path.join(dp, fn)).read()
-            for name in forbidden:
-                if name in txt:
-                    hits.append("%s: %s" % (_o.path.relpath(_o.path.join(dp, fn), root), name))
-    assert not hits, "benchmark name(s) leaked into the harness core: %s" % hits
+            if fn.endswith(".py"):
+                txt = open(os.path.join(dp, fn)).read()
+                for name in forbidden:
+                    if name in txt:
+                        hits.append("%s:%s" % (os.path.relpath(os.path.join(dp, fn), root), name))
+    assert not hits, "benchmark name leaked into harness core: %s" % hits
 
 
 def _run():

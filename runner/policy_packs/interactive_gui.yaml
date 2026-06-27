@@ -1,33 +1,28 @@
-# HealthAdminBench policy pack (P2). HAB is GUI/route-based: the agent clicks/types through a real
-# portal, so the OPERATED-ON case is the one DISPLAYED (read from canonical_observation), not an action
-# arg. Built on the same structured signals the scorer uses (case_identity / patient_id / subject_token).
-# Verified against real HAB traces: tools click/type/select/upload/submit/navigate; the assigned case
-# (e.g. DEN-001) is named in the task goal/context.text; the operated case shows up in the observation.
+# SUBSTRATE: interactive GUI workflow (web / desktop portal). The operated-on object is the one DISPLAYED
+# (read from canonical_observation), not an action arg. Tool names live ONLY in manifest.actions.
 
-subject:
-  type: admin_case
-  id_context_keys: [case_id, authorization_id, appeal_id]
-  # the assigned case is the operand named in the task goal/context text (task-visible, not gold):
-  id_goal_regex: '([A-Z]{2,5}-\d+)'
+manifest:
+  subject:
+    type: admin_case
+    from_goal_regex: '([A-Z]{2,5}-\d+)'                       # assigned case named in the task goal
+    from_observation: [case_identity, patient_id, subject_token]   # operated case = the displayed one
+  actions:
+    - match: {tool_any: [navigate, click, select]}
+      semantic_type: inspect
+      effect: none
+      produces_evidence: {source_class: interface, modality: administrative}
+    - match: {tool_any: [type, upload]}
+      semantic_type: update
+      effect: reversible
+    - match: {tool_any: [submit, send_appeal, change_case_status, upload_final_document]}
+      semantic_type: submit
+      effect: irreversible
 
-# GUI actions carry no case arg; the OPERATED case is read from the observation (Module A after_action).
-subject_arg_keys: []
-subject_observation_keys: [case_identity, patient_id, subject_token]
-
-read_actions: [navigate, click, select]
-reversible_actions: [type, upload]
-commit_actions: [submit, send_appeal, change_case_status, upload_final_document]
-
-# submit is the high-risk commit; the case must actually leave Draft afterward (deterministic state
-# floor now; the structured case_status read-back is the P2 postcondition verifier).
-commit_points:
-  - action: submit
-    risk: R2
-    requires: []                # workflow-stage obligations (eligibility / materials) need full_state
-                                # signal mapping -> P2 refinement; left empty to avoid unsatisfiable over-block.
-    postcondition: case_status_not_draft
-
-# evidence_obligations / workflow_obligations: P2 refinement once HAB full_state signals
-# (signals.viewedDocuments, eligibilityChecks, ...) are mapped to obligation satisfaction.
-evidence_obligations: []
+evidence_obligations: []        # workflow-stage obligations need full_state signal mapping -> refinement
 workflow_obligations: []
+
+commit_points:
+  - match: {semantic_type: submit}
+    risk: R2
+    requires: []
+    postcondition: {type: case_status_not_draft}   # submit must change workflow state (state floor)

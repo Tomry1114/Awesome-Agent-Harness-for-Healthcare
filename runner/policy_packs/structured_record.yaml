@@ -1,37 +1,58 @@
-# PhysicianBench policy pack (P1) — built on the REAL structured runtime signals, no keyword tricks:
-#   assigned subject  = task.context.patient_ref            (task-visible operand, MRN; NOT a gold answer)
-#   operated subject  = action.args.patient / subject / ... (the same _SUBJECT_KEYS the scorer uses)
-#   tool identity      = the resource-specific FHIR tool name (fhir_<resource>_<op>_<view>)
-# Verified against real PB traces: tools fhir_<r>_search_*, fhir_medication_request_create, args.patient=MRN.
+# SUBSTRATE: structured record system (EHR / DB / resource API). PUBLIC, oracle-free.
+#   manifest = the ADAPTER layer: maps raw tool names -> canonical semantics. This is the ONLY place tool
+#              names appear. The harness core never sees them.
+#   evidence/workflow obligations + commit points = the policy, expressed in CAPABILITY terms
+#              (source_class / resource / semantic_type / effect) — no tool names.
 
-subject:
-  type: patient
-  id_context_keys: [patient_ref, patient_id, patient, subject_ref]
-
-# Module A scope check: the operated-on patient id lives in these structured action args.
-subject_arg_keys: [patient, subject, subject_ref, patient_ref, patient_id, subject_id]
-
-# R0 read / R1 reversible / R2 commit — declared by tool-name pattern (the tool name IS the structured
-# resource+operation identity). Declared commits are authoritative; keyword fallback never decides these.
-read_actions: [fhir_search, fhir_read, _search_, get_lab_reference_range]
-reversible_actions: [write_file]
-commit_actions: [_create, fhir_create]
+manifest:
+  subject:
+    type: patient
+    id_context_keys: [patient_ref, patient_id, patient]      # structured context -> assigned subject
+    from_args: [patient, subject, subject_ref, patient_ref, patient_id, subject_id]   # operated subject
+  actions:
+    # resource-specific reads first (they tag the evidence resource); then generic read; then writes.
+    - match: {tool_pattern: allergy}
+      semantic_type: read
+      effect: none
+      resource: AllergyIntolerance
+      produces_evidence: {source_class: record, modality: record}
+    - match: {tool_pattern: medication_request_search}
+      semantic_type: read
+      effect: none
+      resource: MedicationRequest
+      produces_evidence: {source_class: record, modality: record}
+    - match: {tool_pattern: _search}
+      semantic_type: read
+      effect: none
+      produces_evidence: {source_class: record, modality: record}
+    - match: {tool_pattern: _read}
+      semantic_type: read
+      effect: none
+      produces_evidence: {source_class: record, modality: record}
+    - match: {tool_pattern: medication_request_create}      # the high-risk commit (no evidence binding)
+      semantic_type: create
+      effect: irreversible
+      resource: MedicationRequest
+    - match: {tool_pattern: _create}
+      semantic_type: create
+      effect: irreversible
+    - match: {tool: write_file}
+      semantic_type: update
+      effect: reversible
 
 evidence_obligations:
   - id: check_allergies
-    satisfied_by: {tool_pattern: allergy}                 # fhir_allergy_intolerance_search_*
+    satisfied_by: {source_class: record, resource: AllergyIntolerance}
   - id: check_current_medications
-    satisfied_by: {tool_pattern: medication_request_search}
+    satisfied_by: {source_class: record, resource: MedicationRequest}
 
 workflow_obligations:
   - id: medication_safety_review
     requires: [check_allergies, check_current_medications]
 
 commit_points:
-  # creating a medication order is the high-risk commit: requires the safety review first, and the
-  # created resource must be read back (postcondition verified deterministically + by read-back in P1).
-  - action_pattern: medication_request_create
+  - match: {semantic_type: create, resource: MedicationRequest}
     risk: R2
     requires: [medication_safety_review]
     requires_rule: medication_requires_safety_review
-    postcondition: created_resource_read_back
+    postcondition: {type: state_transition}      # the created resource changed the record (read-back floor)

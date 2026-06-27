@@ -39,18 +39,21 @@ class Capability:
 class HarnessContext:
     """What every capability + the kernel share for one task."""
     __slots__ = ("ledger", "contract", "policy", "mode", "step", "env_type", "risk_of", "observation",
-                 "judge_fn", "judge_model", "semantic_remaining")
+                 "judge_fn", "judge_model", "semantic_remaining", "manifest", "sem", "risk")
 
     def __init__(self, ledger, contract, policy, mode, env_type=None, risk_of=None,
-                 judge_fn=None, judge_model=None, semantic_budget=0):
+                 judge_fn=None, judge_model=None, semantic_budget=0, manifest=None):
         self.ledger = ledger
         self.contract = contract
         self.policy = policy or {}
         self.mode = mode
         self.step = 0
         self.env_type = env_type
-        self.risk_of = risk_of      # callable(action) -> "R0".."R3"
+        self.risk_of = risk_of      # legacy; the kernel now sets ctx.sem + ctx.risk per action
         self.observation = None     # canonical_observation of the most recent action (after_action only)
+        self.manifest = manifest or {}   # substrate manifest (adapter layer); tool->semantic mapping
+        self.sem = None             # SemanticAction of the current action (set by the kernel)
+        self.risk = None            # risk tier of the current action (set by the kernel)
         self.judge_fn = judge_fn    # injected judge: callable(prompt:str) -> str|None (INDEPENDENT model)
         self.judge_model = judge_model
         self.semantic_remaining = int(semantic_budget or 0)

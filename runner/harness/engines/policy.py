@@ -21,10 +21,8 @@ _SUBSTRATE_BY_ENV = {
 
 # minimal safe defaults if no pack file is present (keeps the kernel runnable out of the box).
 COMMON_DEFAULTS = {
-    "subject": {"type": None, "id_context_keys": []},
-    "subject_arg_keys": [], "read_actions": [], "reversible_actions": [], "commit_actions": [],
+    "manifest": {"subject": {}, "actions": []},
     "evidence_obligations": [], "workflow_obligations": [], "commit_points": [],
-    "final_risk": "R2",
 }
 
 

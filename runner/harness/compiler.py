@@ -80,29 +80,13 @@ class ContractCompiler:
                   "compiled_from": "substrate_policy_pack"})
 
     def _resolve_subject(self, inputs, policy):
-        """Subject = the operation target, read from task-visible context via the policy pack's
-        `subject` spec (type + which context key holds the id). Oracle-blind: only reads context."""
-        spec = policy.get("subject") or {}
-        stype = spec.get("type")
-        ctx = inputs.context or {}
-        sid = None
-        for key in (spec.get("id_context_keys") or []):
-            if ctx.get(key):
-                sid = ctx.get(key); break
-        if sid is None and isinstance(inputs.observed, list):
-            # fall back to the first explicitly-assigned subject the agent has already observed
-            for ev in inputs.observed:
-                if isinstance(ev, dict) and ev.get("assigned_subject"):
-                    sid = ev["assigned_subject"]; break
-        if sid is None and spec.get("id_goal_regex"):
-            # declared extraction of the ASSIGNED operand from task-visible goal/context text (e.g. a case
-            # id a GUI task names in its goal). This reads the operand, never a gold answer.
-            import re
-            hay = " ".join(str(x) for x in (inputs.goal, ctx.get("text")) if x)
-            m = re.search(spec["id_goal_regex"], hay)
-            if m:
-                sid = m.group(1) if m.groups() else m.group(0)
-        return {"type": stype, "id": sid} if (stype or sid) else None
+        """The ASSIGNED subject (operand) via the SUBSTRATE MANIFEST's declared extraction (structured
+        context key / observed assignment / goal regex). Oracle-blind: reads only task-visible info."""
+        from .semantics import assigned_subject
+        manifest = policy.get("manifest") or {}
+        stype = (manifest.get("subject") or {}).get("type")
+        sid = assigned_subject(manifest, goal=inputs.goal, context=inputs.context, observed=inputs.observed)
+        return {"type": stype, "id": (str(sid) if sid is not None else None)} if (stype or sid) else None
 
 
 def build_contract(task, env_type=None, capabilities=None, observed=None, policy=None):

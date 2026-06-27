@@ -1,29 +1,39 @@
-# MedCTA policy pack (P3 target — evidence/grounding-heavy). Templates; verified in P3.
-# IMPORTANT: do NOT hard-code "must call crop" / "must call OCR". The obligation is OUTCOME-shaped:
-# a key visual claim in the final answer must be backed by image-derived evidence — this leaves the
-# agent's tool path free.
+# SUBSTRATE: perceptual tool environment (image / pathology / video). Grounding = the final answer must
+# be backed by PERCEPTION-class evidence (any perception tool), not a specific tool. Tool names live ONLY
+# in manifest.actions; the obligation is expressed by evidence modality/source_class.
 
-subject:
-  type: medical_image
-  id_context_keys: [image_id, series_id, image, region_id]
-
-subject_arg_keys: [image_id, image, region_id, series_id]
-
-read_actions: [ImageDescription, RegionAttributeDescription, OCR, GoogleSearch, Calculator]
-reversible_actions: []
-commit_actions: []           # MedCTA's only commit is the final answer
+manifest:
+  subject:
+    type: perceptual_artifact
+    id_context_keys: [image_id, series_id, image, region_id]
+    from_args: [image_id, image, region_id, series_id]
+  actions:
+    - match: {tool_any: [ImageDescription, RegionAttributeDescription, OCR]}
+      semantic_type: inspect
+      effect: none
+      produces_evidence: {source_class: perception, modality: image}
+    - match: {tool: GoogleSearch}
+      semantic_type: read
+      effect: none
+      produces_evidence: {source_class: external, modality: external_text}   # NOT image -> cannot ground
+    - match: {tool: Calculator}
+      semantic_type: read
+      effect: none
+      produces_evidence: {source_class: computation, modality: computation}
+    - match: {type: final}
+      semantic_type: answer
+      effect: irreversible
 
 evidence_obligations:
-  # grounding = the agent used ANY image-perception capability (not a specific hard-coded tool).
   - id: image_derived_evidence
-    satisfied_by: {tool_any: [ImageDescription, RegionAttributeDescription, OCR]}
+    satisfied_by: {source_class: perception, modality: image}   # any perception evidence about the image
 
 workflow_obligations:
   - id: grounded_reasoning
     requires: [image_derived_evidence]
 
 commit_points:
-  - action: final
+  - match: {semantic_type: answer}
     risk: R2
     requires: [grounded_reasoning]
-    postcondition: key_claims_supported_by_image_evidence
+    postcondition: {type: key_claims_supported_by_image_evidence}   # semantic claim<->evidence (judge)

@@ -25,17 +25,22 @@ class ClinicalProcessContract:
         return ([o.get("id") for o in self.evidence_obligations if o.get("id")] +
                 [o.get("id") for o in self.workflow_obligations if o.get("id")])
 
-    def commit_point_for(self, action_name):
-        """Match a commit point by exact `action` OR by `action_pattern` (a substring of the tool NAME —
-        the tool name IS the structured resource/operation identity, e.g. 'fhir_medication_request_create').
-        Exact match wins over pattern."""
-        name = action_name or ""
+    def commit_point_for(self, sem):
+        """Match a commit point by the canonical SemanticAction (NOT a tool name). A commit point declares
+        `match: {effect: irreversible}` and/or `{semantic_type: submit}` and/or `{resource: ...}`; every
+        declared field must equal the action's. (If `match` is absent, an `effect: irreversible` action
+        matches a bare commit point.)"""
         for cp in self.commit_points:
-            if cp.get("action") and cp["action"] == name:
-                return cp
-        for cp in self.commit_points:
-            pat = cp.get("action_pattern")
-            if pat and pat in name:
+            m = cp.get("match")
+            if m is None:
+                if getattr(sem, "is_commit", lambda: False)():
+                    return cp
+                continue
+            ok = True
+            for field in ("semantic_type", "effect", "resource"):
+                if field in m and m[field] != getattr(sem, field, None):
+                    ok = False; break
+            if ok:
                 return cp
         return None
 

@@ -43,13 +43,15 @@ class HarnessKernel:
         self.policy = policy or {}
         self.env_type = env_type
         self.risk_of = risk_of
+        self.manifest = (policy or {}).get("manifest") or {}   # substrate adapter manifest
         self.budget = dict(_DEFAULT_BUDGET); self.budget.update(budget or {})
         self.ledger = Ledger()
         if contract is not None and contract.subject:
             self.ledger.set_subject(contract.subject)
         self.ctx = HarnessContext(self.ledger, contract, self.policy, mode, env_type, risk_of,
                                   judge_fn=judge_fn, judge_model=judge_model,
-                                  semantic_budget=self.budget["max_semantic_checks"])
+                                  semantic_budget=self.budget["max_semantic_checks"],
+                                  manifest=self.manifest)
         self._n_interventions = 0
         self._n_semantic = 0
         self._rev_for_action = {}
@@ -101,12 +103,21 @@ class HarnessKernel:
         return Effective(eff, feedback=decision.feedback, raw=decision, events=[ev])
 
     # ---- public hooks --------------------------------------------------------
+    def _canon(self, action, observation=None):
+        from .semantics import canonicalize
+        from .risk import classify_risk
+        sem = canonicalize(action, self.manifest, observation=observation)
+        self.ctx.sem = sem
+        self.ctx.risk = classify_risk(sem, self.contract)
+        return sem
+
     def before_action(self, action, env_state=None, step=0):
         self.ctx.step = step
-        risk = self.risk_of(action) if self.risk_of else None
-        pid = self.ledger.record_proposed(_action_name(action), risk, step)
+        sem = self._canon(action)
+        risk = self.ctx.risk
+        pid = self.ledger.record_proposed(sem.capability, risk, step)
         from .risk import at_least, R2
-        if risk and at_least(risk, R2):
+        if at_least(risk, R2):
             self.ledger.bump_opportunity("commit_proposal")   # denominator for missing_prerequisite_rate
         decisions = []
         for cap in self.capabilities:
@@ -126,6 +137,7 @@ class HarnessKernel:
     def after_action(self, action, result, before_state, after_state, step=0, canonical_observation=None):
         self.ctx.step = step
         self.ctx.observation = canonical_observation
+        sem = self._canon(action, observation=canonical_observation)
         decisions = []
         for cap in self.capabilities:
             try:
@@ -136,10 +148,9 @@ class HarnessKernel:
                 d.stage = "after_action"
                 decisions.append(d)
         winner = D.combine(decisions, stage="after_action")
-        risk = self.risk_of(action) if self.risk_of else None
         from .risk import at_least, R2
-        if risk and at_least(risk, R2):
-            self.ledger.record_commit(_action_name(action), step,
+        if at_least(self.ctx.risk, R2):
+            self.ledger.record_commit(sem.capability, step,
                                       verified=(winner.type == D.ALLOW),
                                       detail=winner.reason)
         eff = self._apply_mode(winner, "after_action")
@@ -147,6 +158,8 @@ class HarnessKernel:
         return eff
 
     def before_final(self, answer, step=0):
+        self.ctx.step = step
+        self._canon({"type": "final", "answer": answer})
         decisions = []
         for cap in self.capabilities:
             try:
