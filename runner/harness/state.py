@@ -19,7 +19,10 @@ class Ledger:
         self.obligations = {}               # id -> {"state","kind","requires","satisfied_by","note","event_ids"}
         self.workflow_state = {}            # free-form per-substrate (stages reached, etc.)
         self.proposed_actions = []          # [{"id","action","risk","step"}]
-        self.interventions = []             # [harness_decision dicts that were REVISE/BLOCK/ESCALATE]
+        self.interventions = []             # [WINNER harness_decision per hook + its effective outcome]
+        self.findings = []                  # [EVERY non-ALLOW capability finding, deduped] — metric numerators
+                                            # come from here so a lower-priority finding (e.g. missing_prereq)
+                                            # is not erased when a higher one (e.g. wrong_scope) wins the hook.
         self.commit_history = []            # [{"action","step","verified":bool,...}]
         self.unresolved_risks = []          # [{"rule_id","reason","risk"}]
         # per-metric OPPORTUNITY counts (denominators): each metric is rate = numerator / its own
@@ -84,6 +87,13 @@ class Ledger:
     def record_intervention(self, decision_dict):
         self.interventions.append(decision_dict)
 
+    def record_finding(self, finding):
+        """Record one capability finding (deduped by proposal+reason_code+capability) for metric numerators."""
+        key = (finding.get("action_key"), finding.get("reason_code"), finding.get("capability"))
+        if any((f.get("action_key"), f.get("reason_code"), f.get("capability")) == key for f in self.findings):
+            return
+        self.findings.append(finding)
+
     def record_proposed(self, action, risk, step):
         pid = "action-%d" % (len(self.proposed_actions) + 1)
         self.proposed_actions.append({"id": pid, "action": action, "risk": risk, "step": step})
@@ -97,7 +107,7 @@ class Ledger:
 
     # ---- audit ---------------------------------------------------------------
     def to_dict(self):
-        return {"active_subject": self.active_subject, "evidence": self.evidence,
+        return {"active_subject": self.active_subject, "evidence": self.evidence, "findings": self.findings,
                 "obligations": self.obligations, "workflow_state": self.workflow_state,
                 "proposed_actions": self.proposed_actions, "interventions": self.interventions,
                 "commit_history": self.commit_history, "unresolved_risks": self.unresolved_risks,

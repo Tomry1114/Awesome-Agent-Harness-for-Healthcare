@@ -8,6 +8,7 @@ clinical_modules: [evidence_grounding]
 manifest:
   subject:
     type: perceptual_artifact
+    binding: none            # single-artifact tasks: perception tools carry no per-action subject
     id_context_keys: [image_id, series_id, image, region_id]
     from_args: [image_id, image, region_id, series_id]
   actions:

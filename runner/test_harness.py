@@ -238,7 +238,9 @@ def test_p3_perceptual_tool_pack():
     region = {"type": "tool", "tool": "RegionAttributeDescription", "args": {}}
     k.after_action(region, "spiculated RUL nodule", None, None, step=1)
     assert k.ledger.obligation_state("image_derived_evidence") == "SATISFIED"
-    assert k.before_final("a 3 cm mass", step=2).type == D.ALLOW       # grounded via a perception tool
+    # grounded, but NO judge configured -> claim-support is UNVERIFIABLE -> enforce ESCALATEs (fail-closed),
+    # it does NOT pass just because grounding evidence exists. (With a judge -> see the semantic test.)
+    assert k.before_final("a 3 cm mass", step=2).type == D.ESCALATE
     # external (search) evidence does NOT count as image grounding
     k2 = HarnessKernel(contract, [ScopeEvidenceBinding(), ObligationLifecycle(), VerifyAndCommit()],
                        mode="enforce", policy=pol, env_type="tool_sandbox")
@@ -263,8 +265,8 @@ def test_p3_semantic_claim_support_judge():
     assert mk(lambda p: '{"supported": true, "confidence": 0.9, "reason": "ok"}').before_final("RUL nodule", step=1).type == D.ALLOW
     assert mk(lambda p: '{"supported": false, "confidence": 0.9, "reason": "LUL vs RUL"}').before_final("LUL effusion", step=1).type == D.REVISE
     assert mk(lambda p: '{"supported": false, "confidence": 0.2, "reason": "unclear"}').before_final("maybe", step=1).type == D.ESCALATE
-    nj = mk(None)
-    assert nj.before_final("RUL nodule", step=1).type == D.ALLOW
+    nj = mk(None)   # judge unavailable: a contract that REQUIRES claim-support cannot pass in enforce
+    assert nj.before_final("RUL nodule", step=1).type == D.ESCALATE
     assert any(r["rule_id"] == "semantic_claim_support" for r in nj.ledger.unresolved_risks)
 
 
@@ -350,6 +352,56 @@ def test_clinical_module_scoped_to_its_resource():
     # contrast: a medication create DOES require the review
     med = {"type": "tool", "tool": "fhir_medication_request_create", "args": {"patient": "Patient/1"}}
     assert k.before_action(med, step=1).type == D.REVISE
+
+
+def test_required_binding_rejects_unspecified_subject():
+    """SAFETY: under `required` subject binding (FHIR), a commit that names NO subject must not be assumed
+    to operate on the active subject -> REVISE (specify the subject)."""
+    pol = H.load_policy(env_type="fhir")
+    assert (pol["manifest"]["subject"].get("binding")) == "required"
+    task = {"task_id": "t", "goal": "order", "context": {"patient_ref": "Patient/1"}, "environment": {"type": "fhir"}}
+    contract = build_contract(task, env_type="fhir", policy=pol)
+    k = HarnessKernel(contract, [ScopeEvidenceBinding(), ObligationLifecycle(), VerifyAndCommit()],
+                      mode="enforce", policy=pol, env_type="fhir")
+    nopt = {"type": "tool", "tool": "fhir_medication_request_create", "args": {}}   # no patient named
+    assert k.before_action(nopt, step=0).type == D.REVISE
+    assert any(f["reason_code"] == "subject_unspecified" for f in k.ledger.findings)
+    # a no-subject READ does not satisfy an obligation either (evidence is not VALIDATED)
+    rd = {"type": "tool", "tool": "fhir_allergy_intolerance_search_active", "args": {}}
+    k.after_action(rd, "data", {"a": 0}, {"a": 1}, step=1, result_ok=True)
+    assert k.ledger.obligation_state("check_allergies") != "SATISFIED"
+
+
+def test_policy_loader_fail_closed():
+    """A missing/typo'd policy layer must NOT silently vanish: it is recorded in _errors, and assist/enforce
+    REFUSE to build (observe builds degraded)."""
+    assert not H.load_policy(env_type="fhir").get("_errors")        # the real policy composes cleanly
+    os.environ["MH_HARNESS_ADAPTER"] = "does_not_exist"
+    try:
+        assert H.load_policy(env_type="fhir").get("_errors"), "missing adapter must be an error"
+        task = {"task_id": "t", "goal": "g", "context": {}, "environment": {"type": "fhir"}}
+        try:
+            H.build_kernel(task, env_type="fhir", mode="enforce"); assert False, "enforce must raise"
+        except H.PolicyError:
+            pass
+        assert H.build_kernel(task, env_type="fhir", mode="observe") is not None   # observe builds (degraded)
+    finally:
+        os.environ.pop("MH_HARNESS_ADAPTER", None)
+
+
+def test_findings_keep_lower_priority():
+    """A hook whose winner is wrong_scope (BLOCK) must still record its missing_prerequisite finding."""
+    pol = H.load_policy(env_type="fhir")
+    task = {"task_id": "t", "goal": "order", "context": {"patient_ref": "Patient/1"}, "environment": {"type": "fhir"}}
+    contract = build_contract(task, env_type="fhir", policy=pol)
+    k = HarnessKernel(contract, [ScopeEvidenceBinding(), ObligationLifecycle(), VerifyAndCommit()],
+                      mode="enforce", policy=pol, env_type="fhir")
+    # a create on the WRONG patient AND missing the safety review: BLOCK wins, but both are recorded
+    bad = {"type": "tool", "tool": "fhir_medication_request_create", "args": {"patient": "Patient/999"}}
+    eff = k.before_action(bad, step=0)
+    assert eff.type == D.BLOCK
+    rcs = {f["reason_code"] for f in k.ledger.findings}
+    assert "wrong_scope" in rcs and "missing_prerequisite" in rcs, rcs
 
 
 def _run():

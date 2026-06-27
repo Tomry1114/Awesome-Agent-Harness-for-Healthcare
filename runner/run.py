@@ -207,24 +207,27 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
         except Exception as _e:
             res = {"error": repr(_e)}
         _state_after = _state_hash(env)
-        _hpost = None
-        if _harness is not None:
-            try:
-                _hpost = _harness.after_action(action, res, _state_before, _state_after, step=step,
-                                               canonical_observation=_canon.canonical_observation(res, env_type),
-                                               result_ok=not (isinstance(res, dict) and res.get("error")))
-            except Exception as _he:
-                _hpost = None
-                _harness_runtime_errors.append("after_action: %r" % _he)
-        _src_full = json.dumps(res, ensure_ascii=False)
-        obs = _src_full[:int(os.environ.get("MH_OBS_MAX_LEN", "10000"))]  # official mini_agent caps tool output to LLM at 10k (was 200 -> agent could not see search results -> over-read)
+        # UNIFIED tool-result status, computed BEFORE the harness sees the result. tool_sandbox tools report
+        # errors as a bracketed string in "output" ([Error: ...]); recognizing them here (not after) means a
+        # failed tool call is never passed to the harness as result_ok=True and recorded as VALIDATED evidence.
         _err = res.get("error") if isinstance(res, dict) else None
-        if not _err and isinstance(res, dict):  # F2: tool_sandbox tools report errors as a bracketed string in "output"
+        if not _err and isinstance(res, dict):
             _out = res.get("output")
             if isinstance(_out, str) and _out.lstrip().startswith("["):
                 _marker = (_out[_out.find("[") + 1:_out.find("]")] if "]" in _out else _out[:40]).lower()
                 if any(w in _marker for w in ("error", "unknown", "invalid", "fail")):
                     _err = _out[:120]
+        _hpost = None
+        if _harness is not None:
+            try:
+                _hpost = _harness.after_action(action, res, _state_before, _state_after, step=step,
+                                               canonical_observation=_canon.canonical_observation(res, env_type),
+                                               result_ok=not _err)
+            except Exception as _he:
+                _hpost = None
+                _harness_runtime_errors.append("after_action: %r" % _he)
+        _src_full = json.dumps(res, ensure_ascii=False)
+        obs = _src_full[:int(os.environ.get("MH_OBS_MAX_LEN", "10000"))]  # official mini_agent caps tool output to LLM at 10k (was 200 -> agent could not see search results -> over-read)
         _ev = {"step": step, "event_type": "tool_call", "tool": action["tool"],
                "args": action.get("args", {}), "result": res, "observation": obs, "ts": str(step),
                "status": "error" if _err else "ok",

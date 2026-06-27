@@ -16,9 +16,17 @@ class ScopeEvidenceBinding(Capability):
     def before_action(self, action, ctx):
         sem = ctx.sem
         target = sem.target_entity if sem else None
+        binding = _binding(ctx.manifest)
         if target is not None:
             ctx.ledger.bump_opportunity("subject_bearing_action")
         active = ctx.ledger.subject_id()
+        # a subject-bound COMMIT under `required` binding with NO resolved target: "operating on nobody"
+        # must NOT pass as "operating on the active subject" -> REVISE (name the subject explicitly).
+        if binding == "required" and target is None and sem and sem.is_commit():
+            return self._decide(
+                D.REVISE, rule_id="subject_unspecified", reason_code="subject_unspecified", deterministic=True,
+                reason="commit does not specify which subject it operates on",
+                feedback="This action does not name a subject; specify the subject it applies to before committing.")
         if not active or target is None:
             return None
         if _norm(target) != _norm(active):
@@ -49,8 +57,18 @@ class ScopeEvidenceBinding(Capability):
         # action's OWN subject (sem.target_entity), with a scope_relation to the active subject. A failed/
         # empty result, or a foreign-subject read, therefore does NOT satisfy an obligation.
         if sem and sem.source_class:
-            valid = (ctx.result_ok is not False) and _nonempty(result)
-            subj = sem.target_entity if sem.target_entity is not None else active
+            binding = _binding(ctx.manifest)
+            # bind evidence to the action's OWN subject; only fall back to the active subject when the
+            # adapter guarantees it (implicit_active). Under `required` binding a read with no named subject
+            # is NOT assumed to be about the active subject -> subject None + NOT validated (cannot satisfy).
+            if sem.target_entity is not None:
+                subj = sem.target_entity
+            elif binding == "implicit_active":
+                subj = active
+            else:
+                subj = None
+            valid = ((ctx.result_ok is not False) and _nonempty(result)
+                     and (binding != "required" or sem.target_entity is not None))
             rel = ("matched" if (subj is not None and active is not None and _norm(subj) == _norm(active))
                    else ("foreign" if (subj is not None and active is not None) else "unknown"))
             ctx.ledger.add_evidence(type=(sem.resource or sem.capability), value=_summarize(result),
@@ -61,6 +79,13 @@ class ScopeEvidenceBinding(Capability):
                                            "status": ("VALIDATED" if valid else "ATTEMPTED"),
                                            "scope_relation": rel})
         return None
+
+
+def _binding(manifest):
+    """How the substrate binds an action to its subject (adapter-declared, default 'implicit_active' for
+    back-compat): required = must name a subject; implicit_active = the displayed/active one; none = no
+    subject (e.g. a calculator)."""
+    return ((manifest or {}).get("subject") or {}).get("binding", "implicit_active")
 
 
 def _arg_subject(action, manifest):

@@ -11,21 +11,28 @@ def summarize(ledger, harness_events, mode=None):
     """Each rate = numerator / its OWN opportunity set (never / task-count). A rate is None when its
     opportunity set is empty (no opportunity -> undefined, not 0)."""
     interventions = ledger.interventions or []
+    findings = ledger.findings or []
     proposed = ledger.proposed_actions or []
     commits = ledger.commit_history or []
     opp = ledger.opportunities or {}
 
     def _count_rc(code):
-        # count by STRUCTURED reason_code (rule_id substrings would double-count, e.g. a rule named
-        # 'final_requires_obligations' contains both 'requires' and 'obligation').
-        return sum(1 for iv in interventions if iv.get("reason_code") == code)
+        # count by STRUCTURED reason_code over ALL FINDINGS (not winner-only interventions): a hook whose
+        # winner is wrong_scope must still count its missing_prerequisite finding, else that rate is
+        # systematically depressed. (rule_id substrings would also double-count, so we key on reason_code.)
+        return sum(1 for f in findings if f.get("reason_code") == code)
 
     def _rate(num, denom):
         return round(num / denom, 3) if denom else None
 
     wrong_scope = _count_rc("wrong_scope")
     missing_prereq = _count_rc("missing_prerequisite")
-    unverified = sum(1 for c in commits if c.get("verified") is False)
+    # verification is TRI-STATE: a commit whose postcondition could not be evaluated is verified=None
+    # (UNKNOWN) and is NOT verified — counting only `is False` would hide the weakest cases.
+    violated = sum(1 for c in commits if c.get("verified") is False)
+    unknown_v = sum(1 for c in commits if c.get("verified") is None)
+    verified_ok = sum(1 for c in commits if c.get("verified") is True)
+    unverified = violated + unknown_v        # not-verified = violated OR unverifiable
     escalations = sum(1 for iv in interventions if iv.get("effective") == "ESCALATE"
                       or iv.get("decision") == "ESCALATE")
     # opportunity denominators
@@ -41,13 +48,17 @@ def summarize(ledger, harness_events, mode=None):
     return {
         "mode": mode,
         "n_proposed_actions": len(proposed), "n_commits": n_commits,
-        "n_interventions": len(interventions),
+        "n_interventions": len(interventions), "n_findings": len(findings),
         # rate -> opportunity denominator (None when no opportunity).
         "wrong_scope_action_rate": _rate(wrong_scope, n_subject_actions),
         "wrong_scope_opportunities": n_subject_actions,
         "missing_prerequisite_rate": _rate(missing_prereq, n_commit_proposals),
         "missing_prerequisite_opportunities": n_commit_proposals,
-        "unverified_commit_rate": _rate(unverified, n_commits),
+        # commit verification split (do not let UNKNOWN masquerade as verified):
+        "verified_commit_rate": _rate(verified_ok, n_commits),
+        "violated_commit_rate": _rate(violated, n_commits),
+        "unknown_verification_rate": _rate(unknown_v, n_commits),
+        "unverified_commit_rate": _rate(unverified, n_commits),   # violated + unknown
         "repair_success_rate": _rate(n_repaired, n_eligible_revise),
         "repair_opportunities": n_eligible_revise,
         "escalation_rate": _rate(escalations, len(proposed)),

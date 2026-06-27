@@ -39,7 +39,7 @@ def verify_claim_support(answer, evidence, judge_fn=None):
         return SemanticVerdict(None, 0.0, "semantic_judge_unavailable")
     ev_text = _format_evidence(evidence)
     if not ev_text.strip():
-        return SemanticVerdict(False, 1.0, "no_image_derived_evidence")
+        return SemanticVerdict(False, 1.0, "no_selected_evidence")
     prompt = _PROMPT.format(evidence=ev_text[:4000], answer=str(answer)[:2000])
     try:
         raw = judge_fn(prompt)

@@ -105,7 +105,9 @@ class HarnessKernel:
             self._rev_for_action[rkey] = n
             if n > self.budget["max_revisions_per_action"]:
                 note = "max_revisions_exceeded"
-                eff = D.ESCALATE
+                # a stuck revision loop is a RESOURCE limit, mode-aware like the intervention budget:
+                # enforce terminates safely (ESCALATE); assist is feedback-only so it must NOT terminate.
+                eff = D.ESCALATE if self.mode == "enforce" else D.ALLOW
         ev = self._ev("harness_decision", stage, decision, mode_applied=eff,
                       extra=({"note": note} if note else None))
         # record the WOULD-BE intervention (raw) with its effective outcome, in every mode
@@ -124,6 +126,16 @@ class HarnessKernel:
         return D.HarnessDecision(D.ESCALATE, capability=getattr(cap, "name", None),
                                  rule_id="capability_error", reason_code="capability_error",
                                  reason="capability_error:%r" % ex, deterministic=True)
+
+    def _record_findings(self, decisions, stage):
+        """Record EVERY non-ALLOW finding (not just the hook winner) so a lower-priority finding survives
+        for metrics — e.g. a commit that is BOTH wrong-subject (BLOCK) and missing-prerequisite (REVISE)
+        contributes to BOTH rates, not only the higher-priority one."""
+        for d in decisions:
+            if d.type != D.ALLOW:
+                self.ledger.record_finding({"action_key": "%s-step%d" % (stage, self.ctx.step),
+                                            "reason_code": d.reason_code, "capability": d.capability,
+                                            "decision": d.type, "rule_id": d.rule_id, "stage": stage})
 
     # ---- public hooks --------------------------------------------------------
     def _canon(self, action, observation=None):
@@ -153,6 +165,7 @@ class HarnessKernel:
                 d.stage = "before_action"
                 d.extra.setdefault("action_key", pid)
                 decisions.append(d)
+        self._record_findings(decisions, "before_action")
         winner = D.combine(decisions, stage="before_action")
         eff = self._apply_mode(winner, "before_action")
         eff.feedback = _feedback(winner) if eff.type != D.ALLOW else None
@@ -173,6 +186,7 @@ class HarnessKernel:
             if d is not None:
                 d.stage = "after_action"
                 decisions.append(d)
+        self._record_findings(decisions, "after_action")
         winner = D.combine(decisions, stage="after_action")
         from .risk import at_least, R2
         if at_least(self.ctx.risk, R2):
@@ -202,6 +216,7 @@ class HarnessKernel:
             if d is not None:
                 d.stage = "before_final"
                 decisions.append(d)
+        self._record_findings(decisions, "before_final")
         winner = D.combine(decisions, stage="before_final")
         eff = self._apply_mode(winner, "before_final")
         eff.feedback = _feedback(winner) if eff.type != D.ALLOW else None
@@ -229,8 +244,9 @@ class HarnessKernel:
                 "ledger": self.ledger.to_dict(), "budget": self.budget,
                 "n_interventions": self._n_interventions,
                 "n_semantic_checks": self.budget["max_semantic_checks"] - self.ctx.semantic_remaining,
-                "status": "degraded" if self._capability_errors else "active",
-                "capability_errors": self._capability_errors}
+                "status": ("degraded" if (self._capability_errors or self.policy.get("_errors")) else "active"),
+                "capability_errors": self._capability_errors,
+                "policy_errors": self.policy.get("_errors", [])}
 
 
 def _action_name(action):

@@ -9,6 +9,7 @@ clinical_modules: [medication_safety]
 manifest:
   subject:
     type: patient
+    binding: required        # every patient action must NAME its patient; "no target" != "active patient"
     id_context_keys: [patient_ref, patient_id, patient]      # structured context -> assigned subject
     from_args: [patient, subject, subject_ref, patient_ref, patient_id, subject_id]   # operated subject
   actions:

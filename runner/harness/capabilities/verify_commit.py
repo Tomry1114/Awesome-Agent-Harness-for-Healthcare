@@ -42,25 +42,43 @@ class VerifyAndCommit(Capability):
         post = (cp or {}).get("postcondition")
         verdict = eval_predicate(post, before_state, after_state, ctx.sem)   # True / False / None
         ctx.verification = verdict      # explicit tri-state -> the kernel records this, not winner==ALLOW
+        rid = post.get("type") if isinstance(post, dict) else (post or "post_commit")
         if verdict is False:
-            rid = post.get("type") if isinstance(post, dict) else (post or "post_commit_violation")
             return self._decide(
-                D.REVISE, rule_id=rid, reason_code="unverified_commit", deterministic=True,
+                D.REVISE, rule_id=rid, reason_code="violated_commit", deterministic=True,
                 reason="commit postcondition not satisfied (observable state unchanged / inconsistent)",
                 feedback="The commit did not produce the expected state change — re-check and retry.")
-        return None                     # True (verified) or None (unknown) -> no block; verified recorded as-is
+        if verdict is None and post is not None:
+            # a declared postcondition that could NOT be evaluated (state unobservable). UNKNOWN must not
+            # silently pass in enforce -> ESCALATE (observe records, assist revises, enforce terminates safely).
+            return self._decide(
+                D.ESCALATE, rule_id=rid, reason_code="unverifiable_commit", deterministic=True,
+                reason="commit postcondition could not be verified (state not observable)",
+                feedback="This commit's effect cannot be verified from the available state; escalating.")
+        return None                     # True (verified) -> no block
 
     def before_final(self, answer, ctx):
         cp = ctx.contract.commit_point_for(ctx.sem) if (ctx.contract and ctx.sem) else None
+        # if the commit's prerequisites are unmet, obligation_lifecycle owns the REVISE — don't add a
+        # semantic verdict on top of an answer that isn't even grounded yet.
+        if cp and ctx.ledger.pending_prerequisites(cp.get("requires", [])):
+            ctx.verification = None
+            return None
         post = (cp or {}).get("postcondition")
         ptype = post.get("type") if isinstance(post, dict) else post
         if not ptype or "support" not in str(ptype):
             return None
-        if not ctx.spend_semantic():
+        if not ctx.judge_fn or not ctx.spend_semantic():
             ctx.ledger.add_unresolved_risk("semantic_claim_support",
                                            "claim<->evidence not verified (no judge / budget spent)")
             ctx.verification = None
-            return None
+            # the contract REQUIRES semantic support but none is available -> UNKNOWN, not a free pass:
+            # ESCALATE (observe records, assist revises, enforce terminates). If the operator wants enforce
+            # on perceptual commits, they must supply a judge.
+            return self._decide(
+                D.ESCALATE, rule_id=ptype, reason_code="unverifiable_commit", deterministic=True,
+                reason="final answer requires evidence-support verification but no judge/budget is available",
+                feedback="This answer needs claim<->evidence verification, which is unavailable; escalating.")
         # filter the ledger to ONLY the evidence the postcondition selector allows (e.g. perception/image,
         # VALIDATED) — the judge never sees unrelated (e.g. external web) evidence.
         selector = (post.get("evidence_selector") if isinstance(post, dict) else None) or {}

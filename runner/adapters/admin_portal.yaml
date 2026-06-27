@@ -7,6 +7,7 @@ clinical_modules: []        # no extra clinical rules beyond the substrate submi
 manifest:
   subject:
     type: admin_case
+    binding: implicit_active   # the operated case is the one DISPLAYED on the page (no per-action arg)
     from_goal_regex: '([A-Z]{2,5}-\d+)'                       # assigned case named in the task goal
     from_observation: [case_identity, patient_id, subject_token]   # operated case = the displayed one
   actions:

@@ -17,7 +17,7 @@ from .risk import classify_risk                                                 
 from .capabilities.scope_evidence import ScopeEvidenceBinding
 from .capabilities.obligation_lifecycle import ObligationLifecycle
 from .capabilities.verify_commit import VerifyAndCommit
-from .engines.policy import load_policy
+from .engines.policy import load_policy, PolicyError                              # noqa: F401
 
 DEFAULT_CAPABILITIES = ("scope_evidence", "obligation_lifecycle", "verify_commit")
 
@@ -43,6 +43,10 @@ def build_kernel(task, env_type=None, mode=None, observed=None, capabilities=Non
     if mode == "off":
         return None
     policy = load_policy(adapter=adapter, substrate=substrate, env_type=env_type)
+    # FAIL-CLOSED: an incomplete/invalid policy (missing module, dangling obligation) must not silently run
+    # with rules dropped. observe records the errors (degraded) and proceeds; assist/enforce refuse to build.
+    if policy.get("_errors") and mode in ("assist", "enforce"):
+        raise PolicyError("policy composition failed (%s): %s" % (mode, policy["_errors"]))
     try:
         contract = build_contract(task, env_type=env_type,
                                   capabilities=[t.get("name") if isinstance(t, dict) else t
