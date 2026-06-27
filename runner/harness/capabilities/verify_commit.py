@@ -94,7 +94,11 @@ class VerifyAndCommit(Capability):
         # "answer") has NO side effect and must NEVER be erased to nothing — run.py delivers it WITH a
         # verification flag instead of aborting. effect != none (perceptual/irreversible diagnosis,
         # create/submit) stays fail-closed. We only STAMP the flag here; run.py owns deliver-vs-abort.
-        _side_effecting = bool(ctx.sem and getattr(ctx.sem, "effect", "none") not in (None, "none"))
+        # OPERATIONAL side effect = a write that mutates external state (create/update/submit). A final
+        # ANSWER is an EPISTEMIC commitment (no env mutation) even if its adapter tags an effect -> it is
+        # delivered-with-flag on unverifiable, never erased; only operational writes fail-closed.
+        _side_effecting = bool(ctx.sem and getattr(ctx.sem, "semantic_type", None) in ("create", "update", "submit")
+                               and getattr(ctx.sem, "effect", "none") not in (None, "none"))
         if not ctx.judge_fn or not ctx.spend_semantic():
             ctx.ledger.add_unresolved_risk("semantic_claim_support",
                                            "claim<->evidence not verified (no judge / budget spent)")
@@ -125,7 +129,7 @@ class VerifyAndCommit(Capability):
             return None
         # CONTRADICTED with high confidence -> the ONLY HARD revise (answer conflicts with the evidence).
         # Keep reason_code 'unsupported_claim' so the governance violation metric stays counted.
-        if v.relation == CONTRADICTED and (v.confidence or 0) >= 0.5:
+        if v.relation == CONTRADICTED and (v.confidence or 0) >= 0.8:   # HIGH-confidence contradiction only
             return self._decide(
                 D.REVISE, rule_id=ptype, reason_code="unsupported_claim", deterministic=False,
                 extra=_extra,

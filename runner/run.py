@@ -166,10 +166,9 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
         _io = env.initial_observation()
         if _io is not None:
             last_res = _io; last_obs = json.dumps(_io, ensure_ascii=False)[:int(os.environ.get("MH_OBS_MAX_LEN", "10000"))]
-    for step in range(0 if _harness_infra_error else (max_steps + max_repair_turns)):
-        if _env_actions >= max_steps:   # CONTRACT(2): full ENV-action budget spent (repair turns were extra headroom)
-            break
-        _bw = deliv.budget_warning(env, step, max_steps, trajectory)
+    for step in range(0 if _harness_infra_error else (max_steps + max_repair_turns + 2)):
+        _env_budget_spent = _env_actions >= max_steps   # CONTRACT(2): tool budget used; still allow a final-only turn
+        _bw = deliv.budget_warning(env, _env_actions, max_steps, trajectory)
         if _bw is not None: last_res, last_obs = _bw
         if _last_tool_ev is not None:          # the previous tool observation is about to be consumed
             _last_tool_ev["delivery_record"]["consumed_by_agent"] = True
@@ -212,7 +211,14 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
                             finished = True; break
                         continue
                     if _hf.type == "ESCALATE":
-                        trajectory.append({"step": step, "event_type": "harness_escalation",
+                        _xe = (getattr(_hf.raw, "extra", None) or {}) if getattr(_hf, "raw", None) is not None else {}
+                        if not _xe.get("side_effecting"):   # CONTRACT(5): epistemic answer (no env side effect) -> DELIVER with flag
+                            trajectory.append({"step": step, "event_type": "final_answer", "thought": action.get("answer", ""),
+                                               "status": "ok", "verification_flag": _xe.get("verification_flag", "unresolved_risk"),
+                                               "harness_feedback": _hf.feedback,
+                                               "canonical_action": _canon.canonical_action(action, env_type)})
+                            finished = True; break
+                        trajectory.append({"step": step, "event_type": "harness_escalation",   # operational write -> fail-closed
                                            "feedback": _hf.feedback, "status": "error"})
                         _aborted = True; break
             trajectory.append({"step": step, "event_type": "final_answer", "thought": action.get("answer", ""), "status": "ok", "canonical_action": _canon.canonical_action(action, env_type)})
@@ -226,6 +232,14 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
         if action["type"] != "tool_call" or not action.get("tool"):
             trajectory.append({"step": step, "event_type": "agent_error", "error": "bad_action_type", "raw": str(action)[:200], "status": "error"})
             finished = True; break
+        if _env_budget_spent:   # P0-1/CONTRACT(2): tool budget exhausted -> allow ONLY a final turn; refuse new tools
+            _repair_turns += 1
+            pending_harness_feedback = {"decision": "REVISE", "stage": "runtime_budget", "missing_obligations": [],
+                "reason": "Environment-action budget is exhausted. Do NOT call another tool; give your best "
+                          "final answer from the evidence already gathered."}
+            if _repair_turns > max_repair_turns:
+                trajectory.append({"step": step, "event_type": "tool_budget_exhausted", "status": "escalated"}); _aborted = True; break
+            continue
         if _harness is not None:
             try:
                 _hb = _harness.before_action(action, _state_hash(env), step=step)
@@ -244,7 +258,7 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
                         "missing_obligations": (_hb.feedback or {}).get("missing_obligations", []),
                         "stage": "before_action"}
                     if _repair_turns > max_repair_turns:
-                        trajectory.append({"step": step, "event_type": "repair_budget_exhausted", "stage": "before_action", "status": "ok"}); finished = True; break
+                        trajectory.append({"step": step, "event_type": "repair_budget_exhausted", "stage": "before_action", "status": "escalated", "reason": "repair_budget_exhausted"}); _aborted = True; break
                     continue
                 if _hb.type == "ESCALATE":
                     trajectory.append({"step": step, "event_type": "harness_escalation",
@@ -255,6 +269,7 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
             res = env.call_tool(action["tool"], action.get("args", {}))
         except Exception as _e:
             res = {"error": repr(_e)}
+        _env_actions += 1   # the environment call HAPPENED (count before any post-action escalate / circuit-break)
         _state_after = _state_hash(env); _snap_after = _state_snapshot(env)
         # UNIFIED tool-result status, computed BEFORE the harness sees the result. Recognize the common
         # failure envelopes here (not after) so a failed tool call is never passed to the harness as
@@ -317,6 +332,9 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
                 _max = int(os.environ.get("MH_OBS_MAX_LEN", "10000"))
                 _htxt = "\n[HARNESS] " + json.dumps(_hpost.feedback, ensure_ascii=False)
                 obs = (_htxt[:_max] if len(_htxt) >= _max else obs[:_max - len(_htxt)] + _htxt)
+                pending_harness_feedback = {"decision": _hpost.type, "stage": "after_action",
+                    "reason": (_hpost.feedback or {}).get("reason") or (_hpost.feedback or {}).get("message"),
+                    "missing_obligations": (_hpost.feedback or {}).get("missing_obligations", [])}
         _last_tool_ev = _ev   # mark consumed only if a later agent.act() runs (circuit-break -> stays False)
         if _err:
             _sig = (action["tool"], json.dumps(action.get("args", {}), sort_keys=True), _ev.get("error_type"))
@@ -327,7 +345,6 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
                 _aborted = True; break
         else:
             _fail_sig = None; _fail_n = 0
-        _env_actions += 1   # an environment action actually executed this turn
         last_obs = obs; last_res = res
     if not finished and not _aborted:  # #8 ran out of steps without a final answer (circuit-breaker abort logs its own event)
         trajectory.append({"step": max_steps, "event_type": "agent_error", "error": "max_steps_exceeded", "status": "error"})

@@ -31,8 +31,10 @@ class DeliverableScaffold:
         w = self._want(env)
         return not (w and os.path.isfile(w) and os.path.getsize(w) > 0)
 
-    def budget_warning(self, env, step, max_steps, trajectory):
-        # one-shot low-budget warning if the deliverable is still missing; returns (last_res, last_obs) or None
+    def budget_warning(self, env, used_actions, max_steps, trajectory):
+        # one-shot low-budget warning if the deliverable is still missing; keyed on EXECUTED env actions
+        # (not loop steps) so harness repair turns don't make PB think the task budget is nearly spent.
+        step = used_actions
         if not self.active or self.budget_nudged or (max_steps - step) > 8:
             return None
         if not self._want(env) or not self._missing(env):

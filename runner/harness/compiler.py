@@ -77,7 +77,8 @@ class ContractCompiler:
             subject=subject, evidence_obligations=ev_obs, workflow_obligations=wf_obs,
             commit_points=commits,
             meta={"env_type": inputs.env_type, "substrate": (policy.get("_substrate")),
-                  "compiled_from": "substrate_policy_pack"})
+                  "compiled_from": "substrate_policy_pack",
+                  "goal": inputs.goal, "public_context": inputs.context})
 
     def _resolve_subject(self, inputs, policy):
         """The ASSIGNED subject (operand) via the SUBSTRATE MANIFEST's declared extraction (structured

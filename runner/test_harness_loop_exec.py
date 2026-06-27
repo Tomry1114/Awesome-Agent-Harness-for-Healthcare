@@ -1,0 +1,87 @@
+"""REAL control-flow tests for the run.py agent/harness loop (not source greps). Monkeypatches a fake
+env + scripted agent and actually RUNS run.run_task, asserting on the produced trajectory. Run:
+  python3 runner/test_harness_loop_exec.py  -> all PASS, exit 0."""
+import os, sys
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+os.environ.pop("MH_GACC", None); os.environ.pop("MH_GACC_MODEL", None)
+os.environ.pop("MH_HARNESS_JUDGE_MODEL", None)   # no semantic judge -> claim-support is UNKNOWN (unverifiable)
+import run as R
+
+
+class FakeEnv:
+    type = "tool_sandbox"
+    full_state = None
+    def __init__(self, script_tools): self._tools = script_tools
+    def reset(self): pass
+    def available_tools(self): return [{"name": "ImageDescription", "signature": "ImageDescription()"},
+                                       {"name": "OtherTool", "signature": "OtherTool()"}]
+    def call_tool(self, name, args): return {"output": "a 3cm spiculated RUL nodule on the CT", "ok": True}
+    def capabilities(self): return {}
+    def teardown(self): pass
+
+
+class ScriptedAgent:
+    name = "scripted-fake"
+    def __init__(self, actions):
+        self._actions = list(actions); self.seen_feedback = []
+    def act(self, state):
+        self.seen_feedback.append(state.get("harness_feedback"))
+        return self._actions.pop(0) if self._actions else {"type": "final", "answer": "done"}
+
+
+def _run(actions, mode=None, max_steps=2):
+    task = {"task_id": "T", "goal": "What is the finding on the CT?", "context": {"text": "chest/abdomen CT"},
+            "environment": {"type": "tool_sandbox"}, "available_tools": [{"name": "ImageDescription"}, {"name": "OtherTool"}],
+            "checkpoints": []}
+    agent = ScriptedAgent(actions)
+    _ot = (R.load_task, R.environments.make_env, R.agents.make_agent)
+    R.load_task = lambda bench, tid: task
+    R.environments.make_env = lambda *a, **k: FakeEnv(None)
+    R.agents.make_agent = lambda name, t: agent
+    if mode is None: os.environ.pop("MH_HARNESS_MODE", None)
+    else: os.environ["MH_HARNESS_MODE"] = mode
+    try:
+        res = R.run_task("MedCTA", "T", agent_name="scripted-fake", max_steps=max_steps, cleanup=False)
+    finally:
+        R.load_task, R.environments.make_env, R.agents.make_agent = _ot
+    traj = res.get("_trajectory", [])
+    return traj, agent
+
+
+def _types(traj): return [e.get("event_type") for e in traj]
+def _final(traj): return [e for e in traj if e.get("event_type") == "final_answer"]
+def _tools(traj): return [e for e in traj if e.get("event_type") == "tool_call"]
+PASS = 0; FAIL = 0
+def check(name, cond):
+    global PASS, FAIL
+    if cond: PASS += 1; print("PASS", name)
+    else: FAIL += 1; print("FAIL", name)
+
+
+# T1: after spending the full env-action budget, the agent STILL gets a turn to emit final (no answer erased).
+tool = {"type": "tool_call", "tool": "ImageDescription", "args": {}}
+final = {"type": "final", "answer": "RUL nodule"}
+traj, ag = _run([tool, tool, final], mode=None, max_steps=2)
+check("T1_final_delivered_after_full_env_budget", len(_final(traj)) == 1)
+check("T1_no_max_steps_exceeded", "max_steps_exceeded" not in _types(traj))
+
+# T2: the agent TRIES 4 tools with max_steps=2; only 2 actually execute (repair/refusal turns don't add env actions),
+#     and the final is still delivered.
+traj2, ag2 = _run([tool, tool, tool, tool, final], mode=None, max_steps=2)
+check("T2_env_budget_enforced_only_2_tools_ran", len(_tools(traj2)) == 2)
+check("T2_final_still_delivered", len(_final(traj2)) == 1)
+
+# T4 (feedback channel): once the env budget is spent, the runtime injects feedback that the agent ACTUALLY receives.
+check("T4_runtime_budget_feedback_reaches_agent",
+      any(isinstance(fb, dict) and fb.get("stage") == "runtime_budget" for fb in ag2.seen_feedback))
+
+# T3: enforce + NO judge -> the final answer is UNVERIFIABLE (ESCALATE). Because an answer is EPISTEMIC
+#     (no env side effect), it must be DELIVERED WITH A FLAG, never erased.
+traj3, ag3 = _run([tool, final], mode="enforce", max_steps=6)
+_f3 = _final(traj3)
+check("T3_epistemic_escalated_final_is_delivered", len(_f3) == 1)
+check("T3_delivered_with_verification_flag", bool(_f3 and _f3[0].get("verification_flag")))
+check("T3_not_aborted_to_nothing", "harness_escalation" not in _types(traj3) or len(_f3) == 1)
+
+print("\nloop exec conformance: %d/%d passed" % (PASS, PASS + FAIL))
+sys.exit(0 if FAIL == 0 else 1)
