@@ -101,7 +101,7 @@ class HarnessKernel:
             note = "budget_exhausted_interventions"
             eff = D.ESCALATE if self.mode == "enforce" else D.ALLOW
         # MAX_REVISIONS_PER_ACTION: a REVISE that keeps re-firing on the SAME proposal is a stuck loop.
-        # CONTRACT(3) identity = (semantic_type, resource, target_entity, payload_hash, evidence_version,
+        # CONTRACT(3) identity = (semantic_type, resource, target_entity, payload_hash, validated_evidence_version,
         # reason_code) [+ capability, kept from the prior key so two capabilities don't share a counter].
         # Because payload_hash and evidence_version are IN the key, the counter RESETS automatically the
         # moment the agent revises its answer/args OR new evidence is added (genuine progress) — only a
@@ -109,7 +109,7 @@ class HarnessKernel:
         # (P0-7: a before_action loop is now bounded by the same per-FINGERPRINT key, not a global one).
         elif eff == D.REVISE:
             sem = self.ctx.sem
-            ev_ver = self.ledger.evidence_version
+            ev_ver = self.ledger.validated_evidence_version   # only genuine (VALIDATED, new) progress resets the per-action revision counter
             if sem is not None:
                 rkey = (sem.semantic_type, sem.resource, sem.target_entity,
                         _payload_fingerprint(sem), ev_ver, decision.reason_code, decision.capability)

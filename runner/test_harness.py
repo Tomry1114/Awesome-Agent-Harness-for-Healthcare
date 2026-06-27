@@ -794,7 +794,8 @@ def test_revision_identity_resets_on_progress():
     outs3 = []
     for i in range(5):
         k3.ctx.sem = canonicalize({"type": "final", "answer": "stuck"}, man)
-        k3.ledger.add_evidence("record", {"i": i}, subject_id="Patient/123")
+        k3.ledger.add_evidence("record", {"i": i}, subject_id="Patient/123",
+                               extra={"status": "VALIDATED", "scope_relation": "matched"})  # genuine new progress each turn
         outs3.append(k3._apply_mode(rev, "before_final").type)
     assert all(o == D.REVISE for o in outs3), outs3
 
