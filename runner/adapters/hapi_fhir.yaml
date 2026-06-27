@@ -11,7 +11,9 @@ manifest:
     type: patient
     binding: required        # every patient action must NAME its patient; "no target" != "active patient"
     id_context_keys: [patient_ref, patient_id, patient]      # structured context -> assigned subject
-    from_args: [patient, subject, subject_ref, patient_ref, patient_id, subject_id]   # operated subject
+    # operated subject — supports nested FHIR create args (resource.subject.reference) via dotted paths.
+    from_args: [patient, subject, subject_ref, patient_ref, patient_id, subject_id,
+                resource.subject.reference, resource.patient.reference, subject.reference]
   actions:
     # resource-specific reads first (they tag the evidence resource); then generic read; then writes.
     - match: {tool_pattern: allergy}
@@ -32,9 +34,10 @@ manifest:
       semantic_type: read
       effect: none
       produces_evidence: {source_class: record, modality: record}
-    - match: {tool: get_lab_reference_range}                # reference-range lookup: a read, no commit
+    - match: {tool: get_lab_reference_range}                # reference-range lookup: NOT patient-bound
       semantic_type: read
       effect: none
+      subject_binding: none
       produces_evidence: {source_class: record, modality: record}
     - match: {tool_pattern: medication_request_create}      # the high-risk commit (no evidence binding)
       semantic_type: create

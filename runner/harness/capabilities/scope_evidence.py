@@ -17,8 +17,10 @@ class ScopeEvidenceBinding(Capability):
         sem = ctx.sem
         target = sem.target_entity if sem else None
         binding = sem.subject_binding if sem else "implicit_active"
-        if target is not None:
-            ctx.ledger.bump_opportunity("subject_bearing_action")
+        # this action operates on a subject (-> a subject_bearing opportunity, deduped per action) if it has
+        # a target arg, OR it is an implicit_active commit on a displayed subject (GUI submit).
+        if target is not None or (binding == "implicit_active" and sem and sem.is_commit() and ctx.displayed_subject is not None):
+            ctx.ledger.bump_opportunity("subject_bearing_action", ctx.step)
         active = ctx.ledger.subject_id()
         # a subject-bound COMMIT under `required` binding with NO resolved target: "operating on nobody"
         # must NOT pass as "operating on the active subject" -> REVISE (name the subject explicitly).
@@ -59,7 +61,7 @@ class ScopeEvidenceBinding(Capability):
         # observation-derived subject (GUIs): if this action's subject was NOT a structured arg (so
         # before_action didn't count it), count the opportunity here and check the displayed subject.
         if active and shown is not None and not _arg_subject(action, ctx.manifest):
-            ctx.ledger.bump_opportunity("subject_bearing_action")
+            ctx.ledger.bump_opportunity("subject_bearing_action", ctx.step)
             if not _same_subject(shown, active):
                 return self._decide(
                     D.REVISE, rule_id="subject_scope_mismatch", reason_code="wrong_scope", deterministic=True,

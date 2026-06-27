@@ -12,9 +12,14 @@ manifest:
     # DECLARED projection paths into the RAW environment observation (dotted paths supported). The harness
     # resolves the displayed case generically — NO portal field is hard-coded in the core. The full_state.*
     # paths target the GUI env's state digest; tune to the live observation without any code change.
-    from_observation: [case_identity, patient_id, subject_token,
-                       full_state.signals.caseId, full_state.fields.caseId, full_state.fields.case_id,
-                       full_state._page]
+    # TYPED projection: each entry yields an admin_case ref (regex extracts the id from a route). patient_id
+    # is intentionally NOT here — it is a different subject TYPE and must not be read as the case id.
+    from_observation:
+      - {path: full_state.fields.caseId, type: admin_case}
+      - {path: full_state.signals.caseId, type: admin_case}
+      - {path: full_state.fields.case_id, type: admin_case}
+      - {path: url, regex: '/(?:denied|denials|triage|cases)/([A-Za-z]{2,5}-\d+)', type: admin_case}
+      - case_identity         # plain fallback (used by unit tests / envs that expose it directly)
   actions:
     - match: {tool_any: [navigate, click, select]}
       semantic_type: inspect

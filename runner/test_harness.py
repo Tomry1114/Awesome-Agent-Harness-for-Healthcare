@@ -653,6 +653,34 @@ def test_final_answer_verified_repair():
     assert gov.summarize(k.ledger, [], "enforce")["verified_repair_rate"] == 1.0
 
 
+def test_fhir_nested_create_subject_and_lab_binding():
+    """from_args supports dotted paths (nested FHIR create resource.subject.reference); the reference-range
+    lookup is declared subject_binding: none (not patient-bound)."""
+    pol = H.load_policy(env_type="fhir")
+    create = {"type": "tool", "tool": "fhir_medication_request_create",
+              "args": {"resource": {"resourceType": "MedicationRequest", "subject": {"reference": "Patient/1"}}}}
+    assert canonicalize(create, pol["manifest"]).target_entity == "Patient/1"
+    lab = canonicalize({"type": "tool", "tool": "get_lab_reference_range", "args": {}}, pol["manifest"])
+    assert lab.subject_binding == "none"
+
+
+def test_wrong_scope_rate_capped_at_one():
+    """A single action examined in both before_action and after_action must not double-count: the rate
+    numerator is UNIQUE actions and the denominator dedups opportunities per action -> rate <= 1."""
+    pol = H.load_policy(env_type="gui")
+    task = {"task_id": "hab", "goal": "Triage DEN-001.", "context": {"text": "DEN-001"}, "environment": {"type": "gui"}}
+    contract = build_contract(task, env_type="gui", policy=pol)
+    k = HarnessKernel(contract, [ScopeEvidenceBinding(), ObligationLifecycle(), VerifyAndCommit()],
+                      mode="observe", policy=pol, env_type="gui")
+    raw = {"full_state": {"fields": {"caseId": "DEN-999"}}}
+    k.after_action({"type": "tool", "tool": "click", "args": {}}, raw, {"x": 0}, {"x": 1}, step=0, raw_observation=raw)
+    submit = {"type": "tool", "tool": "submit", "args": {}}
+    k.before_action(submit, step=1)                                  # prospective wrong_scope (observe ALLOW)
+    k.after_action(submit, raw, {"x": 1}, {"x": 2}, step=1, raw_observation=raw)   # retrospective wrong_scope
+    s = gov.summarize(k.ledger, [], "observe")
+    assert s["wrong_scope_action_rate"] is not None and s["wrong_scope_action_rate"] <= 1.0, s
+
+
 def _run():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     passed = 0

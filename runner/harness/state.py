@@ -29,9 +29,18 @@ class Ledger:
         # per-metric OPPORTUNITY counts (denominators): each metric is rate = numerator / its own
         # opportunity set, never / task-count. e.g. commit_proposal, subject_bearing_action, eligible_revise.
         self.opportunities = {}
+        self._opp_seen = set()              # (key, step) already counted -> one opportunity per ACTION
         self._evk = 0
 
-    def bump_opportunity(self, key, n=1):
+    def bump_opportunity(self, key, step=None, n=1):
+        """Count one opportunity. When a step is given, the same (key, step) counts ONCE — so a single
+        action that is examined in both before_action and after_action is ONE opportunity, keeping every
+        rate (numerator/this) a valid probability <= 1."""
+        if step is not None:
+            tok = (key, step)
+            if tok in self._opp_seen:
+                return
+            self._opp_seen.add(tok)
         self.opportunities[key] = self.opportunities.get(key, 0) + n
 
     # ---- subject -------------------------------------------------------------

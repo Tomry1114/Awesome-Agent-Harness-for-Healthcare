@@ -17,10 +17,11 @@ def summarize(ledger, harness_events, mode=None):
     opp = ledger.opportunities or {}
 
     def _count_rc(code):
-        # count by STRUCTURED reason_code over ALL FINDINGS (not winner-only interventions): a hook whose
-        # winner is wrong_scope must still count its missing_prerequisite finding, else that rate is
-        # systematically depressed. (rule_id substrings would also double-count, so we key on reason_code.)
-        return sum(1 for f in findings if f.get("reason_code") == code)
+        # count UNIQUE ACTIONS (by action_key) with this reason_code, NOT raw findings: the same action
+        # examined in both before_action and after_action must count ONCE, so the rate (this / per-action
+        # opportunities) stays a valid probability <= 1. We still record all findings (winner + losers) so a
+        # co-occurring lower-priority finding is not erased.
+        return len({f.get("action_key") for f in findings if f.get("reason_code") == code})
 
     def _rate(num, denom):
         return round(num / denom, 3) if denom else None

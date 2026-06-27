@@ -145,15 +145,38 @@ def _extract_subject(action, manifest, observation):
     subj = manifest.get("subject") or {}
     args = (action or {}).get("args") or {}
     if isinstance(args, dict):
-        for k in (subj.get("from_args") or []):
-            if args.get(k):
-                return str(args[k])
-    if observation and isinstance(observation, dict):
-        for path in (subj.get("from_observation") or []):
-            v = _path_get(observation, path)
+        for entry in (subj.get("from_args") or []):
+            v = _resolve_projection(args, entry)        # dotted paths supported (resource.subject.reference)
             if v:
-                return str(v)
+                return v
+    if observation and isinstance(observation, dict):
+        for entry in (subj.get("from_observation") or []):
+            v = _resolve_projection(observation, entry)
+            if v:
+                return v
     return None
+
+
+def _resolve_projection(obj, entry):
+    """Resolve a subject projection entry against a dict. An entry is either a (dotted) path string, or a
+    declared object {path, regex, type}: regex extracts the id from a route/string, type makes it a TYPED
+    ref ('admin_case/DEN-001') so a case id is never confused with a patient id of the same number."""
+    if isinstance(entry, dict):
+        v = _path_get(obj, entry.get("path"))
+        if v is None:
+            return None
+        v = str(v)
+        rgx = entry.get("regex")
+        if rgx:
+            import re
+            m = re.search(rgx, v)
+            if not m:
+                return None
+            v = m.group(1) if m.groups() else m.group(0)
+        t = entry.get("type")
+        return ("%s/%s" % (t, v)) if (t and "/" not in v) else v
+    v = _path_get(obj, entry) if "." in str(entry) else (obj.get(entry) if isinstance(obj, dict) else None)
+    return str(v) if v else None
 
 
 def observed_subject(manifest, observation):
@@ -162,10 +185,10 @@ def observed_subject(manifest, observation):
     hard-coded in the core; the adapter declares where its displayed subject lives."""
     if not isinstance(observation, dict):
         return None
-    for path in ((manifest.get("subject") or {}).get("from_observation") or []):
-        v = _path_get(observation, path)
+    for entry in ((manifest.get("subject") or {}).get("from_observation") or []):
+        v = _resolve_projection(observation, entry)
         if v:
-            return str(v)
+            return v
     return None
 
 

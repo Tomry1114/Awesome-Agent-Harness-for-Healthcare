@@ -171,7 +171,7 @@ class HarnessKernel:
         contributes to BOTH rates, not only the higher-priority one."""
         for d in decisions:
             if d.type != D.ALLOW:
-                self.ledger.record_finding({"action_key": "%s-step%d" % (stage, self.ctx.step),
+                self.ledger.record_finding({"action_key": "act%d" % self.ctx.step,
                                             "reason_code": d.reason_code, "capability": d.capability,
                                             "decision": d.type, "rule_id": d.rule_id, "stage": stage})
 
@@ -195,7 +195,7 @@ class HarnessKernel:
         pid = self.ledger.record_proposed(sem.capability, risk, step)
         from .risk import at_least, R2
         if at_least(risk, R2):
-            self.ledger.bump_opportunity("commit_proposal")   # denominator for missing_prerequisite_rate
+            self.ledger.bump_opportunity("commit_proposal", step)   # denom for missing_prerequisite_rate (per action)
         decisions = []
         for cap in self.capabilities:
             try:
@@ -258,7 +258,7 @@ class HarnessKernel:
         self.ledger.record_proposed(sem.capability, self.ctx.risk, step)
         is_commit = at_least(self.ctx.risk, R2)
         if is_commit:
-            self.ledger.bump_opportunity("commit_proposal")
+            self.ledger.bump_opportunity("commit_proposal", step)
         decisions = []
         for cap in self.capabilities:
             try:
