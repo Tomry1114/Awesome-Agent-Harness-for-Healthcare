@@ -479,10 +479,30 @@ def test_repair_chain_records_repaired():
                    "pen", {"a": 0}, {"a": 1}, step=1, result_ok=True)
     k.after_action({"type": "tool", "tool": "fhir_medication_request_search_orders", "args": {"patient": "Patient/1"}},
                    "lis", {"a": 1}, {"a": 2}, step=2, result_ok=True)
-    assert k.before_action(create, step=3).type == D.ALLOW           # now passes -> repaired
+    assert k.before_action(create, step=3).type == D.ALLOW           # gate passes -> precondition_repaired
+    assert any(r["resolution"] == "precondition_repaired" for r in k.ledger.resolutions)
+    # actually EXECUTE the create with a real state change -> postcondition verified -> verified repair
+    k.after_action(create, {"id": "rx-1"}, {"MedicationRequest": []}, {"MedicationRequest": [{"id": "rx-1"}]},
+                   step=4, result_ok=True)
+    assert k.ledger.commit_history[-1]["verified"] is True
     assert any(r["resolution"] == "repaired" for r in k.ledger.resolutions)
     s = gov.summarize(k.ledger, [], "enforce")
-    assert s["repair_success_rate"] == 1.0 and s["repair_opportunities"] == 1, s
+    assert s["verified_repair_rate"] == 1.0 and s["repair_opportunities"] == 1, s
+
+
+def test_commit_verification_violated_on_no_state_change():
+    """Counter-case: a commit that produces NO observable state change -> postcondition VIOLATED (verified
+    False), recorded as a violated commit (not silently verified)."""
+    pol = H.load_policy(env_type="fhir")
+    task = {"task_id": "t", "goal": "order", "context": {"patient_ref": "Patient/1"}, "environment": {"type": "fhir"}}
+    contract = build_contract(task, env_type="fhir", policy=pol)
+    k = HarnessKernel(contract, [ScopeEvidenceBinding(), ObligationLifecycle(), VerifyAndCommit()],
+                      mode="enforce", policy=pol, env_type="fhir")
+    create = {"type": "tool", "tool": "fhir_medication_request_create", "args": {"patient": "Patient/1"}}
+    same = {"MedicationRequest": []}
+    eff = k.after_action(create, "ok", same, same, step=0, result_ok=True)   # state unchanged
+    assert eff.type == D.REVISE                       # violated postcondition
+    assert k.ledger.commit_history[-1]["verified"] is False
 
 
 def test_violation_split_executed_vs_prevented():
@@ -526,6 +546,11 @@ def test_unseen_adapter_zero_core_change():
     k.after_action({"type": "tool", "tool": "ehr_med_list", "args": {"mrn": "M-7"}}, "lis", {"a": 1}, {"a": 2}, step=4, result_ok=True)
     assert k.ledger.obligation_state("medication_safety_review") == "SATISFIED"
     assert k.before_action(rx, step=5).type == D.ALLOW
+    # EXECUTE the prescribe in the held-out EMR -> postcondition verified -> repaired (commit-effect
+    # verification is portable too, not only the pre-commit gating)
+    k.after_action(rx, {"id": "rx-1"}, {"MedicationRequest": []}, {"MedicationRequest": [{"id": "rx-1"}]},
+                   step=6, result_ok=True)
+    assert k.ledger.commit_history[-1]["verified"] is True
     assert any(r["resolution"] == "repaired" for r in k.ledger.resolutions)
 
 

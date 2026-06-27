@@ -57,7 +57,8 @@ class HarnessKernel:
         self._rev_for_action = {}
         self._capability_errors = []     # capability-hook exceptions (fail-closed: see _cap_error)
         self._last_obs = None            # most recent canonical_observation -> prospective GUI scope
-        self._open_repairs = {}          # commit identity -> REVISE event id, for the repair causal chain
+        self._open_repairs = {}          # commit identity -> REVISE event id (missing-prereq, not yet repaired)
+        self._gate_passed = {}           # commit identity -> event id (prereqs met + gate passed, awaiting verify)
         self._evk = 0
         for cap in self.capabilities:
             cap.on_contract(self.ctx)
@@ -129,21 +130,39 @@ class HarnessKernel:
                                  rule_id="capability_error", reason_code="capability_error",
                                  reason="capability_error:%r" % ex, deterministic=True)
 
+    def _repair_key(self):
+        sem = self.ctx.sem
+        # key on semantic_type + resource + SUBJECT, so a different patient's commit cannot close another's
+        # repair (a coarse (type,resource) key would mis-attribute repairs across subjects).
+        return (sem.semantic_type, sem.resource, self.ledger.subject_id())
+
     def _track_repair(self, winner, eff):
-        """Causal repair chain: a missing-prerequisite REVISE on a commit, followed later by the SAME commit
-        (semantic_type+resource) passing once its obligations are satisfied, is a `repaired` resolution.
-        Mode-independent (keys on the RAW verdict), so observe measures would-be repairs too."""
+        """Repair lifecycle (PRE-commit half): a missing-prerequisite REVISE on a commit OPENS a repair
+        opportunity; when the SAME commit (semantic_type+resource+subject) later passes the gate, that is a
+        `precondition_repaired` resolution. The commit is NOT yet `repaired` — that needs execution+verify
+        (see _close_verified_repair). Keys on the RAW verdict so observe measures would-be repairs too."""
         sem = self.ctx.sem
         if not (sem and sem.is_commit()):
             return
-        key = (sem.semantic_type, sem.resource)
+        key = self._repair_key()
         if winner.type != D.ALLOW and getattr(winner, "reason_code", None) == "missing_prerequisite":
-            if key not in self._open_repairs:
+            if key not in self._open_repairs and key not in self._gate_passed:
                 self.ledger.bump_opportunity("repair")           # an action that COULD be repaired
             self._open_repairs[key] = (eff.events[0]["id"] if eff.events else None)
         elif winner.type == D.ALLOW and key in self._open_repairs:
-            orig = self._open_repairs.pop(key)
-            self.ledger.resolutions.append(self.resolution_event(orig, "repaired"))
+            ev = self._open_repairs.pop(key)
+            self._gate_passed[key] = ev
+            self.ledger.resolutions.append(self.resolution_event(ev, "precondition_repaired"))
+
+    def _close_verified_repair(self):
+        """Repair lifecycle (POST-commit half): the gate-passed commit ACTUALLY executed and its
+        postcondition VERIFIED -> `repaired`. A failed/unverifiable execution does NOT close it."""
+        sem = self.ctx.sem
+        if not (sem and sem.is_commit()):
+            return
+        key = self._repair_key()
+        if key in self._gate_passed and self.ctx.verification is True:
+            self.ledger.resolutions.append(self.resolution_event(self._gate_passed.pop(key), "repaired"))
 
     def _record_findings(self, decisions, stage):
         """Record EVERY non-ALLOW finding (not just the hook winner) so a lower-priority finding survives
@@ -215,6 +234,7 @@ class HarnessKernel:
             # the combined decision — an unverifiable commit must record verified=None, never True.
             self.ledger.record_commit(sem.capability, step, verified=self.ctx.verification,
                                       detail=winner.reason)
+            self._close_verified_repair()    # a gate-passed commit that executed + verified -> repaired
         eff = self._apply_mode(winner, "after_action")
         eff.feedback = _feedback(winner) if eff.type != D.ALLOW else None
         return eff

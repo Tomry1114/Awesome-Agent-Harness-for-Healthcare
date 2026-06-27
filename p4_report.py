@@ -2,8 +2,10 @@
 import json, glob, os
 MODES = ["off", "observe", "assist", "enforce"]
 MODS = ["Execution", "Tooling", "Context", "Lifecycle", "Observability", "Verification", "Governance"]
-HMET = ["wrong_scope_action_rate", "missing_prerequisite_rate", "unverified_commit_rate",
-        "n_interventions", "escalation_rate", "repair_success_rate"]
+HMET = ["wrong_scope_action_rate", "missing_prerequisite_rate",
+        "verified_commit_rate", "violated_commit_rate", "unknown_verification_rate", "unverified_commit_rate",
+        "executed_violation_rate", "post_commit_failure_count",
+        "precondition_repair_rate", "verified_repair_rate", "n_interventions", "escalation_rate"]
 
 
 def load_report(mode):

@@ -140,11 +140,19 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
     deliv = DeliverableScaffold(task)  # PB deliverable scaffolding (Codex #1: extracted from the generic runner; no-op for non-PB)
     _fail_sig = None; _fail_n = 0; _aborted = False  # circuit breaker: abort on repeated identical failing call
     _last_tool_ev = None  # for consumed_by_agent backfill (#review: rendered != consumed)
+    # FAIL-CLOSED: if assist/enforce was requested but the harness FAILED to build, do NOT run the agent
+    # unprotected and admit it afterward — abort BEFORE the first action (the task is an infrastructure
+    # error, excluded from mode comparison). observe/off tolerate a degraded/absent harness.
+    _harness_infra_error = _harness_build_failed and _harness_requested_mode in ("assist", "enforce")
+    if _harness_infra_error:
+        trajectory.append({"step": 0, "event_type": "harness_infrastructure_error", "status": "error",
+                           "requested_mode": _harness_requested_mode, "errors": list(_harness_runtime_errors)})
+        _aborted = True
     if hasattr(env, "initial_observation"):
         _io = env.initial_observation()
         if _io is not None:
             last_res = _io; last_obs = json.dumps(_io, ensure_ascii=False)[:int(os.environ.get("MH_OBS_MAX_LEN", "10000"))]
-    for step in range(max_steps):
+    for step in range(0 if _harness_infra_error else max_steps):
         _bw = deliv.budget_warning(env, step, max_steps, trajectory)
         if _bw is not None: last_res, last_obs = _bw
         if _last_tool_ev is not None:          # the previous tool observation is about to be consumed
@@ -166,6 +174,9 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
                 except Exception as _he:
                     _hf = None
                     _harness_runtime_errors.append("before_final: %r" % _he)
+                    if _harness_requested_mode == "enforce":
+                        trajectory.append({"step": step, "event_type": "harness_escalation", "stage": "before_final",
+                                           "reason": "hook_error", "status": "error"}); _aborted = True; break
                 if _hf is not None:
                     trajectory.extend(_hf.events)
                     if _hf.type in ("REVISE", "BLOCK"):
@@ -193,6 +204,9 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
             except Exception as _he:
                 _hb = None
                 _harness_runtime_errors.append("before_action: %r" % _he)
+                if _harness_requested_mode == "enforce":   # enforce never proceeds past a harness failure
+                    trajectory.append({"step": step, "event_type": "harness_escalation", "stage": "before_action",
+                                       "reason": "hook_error", "status": "error"}); _aborted = True; break
             if _hb is not None:
                 trajectory.extend(_hb.events)
                 if _hb.type in ("REVISE", "BLOCK"):     # do NOT execute the tool; feed feedback back
@@ -228,6 +242,9 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
             except Exception as _he:
                 _hpost = None
                 _harness_runtime_errors.append("after_action: %r" % _he)
+                if _harness_requested_mode == "enforce":
+                    trajectory.append({"step": step, "event_type": "harness_escalation", "stage": "after_action",
+                                       "reason": "hook_error", "status": "error"}); _aborted = True; break
         _src_full = json.dumps(res, ensure_ascii=False)
         obs = _src_full[:int(os.environ.get("MH_OBS_MAX_LEN", "10000"))]  # official mini_agent caps tool output to LLM at 10k (was 200 -> agent could not see search results -> over-read)
         _ev = {"step": step, "event_type": "tool_call", "tool": action["tool"],
@@ -512,8 +529,12 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
         # a harness WAS requested (or errored) but no kernel is live -> report it, never silently 'off'.
         result["harness"] = {"mode": "off", "requested_mode": _harness_requested_mode,
                              "effective_mode": "off",
-                             "status": "failed" if (_harness_build_failed and _harness_requested_mode == "enforce") else "off",
+                             "status": "failed" if _harness_infra_error else "off",
                              "runtime_errors": _harness_runtime_errors}
+    if _harness_infra_error:
+        # assist/enforce requested but the harness could not be built -> the task ran NO agent actions; it
+        # is an infrastructure error, excluded from mode comparison (never mixed into a baseline bundle).
+        result["evaluation_status"] = "infrastructure_error"
     _sv = validate_result(result)
     # validate_result is contracted to return a dict (valid result, schema errors, OR fail-closed
     # 'jsonschema dependency missing'). If anything unexpected leaks through, treat it as NOT valid

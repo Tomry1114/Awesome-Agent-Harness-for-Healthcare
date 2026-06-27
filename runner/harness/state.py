@@ -39,7 +39,18 @@ class Ledger:
         self.active_subject = dict(subject) if subject else None
 
     def subject_id(self):
-        return (self.active_subject or {}).get("id")
+        """Return the TYPED reference 'type/id' (not the bare id) so downstream comparison keeps the type:
+        Patient/123 must not match Encounter/123. _same_subject / _eq handle the untyped-on-one-side case."""
+        s = self.active_subject or {}
+        if not s.get("id"):
+            return None
+        i = str(s["id"])
+        if "/" in i:                # id already a typed ref (e.g. 'Patient/123') -> don't double-prefix
+            return i
+        return ("%s/%s" % (s["type"], i)) if s.get("type") else i
+
+    def subject_ref(self):
+        return self.active_subject
 
     # ---- evidence ------------------------------------------------------------
     def add_evidence(self, type, value, subject_id=None, source_event=None, source_type=None, extra=None):
