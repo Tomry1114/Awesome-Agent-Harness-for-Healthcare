@@ -277,6 +277,7 @@ class HarnessKernel:
         if is_commit and eff.type == D.ALLOW:
             self.ledger.record_commit(sem.capability, step, verified=self.ctx.verification,
                                       detail="final_answer")
+            self._close_verified_repair()    # a final-answer commit verifies + closes its repair too
         return eff
 
     def build_observation(self, tool_result, post_eff):

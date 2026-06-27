@@ -15,12 +15,22 @@ from pb_policy import DeliverableScaffold
 from environments import _canon_fhir_tool
 
 
-def _state_hash(env):
-    """Real environment state digest for state_before/after (review 3.4). None for stateless envs."""
+def _state_snapshot(env):
+    """The STRUCTURED canonical state (env.state_summary() / full_state) — given to the harness so field-
+    level postconditions (field_equals/object_exists/...) can be evaluated, not only a state-change hash.
+    None for stateless envs."""
     try:
-        st = env.state_summary() if hasattr(env, "state_summary") else getattr(env, "full_state", None)
-        if st is None:
-            return None
+        return env.state_summary() if hasattr(env, "state_summary") else getattr(env, "full_state", None)
+    except Exception:
+        return None
+
+
+def _state_hash(env):
+    """Tamper-evident digest of the structured state — for the trajectory state_record (audit)."""
+    st = _state_snapshot(env)
+    if st is None:
+        return None
+    try:
         return hashlib.sha256(json.dumps(st, sort_keys=True, default=str).encode("utf-8", "replace")).hexdigest()[:12]
     except Exception:
         return None
@@ -217,26 +227,33 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
                     trajectory.append({"step": step, "event_type": "harness_escalation",
                                        "feedback": _hb.feedback, "status": "error"})
                     _aborted = True; break
-        _state_before = _state_hash(env)
+        _state_before = _state_hash(env); _snap_before = _state_snapshot(env)
         try:
             res = env.call_tool(action["tool"], action.get("args", {}))
         except Exception as _e:
             res = {"error": repr(_e)}
-        _state_after = _state_hash(env)
-        # UNIFIED tool-result status, computed BEFORE the harness sees the result. tool_sandbox tools report
-        # errors as a bracketed string in "output" ([Error: ...]); recognizing them here (not after) means a
-        # failed tool call is never passed to the harness as result_ok=True and recorded as VALIDATED evidence.
+        _state_after = _state_hash(env); _snap_after = _state_snapshot(env)
+        # UNIFIED tool-result status, computed BEFORE the harness sees the result. Recognize the common
+        # failure envelopes here (not after) so a failed tool call is never passed to the harness as
+        # result_ok=True and recorded as VALIDATED evidence.
         _err = res.get("error") if isinstance(res, dict) else None
         if not _err and isinstance(res, dict):
+            if res.get("success") is False or res.get("ok") is False or \
+               str(res.get("status", "")).lower() in ("failed", "error", "failure"):
+                _err = "result_status_failure"
             _out = res.get("output")
-            if isinstance(_out, str) and _out.lstrip().startswith("["):
+            if not _err and isinstance(_out, str) and _out.lstrip().startswith("["):
                 _marker = (_out[_out.find("[") + 1:_out.find("]")] if "]" in _out else _out[:40]).lower()
                 if any(w in _marker for w in ("error", "unknown", "invalid", "fail")):
                     _err = _out[:120]
         _hpost = None
         if _harness is not None:
             try:
-                _hpost = _harness.after_action(action, res, _state_before, _state_after, step=step,
+                # pass the STRUCTURED snapshot (field-level predicates); fall back to the hash when the env
+                # exposes no structured state (state_transition still works on the hash).
+                _hb_before = _snap_before if _snap_before is not None else _state_before
+                _hb_after = _snap_after if _snap_after is not None else _state_after
+                _hpost = _harness.after_action(action, res, _hb_before, _hb_after, step=step,
                                                canonical_observation=_canon.canonical_observation(res, env_type),
                                                result_ok=not _err, raw_observation=res)
             except Exception as _he:

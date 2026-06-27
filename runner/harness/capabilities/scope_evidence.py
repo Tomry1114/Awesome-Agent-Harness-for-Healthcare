@@ -84,7 +84,7 @@ class ScopeEvidenceBinding(Capability):
             # STRICT: evidence is VALIDATED only on an explicit success signal (result_ok is True). A missing
             # signal (None) is UNKNOWN -> ATTEMPTED, never VALIDATED (a future adapter that forgets the field
             # must fail safe, not pass).
-            valid = ((ctx.result_ok is True) and _nonempty(result)
+            valid = ((ctx.result_ok is True) and _has_payload(result)
                      and (binding != "required" or sem.target_entity is not None))
             rel = ("matched" if (subj is not None and active is not None and _same_subject(subj, active))
                    else ("foreign" if (subj is not None and active is not None) else "unknown"))
@@ -126,11 +126,21 @@ def _same_subject(a, b):
     return not (ta and tb and ta != tb)
 
 
-def _nonempty(result):
+_ENVELOPE_KEYS = {"ok", "status", "mode", "tool", "args", "url", "title", "state_changed", "surface_changed"}
+
+
+def _has_payload(result):
+    """Does the result carry actual evidence content? {} / [] / {"output": ""} / {"ok": true} are NOT
+    evidence (str({}) == '{}' would wrongly look non-empty); only meaningful payload counts."""
     if result is None:
         return False
-    s = result if isinstance(result, str) else str(result)
-    return bool(s.strip())
+    if isinstance(result, str):
+        return bool(result.strip())
+    if isinstance(result, (list, tuple, set)):
+        return any(_has_payload(x) for x in result)
+    if isinstance(result, dict):
+        return any(_has_payload(v) for k, v in result.items() if k not in _ENVELOPE_KEYS)
+    return True
 
 
 def _summarize(result):

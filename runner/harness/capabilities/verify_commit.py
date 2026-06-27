@@ -47,6 +47,13 @@ class VerifyAndCommit(Capability):
     def after_action(self, action, result, before_state, after_state, ctx):
         if not at_least(ctx.risk or R2, R2):
             return None
+        # the COMMIT TOOL CALL itself failed -> the commit did not land. Do NOT evaluate the postcondition
+        # against a coincidental state change and call it verified; this is a failed (not verified) commit.
+        if ctx.result_ok is False:
+            ctx.verification = False
+            return self._decide(D.REVISE, rule_id="commit_execution_failed", reason_code="violated_commit",
+                                deterministic=True, reason="the commit tool call failed (did not execute)",
+                                feedback="The commit did not execute successfully — check the error and retry.")
         cp = ctx.contract.commit_point_for(ctx.sem) if (ctx.contract and ctx.sem) else None
         posts = (cp or {}).get("postconditions") or []
         # AND every merged postcondition: any False -> violated; else any None -> unknown; else verified.

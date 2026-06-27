@@ -612,6 +612,47 @@ def test_gui_subject_projected_from_raw_observation():
     assert eff.type == D.BLOCK and "DEN-999" in str(eff.feedback), eff.feedback
 
 
+def test_failed_commit_not_verified():
+    """A commit whose TOOL CALL failed (result_ok=False) is NOT verified, even if the state hash happened
+    to change — the commit did not land."""
+    k = _kernel("enforce")
+    allergy = {"type": "tool", "tool": "fhir_search", "args": {"patient": "Patient/123", "resource_type": "AllergyIntolerance"}}
+    k.after_action(allergy, "penicillin", {"a": 0}, {"a": 1}, step=1, result_ok=True)
+    create = {"type": "tool", "tool": "create_medication_request", "args": {"patient": "Patient/123"}}
+    assert k.before_action(create, step=2).type == D.ALLOW
+    eff = k.after_action(create, {"error": "HTTP 500"}, "old", "new", step=2, result_ok=False)  # tool failed
+    assert eff.type == D.REVISE
+    assert k.ledger.commit_history[-1]["verified"] is False, k.ledger.commit_history[-1]
+
+
+def test_empty_result_not_validated():
+    """A successful-but-EMPTY read ({} / {"ok": true}) carries no evidence -> ATTEMPTED, cannot satisfy."""
+    k = _kernel("enforce")
+    allergy = {"type": "tool", "tool": "fhir_search", "args": {"patient": "Patient/123", "resource_type": "AllergyIntolerance"}}
+    k.after_action(allergy, {}, {"a": 0}, {"a": 1}, step=1, result_ok=True)
+    assert k.ledger.obligation_state("check_allergies") != "SATISFIED"
+    k.after_action(allergy, {"entries": [{"id": 1}]}, {"a": 1}, {"a": 2}, step=2, result_ok=True)   # real payload
+    assert k.ledger.obligation_state("check_allergies") == "SATISFIED"
+
+
+def test_final_answer_verified_repair():
+    """A final-answer commit (perceptual) that was REVISE'd for missing grounding, then grounded + supported,
+    becomes a VERIFIED repair (not only precondition_repaired)."""
+    pol = H.load_policy(env_type="tool_sandbox")
+    task = {"task_id": "m", "goal": "finding?", "context": {}, "environment": {"type": "tool_sandbox"}}
+    contract = build_contract(task, env_type="tool_sandbox", policy=pol)
+    judge = lambda p: '{"supported": true, "confidence": 0.9, "reason": "ok"}'
+    k = HarnessKernel(contract, [ScopeEvidenceBinding(), ObligationLifecycle(), VerifyAndCommit()],
+                      mode="enforce", policy=pol, env_type="tool_sandbox", judge_fn=judge,
+                      budget={"max_semantic_checks": 5})
+    assert k.before_final("RUL nodule", step=0).type == D.REVISE       # ungrounded -> opens repair
+    k.after_action({"type": "tool", "tool": "ImageDescription", "args": {}}, "a 3cm RUL nodule",
+                   None, None, step=1, result_ok=True)
+    assert k.before_final("RUL nodule", step=2).type == D.ALLOW        # grounded + supported -> verified
+    assert any(r["resolution"] == "repaired" for r in k.ledger.resolutions)
+    assert gov.summarize(k.ledger, [], "enforce")["verified_repair_rate"] == 1.0
+
+
 def _run():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     passed = 0
