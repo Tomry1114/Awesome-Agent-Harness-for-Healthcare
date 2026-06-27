@@ -241,6 +241,37 @@ def test_p3_semantic_claim_support_judge():
     assert any(r["rule_id"] == "semantic_claim_support" for r in nj.ledger.unresolved_risks)
 
 
+def test_tool_renaming_invariance():
+    """GENERALITY: rename every tool to an opaque id in the manifest; the SAME gates fire. The harness
+    depends on capability SEMANTICS (manifest mapping), not on any tool name -> a new dataset that uses
+    different tool names works by writing its manifest, with zero harness change."""
+    pol = {
+        "manifest": {
+            "subject": {"type": "patient", "id_context_keys": ["patient_ref"], "from_args": ["patient"]},
+            "actions": [
+                {"match": {"tool": "xq7"}, "semantic_type": "read", "effect": "none",
+                 "resource": "AllergyIntolerance", "produces_evidence": {"source_class": "record"}},
+                {"match": {"tool": "zz9"}, "semantic_type": "create", "effect": "irreversible",
+                 "resource": "MedicationRequest"},
+            ],
+        },
+        "evidence_obligations": [{"id": "allergies",
+                                 "satisfied_by": {"source_class": "record", "resource": "AllergyIntolerance"}}],
+        "commit_points": [{"match": {"semantic_type": "create", "resource": "MedicationRequest"},
+                           "risk": "R2", "requires": ["allergies"], "postcondition": {"type": "state_transition"}}],
+    }
+    task = {"task_id": "t", "goal": "g", "context": {"patient_ref": "Patient/123"}, "environment": {"type": "fhir"}}
+    contract = build_contract(task, env_type="fhir", policy=pol)
+    k = HarnessKernel(contract, [ScopeEvidenceBinding(), ObligationLifecycle(), VerifyAndCommit()],
+                      mode="enforce", policy=pol, env_type="fhir")
+    create = {"type": "tool", "tool": "zz9", "args": {"patient": "Patient/123"}}
+    assert k.before_action(create, step=0).type == D.REVISE                 # missing prerequisite
+    k.after_action({"type": "tool", "tool": "xq7", "args": {"patient": "Patient/123"}}, "ok", {"a": 0}, {"a": 1}, step=1)
+    assert k.ledger.obligation_state("allergies") == "SATISFIED"            # satisfied by evidence class
+    assert k.before_action(create, step=2).type == D.ALLOW
+    assert k.before_action({"type": "tool", "tool": "xq7", "args": {"patient": "Patient/999"}}, step=3).type == D.BLOCK
+
+
 def test_kernel_has_no_benchmark_names():
     """GENERALITY GUARD: the harness core must not know which benchmark it runs — it governs by SUBSTRATE.
     No benchmark proper-name may appear anywhere under runner/harness/. A new dataset works by writing an
