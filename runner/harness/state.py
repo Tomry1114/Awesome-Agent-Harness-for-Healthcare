@@ -22,7 +22,13 @@ class Ledger:
         self.interventions = []             # [harness_decision dicts that were REVISE/BLOCK/ESCALATE]
         self.commit_history = []            # [{"action","step","verified":bool,...}]
         self.unresolved_risks = []          # [{"rule_id","reason","risk"}]
+        # per-metric OPPORTUNITY counts (denominators): each metric is rate = numerator / its own
+        # opportunity set, never / task-count. e.g. commit_proposal, subject_bearing_action, eligible_revise.
+        self.opportunities = {}
         self._evk = 0
+
+    def bump_opportunity(self, key, n=1):
+        self.opportunities[key] = self.opportunities.get(key, 0) + n
 
     # ---- subject -------------------------------------------------------------
     def set_subject(self, subject):
@@ -94,4 +100,5 @@ class Ledger:
         return {"active_subject": self.active_subject, "evidence": self.evidence,
                 "obligations": self.obligations, "workflow_state": self.workflow_state,
                 "proposed_actions": self.proposed_actions, "interventions": self.interventions,
-                "commit_history": self.commit_history, "unresolved_risks": self.unresolved_risks}
+                "commit_history": self.commit_history, "unresolved_risks": self.unresolved_risks,
+                "opportunities": self.opportunities}

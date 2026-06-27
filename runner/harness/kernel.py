@@ -86,9 +86,11 @@ class HarnessKernel:
         else:  # enforce
             eff = raw
         note = None
-        # budget: only an EFFECTIVE (run-affecting) intervention consumes budget; exhausted -> ALLOW.
+        # budget is a RESOURCE constraint, NOT a safety override: an exhausted budget must NEVER silently
+        # turn a would-be BLOCK/REVISE/ESCALATE into ALLOW. Instead it ESCALATEs (terminate safely). Only
+        # an EFFECTIVE (run-affecting) intervention consumes budget.
         if eff != D.ALLOW and self._n_interventions >= self.budget["max_interventions_per_task"]:
-            eff, note = D.ALLOW, "budget_exhausted_interventions"
+            eff, note = D.ESCALATE, "budget_exhausted_interventions"
         ev = self._ev("harness_decision", stage, decision, mode_applied=eff,
                       extra=({"note": note} if note else None))
         # record the WOULD-BE intervention (raw) with its effective outcome, in every mode
@@ -103,6 +105,9 @@ class HarnessKernel:
         self.ctx.step = step
         risk = self.risk_of(action) if self.risk_of else None
         pid = self.ledger.record_proposed(_action_name(action), risk, step)
+        from .risk import at_least, R2
+        if risk and at_least(risk, R2):
+            self.ledger.bump_opportunity("commit_proposal")   # denominator for missing_prerequisite_rate
         decisions = []
         for cap in self.capabilities:
             try:

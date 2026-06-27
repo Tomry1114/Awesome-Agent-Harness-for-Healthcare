@@ -140,7 +140,7 @@ def test_leak_firewall():
 
 
 def test_off_mode_returns_none():
-    assert H.build_kernel(TASK, bench="PhysicianBench", env_type="fhir", mode="off") is None
+    assert H.build_kernel(TASK, env_type="fhir", mode="off") is None
 
 
 def test_budget_caps_interventions():
@@ -148,7 +148,9 @@ def test_budget_caps_interventions():
     foreign = {"type": "tool", "tool": "fhir_search", "args": {"patient": "Patient/456"}}
     effs = [k.before_action(foreign, step=i) for i in range(5)]
     n_block = sum(1 for e in effs if e.type == D.BLOCK)
-    assert n_block == 2, n_block               # only 2 effective blocks; rest budget-exhausted -> ALLOW
+    assert n_block == 2, n_block               # only 2 effective blocks (budget=2)
+    assert all(e.type != D.ALLOW for e in effs), "exhausted budget must NEVER silently ALLOW a BLOCK"
+    assert effs[-1].type == D.ESCALATE, "over-budget interventions ESCALATE (resource limit, not safety override)"
 
 
 def test_governance_summary_counts_wrong_scope():
@@ -175,8 +177,8 @@ def test_p1_physicianbench_real_pack():
     pattern-based risk (fhir_medication_request_create = R2; a search = R0)."""
     from harness.engines.policy import load_policy
     from harness.risk import classify_risk
-    pol = load_policy(bench="PhysicianBench", env_type="fhir")
-    assert pol.get("_pack_name") == "physicianbench", pol.get("_pack_name")
+    pol = load_policy(env_type="fhir")
+    assert pol.get("_substrate") == "structured_record", pol.get("_substrate")
     task = {"task_id": "pb", "goal": "manage aberrant UDS",
             "context": {"patient_ref": "MRN6025656705"}, "environment": {"type": "fhir"},
             "source_benchmark": "PhysicianBench"}
@@ -212,8 +214,8 @@ def test_p2_healthadminbench_real_pack():
     (foreign displayed case), correct-case ALLOW, and submit (R2) post-commit state-change check."""
     from harness.engines.policy import load_policy
     from harness.risk import classify_risk
-    pol = load_policy(bench="HealthAdminBench", env_type="gui")
-    assert pol.get("_pack_name") == "healthadminbench", pol.get("_pack_name")
+    pol = load_policy(env_type="gui")
+    assert pol.get("_substrate") == "interactive_gui", pol.get("_substrate")
     task = {"task_id": "hab", "goal": "Open denial DEN-001 for Martinez, Carlos. Triage it.",
             "context": {"text": "Open denial DEN-001 and document a triage note."},
             "environment": {"type": "gui"}, "source_benchmark": "HealthAdminBench"}
@@ -246,8 +248,8 @@ def test_p3_medcta_real_pack():
     via engines.semantic / verify_commit.before_final.)"""
     from harness.engines.policy import load_policy
     from harness.risk import classify_risk
-    pol = load_policy(bench="MedCTA", env_type="tool_sandbox")
-    assert pol.get("_pack_name") == "medcta", pol.get("_pack_name")
+    pol = load_policy(env_type="tool_sandbox")
+    assert pol.get("_substrate") == "perceptual_tool", pol.get("_substrate")
     task = {"task_id": "m", "goal": "What is the finding in the chest CT?", "context": {},
             "environment": {"type": "tool_sandbox"}, "source_benchmark": "MedCTA"}
     contract = build_contract(task, env_type="tool_sandbox", policy=pol)
@@ -270,7 +272,7 @@ def test_p3_semantic_claim_support_judge():
     (fail-safe, recorded unverified). Uses a fake judge_fn so the test needs no live model."""
     from harness.engines.policy import load_policy
     from harness.risk import classify_risk
-    pol = load_policy(bench="MedCTA", env_type="tool_sandbox")
+    pol = load_policy(env_type="tool_sandbox")
     task = {"task_id": "m", "goal": "finding?", "context": {}, "environment": {"type": "tool_sandbox"},
             "source_benchmark": "MedCTA"}
     contract = build_contract(task, env_type="tool_sandbox", policy=pol)
@@ -295,6 +297,28 @@ def test_p3_semantic_claim_support_judge():
     nojudge = mk(None)
     assert nojudge.before_final("RUL nodule", step=1).type == D.ALLOW
     assert any(r["rule_id"] == "semantic_claim_support" for r in nojudge.ledger.unresolved_risks)
+
+
+def test_kernel_has_no_benchmark_names():
+    """GENERALITY GUARD: the harness core must not know which benchmark it is running — it governs by
+    SUBSTRATE only. No benchmark proper-name may appear anywhere under runner/harness/ (those names live
+    only in plugins / policy packs / task contracts). A new dataset must work by writing an adapter +
+    substrate pack, with ZERO harness change."""
+    import os as _o
+    root = _o.path.join(_o.path.dirname(_o.path.abspath(__file__)), "harness")
+    forbidden = ("MedCTA", "PhysicianBench", "HealthAdminBench")
+    hits = []
+    for dp, _dn, fns in _o.walk(root):
+        if "__pycache__" in dp:
+            continue
+        for fn in fns:
+            if not fn.endswith(".py"):
+                continue
+            txt = open(_o.path.join(dp, fn)).read()
+            for name in forbidden:
+                if name in txt:
+                    hits.append("%s: %s" % (_o.path.relpath(_o.path.join(dp, fn), root), name))
+    assert not hits, "benchmark name(s) leaked into the harness core: %s" % hits
 
 
 def _run():

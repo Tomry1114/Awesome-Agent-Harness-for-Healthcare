@@ -10,10 +10,14 @@ import os, json
 _PACK_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
                          "policy_packs")
 
-_BENCH_TO_PACK = {
-    "PhysicianBench": "physicianbench", "HealthAdminBench": "healthadminbench", "MedCTA": "medcta",
+# SUBSTRATE packs — keyed by the environment SUBSTRATE, never by a benchmark name. The harness does not
+# know which benchmark it is running; the environment adapter declares its substrate via env_type. A new
+# dataset reuses an existing substrate pack (or adds one substrate) -> zero harness change.
+_SUBSTRATE_BY_ENV = {
+    "fhir": "structured_record",        # any structured record system (EHR / DB / API resources)
+    "gui": "interactive_gui",           # any web / desktop GUI workflow
+    "tool_sandbox": "perceptual_tool",  # any perceptual tool environment (image / pathology / video)
 }
-_ENV_TO_PACK = {"fhir": "physicianbench", "gui": "healthadminbench", "tool_sandbox": "medcta"}
 
 # minimal safe defaults if no pack file is present (keeps the kernel runnable out of the box).
 COMMON_DEFAULTS = {
@@ -60,14 +64,19 @@ def _deep_merge(base, over):
     return out
 
 
-def load_policy(bench=None, env_type=None):
-    """Resolve a pack name from bench (preferred) or env type, merge common <- pack."""
-    name = _BENCH_TO_PACK.get(bench) or _ENV_TO_PACK.get(env_type)
+def substrate_of(env_type):
+    return _SUBSTRATE_BY_ENV.get(env_type)
+
+
+def load_policy(substrate=None, env_type=None):
+    """Resolve a SUBSTRATE pack (explicit substrate, else mapped from env_type), merge common <- pack.
+    Takes no benchmark name."""
+    name = substrate or _SUBSTRATE_BY_ENV.get(env_type)
     common = _read_pack_file("common")
     policy = _deep_merge(COMMON_DEFAULTS, common or {})
     if name:
         pack = _read_pack_file(name)
         if pack:
             policy = _deep_merge(policy, pack)
-    policy["_pack_name"] = name
+    policy["_substrate"] = name
     return policy

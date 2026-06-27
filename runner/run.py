@@ -122,8 +122,9 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
     try:
         import harness as _Harness
         if _Harness.resolve_mode(os.environ.get("MH_HARNESS_MODE")) != "off":
-            _harness = _Harness.build_kernel(task, bench=task.get("source_benchmark") or bench,
-                                             env_type=env_type, mode=os.environ.get("MH_HARNESS_MODE"))
+            # the harness governs by SUBSTRATE (env_type) only — no benchmark name is passed in.
+            _harness = _Harness.build_kernel(task, env_type=env_type,
+                                             mode=os.environ.get("MH_HARNESS_MODE"))
     except Exception:
         _harness = None
 

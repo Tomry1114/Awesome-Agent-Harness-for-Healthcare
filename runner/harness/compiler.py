@@ -16,8 +16,9 @@ FORBIDDEN_KEYS = frozenset({
     "dimension_scores", "native_outcome", "outcome", "success", "whitelist_ref", "hidden_reference",
     "expected_subject_answer", "gacc", "pi", "U",
 })
-# task fields the compiler is ALLOWED to see.
-ALLOWED_TASK_FIELDS = ("task_id", "goal", "context", "environment", "available_tools", "source_benchmark")
+# task fields the compiler is ALLOWED to see. NOTE: the benchmark NAME is deliberately NOT here — the
+# harness governs by SUBSTRATE (env_type), never by which dataset it is.
+ALLOWED_TASK_FIELDS = ("task_id", "goal", "context", "environment", "available_tools")
 
 
 class LeakError(Exception):
@@ -40,8 +41,7 @@ class CompilerInputs:
     """The ONLY view of a task the compiler receives. Constructed by whitelisting task fields; the
     constructor raises LeakError if any forbidden key slips into the allowed subset."""
 
-    __slots__ = ("task_id", "goal", "context", "env_type", "capabilities", "observed", "policy",
-                 "source_benchmark")
+    __slots__ = ("task_id", "goal", "context", "env_type", "capabilities", "observed", "policy")
 
     def __init__(self, task, env_type=None, capabilities=None, observed=None, policy=None):
         safe = {k: task.get(k) for k in ALLOWED_TASK_FIELDS if k in task}
@@ -55,7 +55,6 @@ class CompilerInputs:
         self.capabilities = list(capabilities or [])
         self.observed = list(observed or [])     # info the agent has already seen (events/values)
         self.policy = dict(policy or {})          # public policy pack
-        self.source_benchmark = safe.get("source_benchmark")
 
 
 class ContractCompiler:
@@ -74,11 +73,11 @@ class ContractCompiler:
         wf_obs = list(policy.get("workflow_obligations", []))
         commits = list(policy.get("commit_points", []))
         return ClinicalProcessContract(
-            contract_id="%s-%s" % (inputs.source_benchmark or inputs.env_type or "task", inputs.task_id),
+            contract_id="%s-%s" % (inputs.env_type or "task", inputs.task_id),
             subject=subject, evidence_obligations=ev_obs, workflow_obligations=wf_obs,
             commit_points=commits,
-            meta={"env_type": inputs.env_type, "compiled_from": "policy_pack",
-                  "source_benchmark": inputs.source_benchmark})
+            meta={"env_type": inputs.env_type, "substrate": (policy.get("_substrate")),
+                  "compiled_from": "substrate_policy_pack"})
 
     def _resolve_subject(self, inputs, policy):
         """Subject = the operation target, read from task-visible context via the policy pack's
@@ -96,8 +95,8 @@ class ContractCompiler:
                 if isinstance(ev, dict) and ev.get("assigned_subject"):
                     sid = ev["assigned_subject"]; break
         if sid is None and spec.get("id_goal_regex"):
-            # declared extraction of the ASSIGNED operand from task-visible goal/context text (e.g. the
-            # case id 'DEN-001' a HAB task names). This reads the operand, never a gold answer.
+            # declared extraction of the ASSIGNED operand from task-visible goal/context text (e.g. a case
+            # id a GUI task names in its goal). This reads the operand, never a gold answer.
             import re
             hay = " ".join(str(x) for x in (inputs.goal, ctx.get("text")) if x)
             m = re.search(spec["id_goal_regex"], hay)
