@@ -885,6 +885,50 @@ def test_pb_is_required_write_exact_path():
         os.environ.pop("MH_DELIV_SCAFFOLD", None) if _o is None else os.environ.__setitem__("MH_DELIV_SCAFFOLD", _o)
 
 
+def test_perceptual_evidence_facet_gate():
+    # the QUESTION names localization + vascular involvement. Once base image grounding exists but those
+    # facets are NOT covered, Module B REVISEs naming the SPECIFIC missing facet (early, actionable) rather
+    # than waiting for a single all-or-nothing judgement. Covering the facets clears it.
+    from harness.facets import required_facets
+    assert set(required_facets("Where is the lesion and is the portal vein involved?", {})) == \
+        {"anatomical_localization", "vascular_relationship"}
+    pol = H.load_policy(env_type="tool_sandbox")
+    task = {"task_id": "m", "goal": "Where is the lesion and is the portal vein involved?",
+            "context": {}, "environment": {"type": "tool_sandbox"}}
+    contract = build_contract(task, env_type="tool_sandbox", policy=pol)
+    sup = lambda pr: '{"relation": "supported", "supported": true, "confidence": 0.9, "reason": "ok"}'
+    k = HarnessKernel(contract, [ScopeEvidenceBinding(), ObligationLifecycle(), VerifyAndCommit()],
+                      mode="enforce", policy=pol, env_type="tool_sandbox", judge_fn=sup,
+                      budget={"max_semantic_checks": 5})
+    # base grounding present (generic image evidence) but NO facet coverage -> missing_facet REVISE wins.
+    k.after_action({"type": "tool", "tool": "ImageDescription", "args": {}},
+                   "axial CT of the upper abdomen", None, None, step=0, result_ok=True)
+    d = k.before_final("portal vein thrombosis in segment IV", step=1)
+    assert d.type == D.REVISE and getattr(d.raw, "reason_code", None) == "missing_facet", (d.type, getattr(d.raw, "reason_code", None))
+    # cover BOTH facets (a region inspection naming the vessel + segment) -> facet gate clears -> ALLOW.
+    k.after_action({"type": "tool", "tool": "RegionAttributeDescription", "args": {"region": "portal vein"}},
+                   "the portal vein in segment IV shows an intraluminal filling defect (thrombosis); located right lobe region",
+                   None, None, step=2, result_ok=True)
+    d2 = k.before_final("portal vein thrombosis in segment IV", step=3)
+    assert d2.type == D.ALLOW, (d2.type, getattr(d2.raw, "reason_code", None))
+
+
+def test_non_perceptual_has_no_facet_gate():
+    # structured_record (PB-like) must NOT get the perceptual facet gate even with a facet-laden goal.
+    pol = dict(POLICY)
+    task = {"task_id": "t", "goal": "Where is the lesion and measure its size and vascular invasion?",
+            "context": {"patient_ref": "Patient/123"}, "environment": {"type": "fhir"}}
+    contract = build_contract(task, env_type="fhir", policy=pol)
+    cap = ObligationLifecycle()
+    assert cap._facet_gate(_ctx_for(contract, pol)) is None
+
+
+def _ctx_for(contract, pol):
+    from harness.capability import HarnessContext
+    from harness.state import Ledger
+    return HarnessContext(Ledger(), contract, pol, "enforce", env_type="fhir")
+
+
 def _run():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     passed = 0

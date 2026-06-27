@@ -44,6 +44,11 @@ def main():
 
     base_out = os.path.join(ROOT, args.out) if not os.path.isabs(args.out) else args.out
     agent_out = os.path.join(base_out, args.agent)
+    # FRESH per run: wipe any prior bundles so a re-run (esp. after a code change / new git SHA) can never
+    # leave a stale result.json behind for cmp_report to glob and MIX with this run's tasks. Opt out with
+    # MH_KEEP_PRIOR_BUNDLES=1 (append mode).
+    if os.path.isdir(agent_out) and os.environ.get("MH_KEEP_PRIOR_BUNDLES", "").lower() not in ("1", "on", "true"):
+        shutil.rmtree(agent_out, ignore_errors=True)
     os.makedirs(agent_out, exist_ok=True)
     if args.reset_mode == "restore_pristine":
         R.reset_fhir("restore_pristine")
