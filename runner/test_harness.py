@@ -1013,6 +1013,40 @@ def test_selective_repair_foundation():
     assert adopt_revised({}) is False                             # no comparison -> keep A
 
 
+def test_selective_repair_trigger_auto_recedes():
+    # AUTO-RECEDING amplification: a repairable gap engages candidate repair ONLY on a real deficit
+    # (addresses_task False, or auditor confidence >= threshold). A competent answer with a low-confidence
+    # minor gap is ALLOWED -> the amplification layer trips less as the model improves.
+    import os
+    os.environ["MH_REPAIR"] = "full"
+    try:
+        pol = H.load_policy(env_type="tool_sandbox")
+        task = {"task_id": "m", "goal": "finding?", "context": {}, "environment": {"type": "tool_sandbox"}}
+        contract = build_contract(task, env_type="tool_sandbox", policy=pol)
+
+        def mk(jf):
+            k = HarnessKernel(contract, [ScopeEvidenceBinding(), ObligationLifecycle(), VerifyAndCommit()],
+                              mode="enforce", policy=pol, env_type="tool_sandbox", judge_fn=jf,
+                              budget={"max_semantic_checks": 5})
+            k.after_action({"type": "tool", "tool": "ImageDescription", "args": {}},
+                           "a 3cm RUL nodule", None, None, step=0, result_ok=True)
+            return k
+
+        low = ('{"addresses_task": true, "hard_violations": [], "repairable_gaps": '
+               '[{"type": "over_specific", "claim": "x", "evidence_ids": ["E1"], "critique": "minor"}], "confidence": 0.4}')
+        hi = ('{"addresses_task": false, "hard_violations": [], "repairable_gaps": '
+              '[{"type": "unanswered", "claim": "x", "evidence_ids": ["E1"], "critique": "no dx"}], "confidence": 0.4}')
+        conf = ('{"addresses_task": true, "hard_violations": [], "repairable_gaps": '
+                '[{"type": "over_specific", "claim": "x", "evidence_ids": ["E1"], "critique": "c"}], "confidence": 0.9}')
+        assert mk(lambda p: low).before_final("ans", step=1).type == D.ALLOW          # below threshold -> recede
+        d2 = mk(lambda p: hi).before_final("ans", step=1)
+        assert d2.type == D.REVISE and d2.raw.reason_code == "repairable_gap"          # not addressed -> repair
+        d3 = mk(lambda p: conf).before_final("ans", step=1)
+        assert d3.type == D.REVISE and d3.raw.reason_code == "repairable_gap"          # high-conf gap -> repair
+    finally:
+        os.environ.pop("MH_REPAIR", None)
+
+
 def _run():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     passed = 0

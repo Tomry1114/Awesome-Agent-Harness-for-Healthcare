@@ -105,6 +105,16 @@ class VerifyAndCommit(Capability):
         soft/select/full add Layer-2 candidate repair. Instance attr overrides env (for tests)."""
         return getattr(self, "repair_mode", None) or os.environ.get("MH_REPAIR", "hard")
 
+    def _repair_min_conf(self):
+        """SELECTIVE trigger (auto-receding amplification): a repairable gap engages candidate repair only
+        when the answer signals a real deficit -- it does not address the task, OR the auditor is at least
+        this confident in the gap. A stronger model that confidently addresses tasks trips this less and the
+        amplification layer recedes on its own. (Self-consistency sampling is the fuller, costlier variant.)"""
+        try:
+            return float(os.environ.get("MH_REPAIR_MIN_CONF", "0.7"))
+        except Exception:
+            return 0.7
+
     def _audit_path(self, answer, ctx, evid, task_goal, public_context, ptype, side_effecting):
         """Layer-2: adequacy audit -> a localized HARD violation (must-resolve) or a REPAIRABLE gap
         (candidate mode: keep A, ask for revised B; run.py runs the conservative A/B selection)."""
@@ -130,7 +140,8 @@ class VerifyAndCommit(Capability):
                 feedback="Your answer has a hard defect (%s) on claim '%s' that the evidence refutes -- "
                          "remove, correct, or qualify it." % (hv.get("type"), hv.get("claim")))
         gap = au.top_gap()
-        if gap:
+        _significant = gap is not None and (au.addresses_task is False or (au.confidence or 0) >= self._repair_min_conf())
+        if _significant:
             ctx.ledger.pending_resolution = None
             ctx.verification = None
             _cd = dict(_ex); _cd["candidate"] = True; _cd["critique"] = gap.get("critique") or gap.get("claim")
