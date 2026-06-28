@@ -1059,6 +1059,20 @@ def test_active_readback_reconcile_write():
     assert _E.EnvironmentAdapter.__new__(_E.EnvironmentAdapter).reconcile_write("x", {}, {})["confirmed"] is None
 
 
+def test_active_readback_portal_submit():
+    # portal: a submit whose click left the persisted case state unchanged -> NOT confirmed (HAB-18 case).
+    import environments as _E
+    g = _E.GuiEnvReal.__new__(_E.GuiEnvReal)
+    g.page = object()                       # non-None so reconcile engages
+    g._read_state = lambda: None
+    g.full_state = {"emr": {"case": "DEN-1", "disposition": "appeals"}}
+    assert g.reconcile_write("submit", {}, {"ok": True, "state_changed": True})["confirmed"] is True
+    assert g.reconcile_write("submit", {}, {"ok": True, "state_changed": False})["confirmed"] is False
+    g.full_state = {}
+    assert g.reconcile_write("submit", {}, {"ok": True})["confirmed"] is False        # nothing persisted
+    assert g.reconcile_write("click", {}, {"ok": True})["confirmed"] is None          # not a commit
+
+
 def _run():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     passed = 0

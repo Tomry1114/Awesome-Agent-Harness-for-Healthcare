@@ -440,6 +440,24 @@ class GuiEnvReal(EnvironmentAdapter):
         return {"ok": True, "url": self.page.url, "title": self.page.title(), "observation": obs,
                 "state_changed": bool(changed), "surface_changed": bool(changed)}
 
+    def reconcile_write(self, name, args, result):
+        """Active read-back: after a `submit`, re-read the persisted EMR (localStorage portals_state.emr,
+        the same object the checkpoints score) to confirm the submission actually registered -- catching a
+        submit whose click timed out and left the case state unchanged (HAB-18). Only the commit (`submit`)
+        is reconciled; reads / intermediate fills are not."""
+        if name != "submit" or self.page is None:
+            return {"confirmed": None, "detail": "not_reconcilable"}
+        if isinstance(result, dict) and result.get("state_changed") is False:
+            return {"confirmed": False, "detail": "submit left the persisted case state unchanged"}
+        try:
+            self._read_state()
+            emr = self.full_state or {}
+        except Exception as ex:
+            return {"confirmed": False, "detail": "readback_error:%r" % (ex,)}
+        if not emr:
+            return {"confirmed": False, "detail": "EMR empty on read-back (nothing persisted)"}
+        return {"confirmed": True, "detail": "case state persisted on read-back"}
+
     def state_summary(self):
         """Deterministic, JSON-able digest of the REAL portal's mutable state (item #2): the current
         route plus the persisted EMR (localStorage portals_state.emr, the same object the JMESPath
