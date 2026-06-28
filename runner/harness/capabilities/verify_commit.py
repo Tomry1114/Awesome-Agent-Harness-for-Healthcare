@@ -14,6 +14,7 @@ import os
 
 
 class VerifyAndCommit(Capability):
+    # LAYER (see HARNESS_DESIGN.md): INFRA (process-output/commit integrity) + COMPENSATION (claim-support contradiction veto) + AMPLIFICATION (Selective Epistemic Repair, MH_REPAIR-gated, provisional)
     name = "verify_commit"
 
     def before_action(self, action, ctx):

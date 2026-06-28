@@ -11,6 +11,7 @@ from .. import decision as D
 
 
 class ScopeEvidenceBinding(Capability):
+    # LAYER (see HARNESS_DESIGN.md): INFRASTRUCTURE -- subject binding + evidence ledger (the interface a clinical agent needs; environment-facing, durable)
     name = "scope_evidence"
 
     def before_action(self, action, ctx):

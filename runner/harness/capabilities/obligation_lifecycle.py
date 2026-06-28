@@ -12,6 +12,7 @@ from ..state import SATISFIED, WAIVED
 
 
 class ObligationLifecycle(Capability):
+    # LAYER (see HARNESS_DESIGN.md): INFRASTRUCTURE (prerequisite/commit gating) + COMPENSATION (no_new_progress loop-detection -- fragile, ablatable)
     name = "obligation_lifecycle"
 
     def on_contract(self, ctx):
