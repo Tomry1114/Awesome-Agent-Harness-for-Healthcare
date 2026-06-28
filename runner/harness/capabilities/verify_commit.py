@@ -144,14 +144,21 @@ class VerifyAndCommit(Capability):
         if _significant:
             ctx.ledger.pending_resolution = None
             ctx.verification = None
-            _cd = dict(_ex); _cd["candidate"] = True; _cd["critique"] = gap.get("critique") or gap.get("claim")
-            _cd["gap_type"] = gap.get("type"); _cd["verification_flag"] = "unverified_grounding"
+            _cd = dict(_ex); _cd["process_gap"] = True; _cd["gap_type"] = gap.get("type")
+            _cd["critique"] = gap.get("critique") or gap.get("claim"); _cd["verification_flag"] = "unverified_grounding"
+            # IN-PROCESS BEHAVIOR GUIDANCE (not a post-hoc answer verdict): point at the specific PROCESS gap so
+            # the agent goes back and does the work with its OWN competence, then re-concludes -- capturing
+            # (max-competence - first-pass-competence) WITHOUT reading gold. The harness does not say the
+            # answer is wrong; it says the work that would support it is not yet done. The agent re-enters the
+            # tool loop (REVISE -> continue); if it still cannot, the answer is delivered with a flag.
             return self._decide(
-                D.REVISE, rule_id="repairable_gap", reason_code="repairable_gap", deterministic=False, extra=_cd,
-                reason="answer has a repairable gap (%s): %s" % (gap.get("type"), gap.get("critique")),
-                feedback="Your answer can be improved (%s): %s. Produce a REVISED final answer that addresses "
-                         "this specific gap using your validated evidence -- the original is kept unless the "
-                         "revision is clearly better." % (gap.get("type"), gap.get("critique")))
+                D.REVISE, rule_id="process_gap", reason_code="process_gap", deterministic=False, extra=_cd,
+                reason="process incomplete for this conclusion (%s): %s" % (gap.get("type"), gap.get("critique")),
+                feedback="Before you finalize, your PROCESS is incomplete: %s. Go back and DO the work with "
+                         "your tools -- examine the distinguishing feature / rule out the alternative / gather "
+                         "the missing evidence -- then answer again. You are NOT being told the answer is "
+                         "wrong; you are being told the supporting work is not yet done."
+                         % (gap.get("critique") or gap.get("claim")))
         ctx.ledger.pending_resolution = None
         ctx.verification = True if au.addresses_task else None
         return None

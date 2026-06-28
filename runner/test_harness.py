@@ -1040,9 +1040,9 @@ def test_selective_repair_trigger_auto_recedes():
                 '[{"type": "over_specific", "claim": "x", "evidence_ids": ["E1"], "critique": "c"}], "confidence": 0.9}')
         assert mk(lambda p: low).before_final("ans", step=1).type == D.ALLOW          # below threshold -> recede
         d2 = mk(lambda p: hi).before_final("ans", step=1)
-        assert d2.type == D.REVISE and d2.raw.reason_code == "repairable_gap"          # not addressed -> repair
+        assert d2.type == D.REVISE and d2.raw.reason_code == "process_gap"          # not addressed -> repair
         d3 = mk(lambda p: conf).before_final("ans", step=1)
-        assert d3.type == D.REVISE and d3.raw.reason_code == "repairable_gap"          # high-conf gap -> repair
+        assert d3.type == D.REVISE and d3.raw.reason_code == "process_gap"          # high-conf gap -> repair
     finally:
         os.environ.pop("MH_REPAIR", None)
 

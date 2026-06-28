@@ -28,6 +28,7 @@ LAYER_OF = {
     "unjudgeable_low_confidence":     (COMPENSATION, "low-confidence grounding"),
     # --- AMPLIFICATION: a better way to use existing capability (provisional; re-measure each generation) ---
     "repairable_gap":                 (AMPLIFICATION, "selective epistemic repair (candidate)"),
+    "process_gap":                    (AMPLIFICATION, "in-process behavior guidance"),
     # rule_id fallbacks (older bundles surfaced rule_id but not reason_code)
     "commit_execution_failed":        (INFRASTRUCTURE, "commit integrity (failed/unknown write)"),
     "commit_state_unknown":           (INFRASTRUCTURE, "unknown commit state"),
