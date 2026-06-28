@@ -1089,6 +1089,23 @@ def test_unknown_unobservable_commit_reconciles_not_terminates():
     assert k.ctx.verification is None
 
 
+def test_goal_spec_compilation_oracle_blind():
+    # P1.2: the PUBLIC goal compiles into a structured, checkable goal_spec -- no judge -> None (fail-safe).
+    from harness.engines.semantic import compile_goal_spec, audit_answer
+    jf = lambda p: ('{"requested_operation": "submit a denial appeal", "required_effects": '
+                    '["case status appealed"], "required_fields": ["appeal_reason"], "forbidden_effects": [], '
+                    '"success_observables": ["disposition recorded"]}')
+    gs = compile_goal_spec("Appeal the denial for DEN-1", "payer Aetna", judge_fn=jf)
+    assert gs["requested_operation"] == "submit a denial appeal" and gs["required_fields"] == ["appeal_reason"]
+    assert compile_goal_spec("g", "c", judge_fn=None) is None        # fail-safe
+    # the auditor accepts goal_spec and still parses a verdict (goal-aware adequacy)
+    aj = lambda p: ('{"addresses_task": false, "hard_violations": [], "repairable_gaps": [{"type": '
+                    '"unanswered", "claim": "x", "evidence_ids": ["E1"], "critique": "missing appeal_reason"}], '
+                    '"confidence": 0.9}')
+    au = audit_answer("appeal?", "ctx", "done", [{"type": "e", "value": "x"}], judge_fn=aj, goal_spec=gs)
+    assert au.top_gap() is not None and "goal_spec" not in str(au.to_dict())   # spec is in the prompt, not the verdict
+
+
 def _run():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     passed = 0

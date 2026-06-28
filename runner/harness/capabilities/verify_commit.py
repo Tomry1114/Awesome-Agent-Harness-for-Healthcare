@@ -132,7 +132,8 @@ class VerifyAndCommit(Capability):
         """Layer-2: adequacy audit -> a localized HARD violation (must-resolve) or a REPAIRABLE gap
         (candidate mode: keep A, ask for revised B; run.py runs the conservative A/B selection)."""
         from ..engines.semantic import audit_answer
-        au = audit_answer(task_goal, public_context, answer, evid, judge_fn=ctx.judge_fn)
+        _gspec = (ctx.contract.meta or {}).get("goal_spec") if (ctx.contract and ctx.contract.meta) else None
+        au = audit_answer(task_goal, public_context, answer, evid, judge_fn=ctx.judge_fn, goal_spec=_gspec)
         _ex = {"audit": au.to_dict(), "side_effecting": side_effecting}
         hv = au.top_hard()
         if hv:

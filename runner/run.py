@@ -176,6 +176,16 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
         _harness = None
         _harness_build_failed = True
         _harness_runtime_errors.append("build_kernel: %r" % _he)
+    if _harness is not None and getattr(_harness, "contract", None) is not None and _harness.contract.meta is not None:
+        try:
+            from harness.engines.semantic import compile_goal_spec as _cgs
+            if "goal_spec" not in _harness.contract.meta:
+                _gspec = _cgs(_harness.contract.meta.get("goal"), _harness.contract.meta.get("public_context"),
+                              getattr(_harness.ctx, "judge_fn", None))
+                if _gspec:
+                    _harness.contract.meta["goal_spec"] = _gspec
+        except Exception as _ge:
+            _harness_runtime_errors.append("goal_spec: %r" % _ge)
 
     trajectory, last_obs, last_res, finished = [], None, None, False
     pending_harness_feedback = None   # CONTRACT(1): ADDITIVE harness feedback handed to the agent next turn

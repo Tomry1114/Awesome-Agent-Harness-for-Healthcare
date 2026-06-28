@@ -180,15 +180,18 @@ _AUDIT_PROMPT = (
 )
 
 
-def audit_answer(task_goal, public_context, answer, evidence, judge_fn=None):
+def audit_answer(task_goal, public_context, answer, evidence, judge_fn=None, goal_spec=None):
     """Adequacy audit -> SemanticAudit{addresses_task, hard_violations[], repairable_gaps[], confidence}.
     No judge -> empty audit (fail-safe: no fabricated defects). Evidence is the SAME selector-filtered,
     VALIDATED set the claim-support check sees."""
     if not judge_fn:
         return SemanticAudit(None, [], [], 0.0, "audit_judge_unavailable")
     ev_text = _format_evidence(evidence)
+    _gs = ("\n\nThe task EXPLICITLY requires (structured): " + json.dumps(goal_spec, ensure_ascii=False)
+           + "\nAlso flag, as a REPAIRABLE gap, any required_effect/required_field/requested_operation the "
+             "answer does not satisfy.") if goal_spec else ""
     prompt = _AUDIT_PROMPT.format(task_goal=str(task_goal or "(not provided)")[:2000],
-                                  public_context=str(public_context or "(none)")[:3000],
+                                  public_context=(str(public_context or "(none)")[:3000] + _gs),
                                   evidence=ev_text[:8000], answer=str(answer)[:2000])
     try:
         raw = judge_fn(prompt)
@@ -276,3 +279,42 @@ def adopt_revised(comparison, tau=0.15):
     c = comparison or {}
     return bool(c.get("preferred") == "revised" and (c.get("margin") or 0.0) >= tau
                 and c.get("critique_resolved") and not c.get("revised_new_hard_violation"))
+
+
+# ---------------------------------------------------------------------------------------------------------
+# GOAL-SPEC COMPILATION (P1.2). Restate the PUBLIC task goal in structured, checkable form -- never infer a
+# hidden reference answer or the correct clinical decision; only what the task EXPLICITLY requires. Compiled
+# once per task (frozen), so the harness can check "the action satisfied the task goal", not just "happened".
+# ---------------------------------------------------------------------------------------------------------
+_GOALSPEC_PROMPT = (
+    "Restate, in STRUCTURED form, ONLY what the PUBLIC task below EXPLICITLY requires. Do NOT infer a hidden "
+    "reference answer, the correct diagnosis, or the correct decision -- only restate the task's stated "
+    "requirements. Reply STRICT JSON: {{\"requested_operation\": \"<what the agent must do>\", "
+    '"required_effects": ["<observable effect the task requires>"], "required_fields": ["<element the output '
+    'must contain>"], "forbidden_effects": ["<what must NOT happen>"], "success_observables": ["<what a '
+    'correct completion makes observable>"]}}.\n\nGOAL:\n{goal}\n\nPUBLIC CONTEXT:\n{context}\n'
+)
+
+
+def compile_goal_spec(goal, public_context, judge_fn=None):
+    """PUBLIC goal -> structured goal_spec dict (or None). Oracle-blind: reads only goal/context, never gold."""
+    if not judge_fn or not goal:
+        return None
+    try:
+        raw = judge_fn(_GOALSPEC_PROMPT.format(goal=str(goal)[:2000], context=str(public_context or "")[:2000]))
+    except Exception:
+        return None
+    s = raw if isinstance(raw, str) else str(raw or "")
+    i, j = s.find("{"), s.rfind("}")
+    if i < 0 or j <= i:
+        return None
+    try:
+        d = json.loads(s[i:j + 1])
+    except Exception:
+        return None
+    def _l(k):
+        v = d.get(k)
+        return [str(x) for x in v if str(x).strip()] if isinstance(v, list) else ([str(v)] if v else [])
+    return {"requested_operation": str(d.get("requested_operation") or "")[:300],
+            "required_effects": _l("required_effects"), "required_fields": _l("required_fields"),
+            "forbidden_effects": _l("forbidden_effects"), "success_observables": _l("success_observables")}
