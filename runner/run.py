@@ -384,10 +384,23 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
                 _marker = (_out[_out.find("[") + 1:_out.find("]")] if "]" in _out else _out[:40]).lower()
                 if any(w in _marker for w in ("error", "unknown", "invalid", "fail")):
                     _err = _out[:120]
+        # ACTIVE READ-BACK: for a write that CLAIMED success, re-read the env to confirm it landed; an
+        # unconfirmed write becomes an error so the commit gate refuses to finalize over it (unknown state).
+        _recon = None
+        if not _err:
+            try:
+                _recon = env.reconcile_write(action["tool"], action.get("args", {}), res)
+            except Exception as _rex:
+                _recon = {"confirmed": None, "detail": "reconcile_error:%r" % (_rex,)}
+            if _recon and _recon.get("confirmed") is False:
+                _err = "readback_unconfirmed"
+        if _recon and _recon.get("confirmed") is not None:
+            trajectory.append({"step": step, "event_type": "reconciliation", "tool": action["tool"],
+                               "confirmed": _recon.get("confirmed"), "detail": _recon.get("detail"), "status": "ok"})
         _cres = _canon.canonical_result(res) or {}
         _estr = ("%s %s" % (_cres.get("error_type"), _err)).lower()
         _result_status = ("ok" if not _err
-                          else ("unknown" if ("timeout" in _estr or any(c in _estr for c in ("500", "502", "503", "429")))
+                          else ("unknown" if ("timeout" in _estr or "readback" in _estr or any(c in _estr for c in ("500", "502", "503", "429")))
                                 else "failed"))
         _hpost = None
         if _harness is not None:

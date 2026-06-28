@@ -27,6 +27,12 @@ class EnvironmentAdapter:
 
     def call_tool(self, name, args): raise NotImplementedError
 
+    def reconcile_write(self, name, args, result):
+        """ACTIVE READ-BACK (infrastructure): after a write, RE-READ the env to confirm the intended resource
+        actually landed -- do not trust the write's own result envelope. Returns {confirmed: True|False|None,
+        detail}. Default: this env cannot reconcile -> None (no-op; falls back to snapshot-based checks)."""
+        return {"confirmed": None, "detail": "reconcile_unsupported"}
+
     def _healthy(self):
         """Best-effort runtime health of this env's backing service. Subclasses override with a real
         reachability check. Codex #10: a tool that is implemented+available but NOT healthy (service
@@ -207,6 +213,28 @@ class FhirEnv(EnvironmentAdapter):
             self._created.append(entry)
         except Exception:
             pass
+
+    def reconcile_write(self, name, args, result):
+        """Active read-back: after fhir_create, GET the resource from the SERVER to confirm it persisted
+        (not just that the POST returned 2xx); write_file -> confirm the file is on disk."""
+        if name == "write_file":
+            import os as _os
+            wp = (result or {}).get("written")
+            ok = bool(wp) and _os.path.exists(wp)
+            return {"confirmed": bool(ok), "detail": ("file present: %s" % wp) if ok else "file not found on read-back"}
+        if name != "fhir_create" or not isinstance(result, dict) or result.get("error"):
+            return {"confirmed": None, "detail": "not_reconcilable"}
+        _r = result.get("resource") if isinstance(result.get("resource"), dict) else result
+        rid = _r.get("id"); rt = _r.get("resourceType") or (args.get("resource") or {}).get("resourceType")
+        if not (rid and rt):
+            return {"confirmed": None, "detail": "no_resource_id_in_result"}
+        try:
+            got = self._get("/%s/%s" % (rt, rid))
+        except Exception as ex:
+            return {"confirmed": False, "detail": "readback_error:%r" % (ex,)}
+        if isinstance(got, dict) and not got.get("error") and str(got.get("id")) == str(rid):
+            return {"confirmed": True, "detail": "%s/%s confirmed on server" % (rt, rid)}
+        return {"confirmed": False, "detail": "%s/%s NOT found on server read-back" % (rt, rid)}
 
     def state_summary(self):
         """Deterministic, JSON-serializable digest of the MUTABLE sandbox state this agent can change

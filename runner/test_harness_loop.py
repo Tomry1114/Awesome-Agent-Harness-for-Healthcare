@@ -131,6 +131,15 @@ def test_run_layer2_candidate_selection_flow():
 
 
 
+def test_run_active_readback_wired():
+    src = _run_src()
+    assert "env.reconcile_write(" in src                       # run.py performs the active read-back
+    assert '"readback_unconfirmed"' in src                     # an unconfirmed write becomes an error
+    assert '"event_type": "reconciliation"' in src             # and is recorded
+    assert '"readback" in _estr' in src                        # routed to unknown commit-state, not silent pass
+
+
+
 def _run():
     fns = [v for kk, v in sorted(globals().items()) if kk.startswith("test_") and callable(v)]
     passed = 0

@@ -1047,6 +1047,18 @@ def test_selective_repair_trigger_auto_recedes():
         os.environ.pop("MH_REPAIR", None)
 
 
+def test_active_readback_reconcile_write():
+    # infrastructure: a write that CLAIMED success but did not persist on read-back -> confirmed False.
+    import environments as _E
+    f = _E.FhirEnv.__new__(_E.FhirEnv)
+    f._get = lambda path: {"id": "abc", "resourceType": "MedicationRequest"} if "abc" in path else {"error": "not found"}
+    assert f.reconcile_write("fhir_create", {}, {"id": "abc", "resourceType": "MedicationRequest"})["confirmed"] is True
+    assert f.reconcile_write("fhir_create", {}, {"id": "zzz", "resourceType": "MedicationRequest"})["confirmed"] is False
+    assert f.reconcile_write("fhir_search", {}, {"entries": []})["confirmed"] is None     # read -> no-op
+    # base env cannot reconcile -> None (safe no-op)
+    assert _E.EnvironmentAdapter.__new__(_E.EnvironmentAdapter).reconcile_write("x", {}, {})["confirmed"] is None
+
+
 def _run():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     passed = 0
