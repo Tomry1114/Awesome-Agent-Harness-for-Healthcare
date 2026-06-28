@@ -57,7 +57,7 @@ def eligible(d, mode):
     _q = set(d.get("qualification") or []) & HARD_EXCLUDE
     if _q:
         return False, "qualification:%s" % ",".join(sorted(_q))
-    if d.get("evaluation_status") not in ("complete", "completed", "evaluated"):
+    if d.get("evaluation_status") not in ("complete", "completed", "evaluated", "partial"):  # partial = some proxy checkpoints; still evaluated + schema-valid
         return False, "not_evaluated"
     sv = d.get("schema_validation")
     if not isinstance(sv, dict) or sv.get("valid") is not True:          # schema fail-closed
