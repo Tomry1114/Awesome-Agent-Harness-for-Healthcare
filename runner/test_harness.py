@@ -992,6 +992,27 @@ def test_must_resolve_pending_resolution_lifecycle():
         (df.raw.reason_code, kf.ledger.pending_resolution)
 
 
+def test_selective_repair_foundation():
+    # Layer-2 foundation: the adequacy auditor splits HARD vs REPAIRABLE; the A/B selector is conservative.
+    from harness.engines.semantic import audit_answer, compare_answer_candidates, adopt_revised
+    jf = lambda p: ('{"addresses_task": false, "hard_violations": [], "repairable_gaps": '
+                    '[{"type": "missed_discriminator", "claim": "Phrygian cap", "evidence_ids": ["E1"], '
+                    '"critique": "ignores the duplicated lumen"}], "confidence": 0.82}')
+    a = audit_answer("variant?", "ctx", "Phrygian cap", [{"type": "image", "value": "duplicated lumen"}], judge_fn=jf)
+    assert not a.hard_violations and len(a.repairable_gaps) == 1 and a.top_gap()["type"] == "missed_discriminator"
+    # no judge -> no fabricated defects
+    assert audit_answer("g", "c", "a", [], judge_fn=None).repairable_gaps == []
+    # conservative adopt: only a clear, resolved, no-new-hard improvement replaces A
+    mk = lambda **kw: {"preferred": "revised", "margin": 0.3, "critique_resolved": True,
+                       "revised_new_hard_violation": False, **kw}
+    assert adopt_revised(mk()) is True
+    assert adopt_revised(mk(margin=0.1)) is False                 # below tau -> keep A
+    assert adopt_revised(mk(critique_resolved=False)) is False    # critique unresolved -> keep A
+    assert adopt_revised(mk(revised_new_hard_violation=True)) is False  # B adds a hard violation -> keep A
+    assert adopt_revised(mk(preferred="uncertain")) is False      # uncertain -> keep A
+    assert adopt_revised({}) is False                             # no comparison -> keep A
+
+
 def _run():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     passed = 0
