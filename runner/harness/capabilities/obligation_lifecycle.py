@@ -50,17 +50,48 @@ class ObligationLifecycle(Capability):
     def after_action(self, action, result, before_state, after_state, ctx):
         # 1) satisfy evidence obligations whose required evidence now EXISTS in the ledger
         active = ctx.ledger.subject_id()
+        closed = 0
         for oid, ob in ctx.ledger.obligations.items():
             if ob.get("state") in (SATISFIED, WAIVED):
                 continue
             if ob.get("kind") == "evidence" and _evidence_satisfies(ctx.ledger, ob.get("satisfied_by"), active):
                 ctx.ledger.set_obligation(oid, SATISFIED, note="valid evidence present",
                                           event_id="step-%d" % ctx.step)
+                closed += 1
         # 2) propagate workflow obligations whose prerequisites are all satisfied
         for oid, ob in ctx.ledger.obligations.items():
             if ob.get("kind") == "workflow" and ob.get("state") not in (SATISFIED, WAIVED):
                 if not ctx.ledger.pending_prerequisites(ob.get("requires", [])):
                     ctx.ledger.set_obligation(oid, SATISFIED, note="prerequisites met")
+                    closed += 1
+        # 3) PROGRESS / loop-detection: a SUCCESSFUL action that produced no new validated evidence, closed
+        #    no obligation, and changed no state is not progress. Repeating the SAME semantic action that way
+        #    just burns budget -> after the 2nd such repeat, steer the agent to a capability that can advance
+        #    the remaining obligation(s). Bounded + only while obligations are still pending (never churns).
+        if ctx.result_ok is False:
+            return None                                  # tool failure -> commit/failure path, not no-progress
+        pending = [oid for oid, ob in ctx.ledger.obligations.items()
+                   if ob.get("state") not in (SATISFIED, WAIVED)]
+        new_evidence = ctx.ledger.validated_evidence_version > getattr(
+            ctx, "evidence_version_before", ctx.ledger.validated_evidence_version)
+        progressed = bool(new_evidence or closed or (before_state != after_state))
+        sig = (getattr(ctx.sem, "semantic_type", None), getattr(ctx.sem, "resource", None))
+        if not hasattr(self, "_noprog"):
+            self._noprog = {}
+        if progressed or not pending or sig[0] in (None, "answer"):
+            self._noprog.pop(sig, None)                  # progress / nothing left / final answer -> reset
+            return None
+        self._noprog[sig] = self._noprog.get(sig, 0) + 1
+        if self._noprog[sig] >= 2:                       # 2nd no-progress on the SAME semantic action
+            leaves, sugg = _expand_missing(ctx.ledger, pending)
+            return self._decide(
+                D.REVISE, rule_id="no_new_progress", reason_code="no_new_progress", deterministic=True,
+                missing_obligations=leaves, suggested_capabilities=sugg,
+                avoid_capabilities=([sig[0]] if sig[0] else []),
+                reason="last action produced no new validated evidence, closed no obligation, changed no state",
+                feedback="That step made no progress toward the remaining requirement(s): %s. Stop repeating "
+                         "'%s'; use a capability that produces: %s." % (", ".join(leaves) or "task completion",
+                         sig[0], ", ".join(sugg) or "the missing evidence"))
         return None
 
 

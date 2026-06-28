@@ -242,6 +242,7 @@ class HarnessKernel:
         sem = self._canon(action, observation=canonical_observation)
         self.ctx.result_ok = result_ok      # whether the tool result succeeded (adapter signal)
         self.ctx.result_status = result_status   # ok|failed|unknown (the kernel passes run.py's tri-state)
+        self.ctx.evidence_version_before = self.ledger.validated_evidence_version  # progress baseline (pre-bind)
         decisions = []
         for cap in self.capabilities:
             try:
@@ -361,6 +362,8 @@ def _feedback(decision):
         fb["missing_obligations"] = decision.missing_obligations
     if decision.suggested_capabilities:
         fb["suggested_capabilities"] = decision.suggested_capabilities
+    if getattr(decision, "avoid_capabilities", None):
+        fb["avoid_capabilities"] = decision.avoid_capabilities
     if decision.feedback:
         fb["message"] = decision.feedback
     return fb

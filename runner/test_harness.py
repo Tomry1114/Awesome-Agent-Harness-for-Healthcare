@@ -929,6 +929,25 @@ def test_unknown_commit_state_escalates_not_failed():
     assert ef.type == D.REVISE and kf.ctx.verification is False, (ef.type, kf.ctx.verification)
 
 
+def test_no_new_progress_steers_after_second_repeat():
+    # loop-detection: a successful action that yields no new evidence, closes no obligation, and changes no
+    # state is NOT progress; the SAME semantic action repeated that way -> REVISE(no_new_progress) on the 2nd.
+    contract = build_contract(TASK, env_type="fhir", policy=POLICY)
+    k = HarnessKernel(contract, [ObligationLifecycle()], mode="enforce", policy=POLICY, env_type="fhir")
+    read = {"type": "tool", "tool": "check_allergies", "args": {"patient": "Patient/123"}}
+    st = {"x": 0}
+    d1 = k.after_action(read, "noop", st, st, step=1, result_ok=True)   # 1st no-progress -> just record
+    assert d1 is None or d1.type != D.REVISE, d1
+    d2 = k.after_action(read, "noop", st, st, step=2, result_ok=True)   # 2nd no-progress -> steer
+    assert d2 is not None and d2.type == D.REVISE and getattr(d2.raw, "reason_code", None) == "no_new_progress", \
+        (getattr(d2, "type", None), getattr(getattr(d2, "raw", None), "reason_code", None))
+    # and a progress action (state changed) resets -> no REVISE
+    k2 = HarnessKernel(contract, [ObligationLifecycle()], mode="enforce", policy=POLICY, env_type="fhir")
+    k2.after_action(read, "noop", {"x": 0}, {"x": 1}, step=1, result_ok=True)   # state changed -> progress
+    d = k2.after_action(read, "noop", {"x": 1}, {"x": 2}, step=2, result_ok=True)
+    assert d is None or d.type != D.REVISE, d
+
+
 def _run():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     passed = 0

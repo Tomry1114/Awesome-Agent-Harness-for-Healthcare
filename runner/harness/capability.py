@@ -41,7 +41,7 @@ class HarnessContext:
     __slots__ = ("ledger", "contract", "policy", "mode", "step", "env_type", "risk_of", "observation",
                  "judge_fn", "judge_model", "semantic_remaining", "manifest", "sem", "risk",
                  "result_ok", "result_status", "verification", "last_observation", "observed_subject", "displayed_subject",
-                 "action_key")
+                 "action_key", "evidence_version_before")
 
     def __init__(self, ledger, contract, policy, mode, env_type=None, risk_of=None,
                  judge_fn=None, judge_model=None, semantic_budget=0, manifest=None):

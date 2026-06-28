@@ -21,11 +21,11 @@ class HarnessDecision:
     leak-safe message handed back to the agent (it never contains gold answers or reference traces)."""
 
     __slots__ = ("type", "stage", "capability", "rule_id", "reason_code", "reason", "missing_obligations",
-                 "suggested_capabilities", "feedback", "deterministic", "risk", "extra")
+                 "suggested_capabilities", "avoid_capabilities", "feedback", "deterministic", "risk", "extra")
 
     def __init__(self, type=ALLOW, stage=None, capability=None, rule_id=None, reason=None,
                  missing_obligations=None, suggested_capabilities=None, feedback=None,
-                 deterministic=True, risk=None, extra=None, reason_code=None):
+                 deterministic=True, risk=None, extra=None, reason_code=None, avoid_capabilities=None):
         if type not in _PRIORITY:
             raise ValueError("unknown decision %r" % (type,))
         self.type = type
@@ -36,6 +36,7 @@ class HarnessDecision:
         self.reason = reason
         self.missing_obligations = list(missing_obligations or [])
         self.suggested_capabilities = list(suggested_capabilities or [])
+        self.avoid_capabilities = list(avoid_capabilities or [])   # capabilities to STOP repeating (loop-steer)
         self.feedback = feedback
         self.deterministic = bool(deterministic)
         self.risk = risk
