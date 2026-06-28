@@ -328,7 +328,7 @@ def _tool_use_quality(results):
             "judge": "llm_judge (gpt-5.5), 0-2 per sub x5 -> [0,1]"}
 
 
-def _experimental_evaluators(agent_dir, bench):
+def _experimental_evaluators(agent_dir, bench, task_ids=None):
     """Step (b) -> WIRED to the substrate-based dimension evaluators (single source of truth). Execution
     and Lifecycle are now scored by runner/dim_execution.execution + runner/dim_lifecycle.lifecycle over
     the SemanticTrace built by substrate.map_trace(plugin) + substrate.dimension_policy + the
@@ -385,12 +385,18 @@ def _experimental_evaluators(agent_dir, bench):
                    for p in glob.glob(os.path.join(agent_dir, "*", "result.json"))}
     _traj_ids = {os.path.basename(os.path.dirname(p))
                  for p in glob.glob(os.path.join(agent_dir, "*", "trajectory.jsonl"))}
+    _wl = set(task_ids) if task_ids is not None else None   # whitelist (None => full dataset, unchanged)
+    if _wl is not None:
+        _result_ids = _result_ids & _wl
+        _traj_ids = _traj_ids & _wl
     _all_task_ids = _result_ids | _traj_ids
     # tasks with a result but no scorable trajectory -> they CANNOT receive a substrate dim score; they must
     # still count against the coverage denominator (so coverage < 1.0 honestly reflects the gap).
     _result_only_ids = sorted(_result_ids - _traj_ids)
     for tp in sorted(glob.glob(os.path.join(agent_dir, "*", "trajectory.jsonl"))):
         tid = os.path.basename(os.path.dirname(tp))
+        if _wl is not None and tid not in _wl:
+            continue
         try:
             evs = [json.loads(l) for l in open(tp) if l.strip()]
         except Exception:
@@ -836,6 +842,17 @@ def build(agent_dir, bench):
         "integrity": _integ,
         "failure_taxonomy": _failure_taxonomy(results),
     }
+
+
+def harness_seven_for_tasks(agent_dir, bench, task_ids):
+    """Canonical per-dim ETCLOVG profile (== report['harness_dimensions']) restricted to a task-id
+    whitelist. PURE-READ; reuses the SAME strict+proxy+Governance+admission pipeline as build() -- it does
+    NOT re-derive dims from raw checkpoint tags, and the default report path (task_ids=None) is unaffected.
+    Returns {dim: <harness_seven block>} (each block carries score/reportable coverage/n_scored as build's
+    report['harness_dimensions'] does). Governance stays sourced from each task's result.rescored.json
+    block with its reportable/evaluation_error, exactly as in the full build."""
+    panel, _ex, _lc, _ob = _experimental_evaluators(agent_dir, bench, task_ids=set(task_ids))
+    return (panel.get("harness_seven") if isinstance(panel, dict) else None) or {}
 
 
 def _current_git_head():

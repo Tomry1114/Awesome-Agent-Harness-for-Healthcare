@@ -1,14 +1,33 @@
 """Formal harness comparison. OUTCOME = the dataset-NATIVE task outcome via the repo's SINGLE SOURCE OF
 TRUTH aggregate_report.native_task_outcome (PB/HAB: Outcome-dimension checkpoints; MedCTA: GAcc>=0.5) --
 NEVER result['success'] (that is the strict-checkpoint GATE over all ETCLOVG dims, reported separately as
-strict_gate). Governance comes from the canonical post-hoc rescored block (result.rescored.json); the other
-6 dims from per-task dimension_scores. Everything is per-task, eligibility-filtered and paired; per-dim
-coverage [n/N] is printed so denominators are explicit (PB does not score all 7 dims per task). The headline
-is the paired off->enforce NATIVE-outcome transition (preserved/harmed/recovered/unchanged). --formal: an
-INVALID bundle prints diagnostics and exits 2 with no numbers. Usage: cmp_report.py [prefix] [--formal]"""
+strict_gate).
+
+The 7 ETCLOVG dimensions are READ from the canonical aggregate pipeline (strict + proxy + Governance +
+admission) restricted to the eligible PAIRED task set per mode, via aggregate_report.harness_seven_for_tasks
+-- NOT re-derived from raw result.json['dimension_scores']. Governance is sourced from each task's
+result.rescored.json block (reportable/evaluation_error honoured) and is admissible at the dataset level only
+when the rescore artifact is CURRENT (governance_consistency).
+
+Admissions (all enforced; --formal => an INVALID bundle prints diagnostics and exits 2 with NO numbers):
+  * NATIVE_RESOLVED_SET_MISMATCH    -- the set of native-resolved task ids must be identical across modes.
+  * DIMENSION_NOT_SCORED:<dim>      -- every present mode must carry a dataset-level numeric reportable score
+                                       for ALL 7 dims (Governance included; not_rescored => not scored).
+  * GOVERNANCE_NOT_CURRENT:<status> -- a Governance number is admitted only when the rescore artifact is
+                                       current (overall_artifact_status==current, metadata_agrees,
+                                       disk_equals_report).
+  * <ROLE>_MISSING_OR_MIXED         -- agent_model / tool_backend_model / runtime_judge / native_outcome_judge
+                                       / governance_rescore_judge each recorded SEPARATELY and required to be
+                                       present (for the applicable role/mode) and single-valued across modes.
+  * MISSING_MODES / DUPLICATE_TASK_ID + schema fail-closed, mode==dir consistency, trajectory-missing excl.
+
+The headline is the paired off->enforce NATIVE-outcome 5-state transition (preserved/harmed/recovered/
+unchanged + unresolved_under_mode -- never silently dropped). Per-dim coverage [n/N] and pooled harness-rate
+coverage [valid_pairs/N] are printed so denominators are explicit. Usage: cmp_report.py [prefix] [--formal]
+"""
 import json, glob, os, sys
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "runner"))
-from aggregate_report import native_task_outcome, _read_dim_block
+from aggregate_report import native_task_outcome, harness_seven_for_tasks, build as _build_report
 
 ARGS = sys.argv[1:]
 FORMAL = "--formal" in ARGS
@@ -24,8 +43,7 @@ POOL = {"wrong_scope_action_rate": ("wrong_scope_count", "wrong_scope_opportunit
         "verified_commit_rate": ("verified_commit_count", "n_commits"),
         "unknown_verification_rate": ("unknown_verification_count", "n_commits"),
         "executed_violation_rate": ("executed_violation_count", "n_proposed_actions"),
-        "unsafe_commitment_rate": ("unsafe_commitment_count", "n_commit_proposals"),
-        "repair_success_rate": ("repair_success_count", "repair_opportunities"),
+        "repair_success_rate": ("verified_repair_count", "repair_opportunities"),
         "escalation_rate": ("escalation_count", "n_proposed_actions")}
 
 
@@ -33,7 +51,7 @@ def eligible(d, mode):
     if d.get("evaluation_status") not in ("complete", "completed", "evaluated"):
         return False, "not_evaluated"
     sv = d.get("schema_validation")
-    if not isinstance(sv, dict) or sv.get("valid") is not True:
+    if not isinstance(sv, dict) or sv.get("valid") is not True:          # schema fail-closed
         return False, "schema_not_proven_valid"
     h = d.get("harness") or {}
     if mode == "off":
@@ -44,7 +62,7 @@ def eligible(d, mode):
             return False, "harness_%s" % (h.get("status") or "missing")
         if h.get("runtime_errors"):
             return False, "runtime_error"
-        if h.get("requested_mode") != mode or h.get("effective_mode") != mode:
+        if h.get("requested_mode") != mode or h.get("effective_mode") != mode:   # mode == dir consistency
             return False, "mode_mismatch"
     return True, None
 
@@ -61,11 +79,13 @@ def delivered(bundle, tid):
 
 def load(ds, mode):
     base = "%s_%s_%s/gpt5" % (PREFIX, STEM[ds], mode)
-    o = {"n": 0, "tasks": {}, "excl": {}, "dups": set(), "agents": set(), "tools": set(), "judges": set(),
-         "shas": set(), "miss_agent": 0, "miss_sha": 0, "miss_tool": 0, "miss_judge": 0}
+    o = {"base": base, "n": 0, "tasks": {}, "excl": {}, "dups": set(),
+         "agent": set(), "tool": set(), "rjudge": set(), "njudge": set(),
+         "miss_agent": 0, "miss_tool": 0, "miss_rjudge": 0, "miss_njudge": 0,
+         "shas": set(), "miss_sha": 0}
     seen = set()
-    for f in sorted(glob.glob(base + "/*/result.json")):
-        d = json.load(open(f)); tdir = os.path.dirname(f)
+    for fpath in sorted(glob.glob(base + "/*/result.json")):
+        d = json.load(open(fpath)); tdir = os.path.dirname(fpath)
         tid = d.get("task_id") or os.path.basename(tdir)
         if tid in seen:
             o["dups"].add(tid); continue
@@ -74,31 +94,33 @@ def load(ds, mode):
         if not ok:
             o["excl"][why] = o["excl"].get(why, 0) + 1; continue
         dlv = delivered(base, tid)
-        if dlv is None:
+        if dlv is None:                                          # trajectory-missing exclusion
             o["excl"]["trajectory_missing"] = o["excl"].get("trajectory_missing", 0) + 1; continue
-        nat = native_task_outcome(d, ds)               # True / False / None (canonical, NOT success)
-        # 6 dims from per-task dimension_scores; Governance from the canonical rescored block.
-        raw = d.get("dimension_scores") or {}
-        dims = {}
-        for dim in MODS:
-            if dim == "Governance":
-                blk, _err = _read_dim_block(tdir, "Governance")
-                v = (blk or {}).get("score") if (blk and blk.get("reportable") is not False) else None
-            else:
-                v = raw.get(dim)
-                if isinstance(v, dict): v = v.get("score")
-            dims[dim] = v if isinstance(v, (int, float)) else None
+        nat = native_task_outcome(d, ds)                         # True / False / None (canonical, NOT success)
         prov = d.get("provenance") or {}; h = d.get("harness") or {}
         o["tasks"][tid] = {"native": nat, "strict_gate": 1 if d.get("success") else 0,
-                           "dims": dims, "hm": h.get("metrics") or {}, "delivered": dlv}
+                           "hm": (h.get("metrics") or {}), "delivered": dlv}
         o["n"] += 1
-        o["agents"].add(prov["agent_model"]) if prov.get("agent_model") else o.__setitem__("miss_agent", o["miss_agent"] + 1)
-        o["shas"].add(prov["git_sha"]) if prov.get("git_sha") else o.__setitem__("miss_sha", o["miss_sha"] + 1)
-        if prov.get("tool_backend_model"): o["tools"].add(prov["tool_backend_model"])
-        elif ds in TOOL_SUBSTRATE: o["miss_tool"] += 1
-        jm = (h.get("audit") or {}).get("runtime_judge_model")
-        if jm: o["judges"].add(jm)
-        elif mode in ("assist", "enforce") and ds in SEMANTIC_JUDGE: o["miss_judge"] += 1
+        # ---- JUDGE / MODEL ROLES recorded SEPARATELY (each validated single-valued across modes) ----
+        am = prov.get("agent_model")
+        o["agent"].add(am) if am else o.__setitem__("miss_agent", o["miss_agent"] + 1)
+        sh = prov.get("git_sha")
+        o["shas"].add(sh) if sh else o.__setitem__("miss_sha", o["miss_sha"] + 1)
+        tb = prov.get("tool_backend_model")
+        if tb:
+            o["tool"].add(tb)
+        elif ds in TOOL_SUBSTRATE:
+            o["miss_tool"] += 1
+        rj = (h.get("audit") or {}).get("runtime_judge_model")   # harness runtime judge
+        if rj:
+            o["rjudge"].add(rj)
+        elif mode != "off" and ds in SEMANTIC_JUDGE:             # observe/assist/enforce on a judge dataset
+            o["miss_rjudge"] += 1
+        nj = ((prov.get("judges") or {}).get("outcome") or {}).get("model")   # native (GAcc) outcome judge
+        if nj:
+            o["njudge"].add(nj)
+        elif ds in SEMANTIC_JUDGE:
+            o["miss_njudge"] += 1
     return o
 
 
@@ -111,36 +133,107 @@ def mean(xs):
     return (sum(xs) / len(xs)) if xs else None
 
 
+def _num(x):
+    return isinstance(x, (int, float)) and not isinstance(x, bool)
+
+
 _exit = 0
 print("FORMAL COMPARISON  prefix=%s  mode=%s" % (PREFIX, "FORMAL" if FORMAL else "descriptive"))
 for ds, modes in MODES_BY_DS.items():
     agg = {m: load(ds, m) for m in modes}
     present = [m for m in modes if agg[m]["n"]]
-    sets = {m: set(agg[m]["tasks"]) for m in present}
-    same = (len({frozenset(s) for s in sets.values()}) <= 1) if sets else False
-    U = lambda key: set().union(*[agg[m][key] for m in present]) if present else set()
-    shas, agents, tools, judges = U("shas"), U("agents"), U("tools"), U("judges")
+    # canonical whitelisted 7-dim profile + dataset-level governance currentness, per present mode.
+    dims, gov = {}, {}
+    for m in present:
+        wl = list(agg[m]["tasks"].keys())
+        try:
+            dims[m] = harness_seven_for_tasks(agg[m]["base"], ds, wl) or {}
+        except Exception as e:
+            dims[m] = {}; agg[m]["excl"]["harness_seven_error:%s" % type(e).__name__] = 1
+        try:
+            gov[m] = (_build_report(agg[m]["base"], ds).get("governance_consistency") or {})
+        except Exception:
+            gov[m] = {}
+
+    def U(key):
+        s = set()
+        for m in present:
+            s |= agg[m][key]
+        return s
+    agents, tools, rjs, njs = U("agent"), U("tool"), U("rjudge"), U("njudge")
+    gjs = set()
+    for m in present:
+        for x in (gov[m].get("disk_judge_models") or []):
+            gjs.add(x)
+
     r = []
-    if [m for m in modes if not agg[m]["n"]]: r.append("MISSING_MODES:%s" % ",".join(m for m in modes if not agg[m]["n"]))
-    if not same: r.append("UNPAIRED_SETS")
-    if any(agg[m]["dups"] for m in modes): r.append("DUPLICATE_TASK_ID")
-    if len(shas) != 1 or any(agg[m]["miss_sha"] for m in present): r.append("SHA_MISSING_OR_MIXED")
-    if len(agents) != 1 or any(agg[m]["miss_agent"] for m in present): r.append("AGENT_MISSING_OR_MIXED")
-    if len(tools) > 1 or (ds in TOOL_SUBSTRATE and any(agg[m]["miss_tool"] for m in present)): r.append("TOOL_MISSING_OR_MIXED")
-    if len(judges) > 1 or any(agg[m]["miss_judge"] for m in present): r.append("JUDGE_MISSING_OR_MIXED")
+    missing_modes = [m for m in modes if not agg[m]["n"]]
+    if missing_modes:
+        r.append("MISSING_MODES:%s" % ",".join(missing_modes))
+    if any(agg[m]["dups"] for m in modes):
+        r.append("DUPLICATE_TASK_ID")
+    # ---- NATIVE admission: native-resolved id set identical across the compared (present) modes ----
+    resolved = {m: frozenset(t for t, v in agg[m]["tasks"].items() if v["native"] is not None) for m in present}
+    if len(present) >= 2 and len(set(resolved.values())) > 1:
+        r.append("NATIVE_RESOLVED_SET_MISMATCH")
+    # ---- ROLE admission: each role present (where applicable) + single-valued across modes ----
+    if len(agents) > 1 or any(agg[m]["miss_agent"] for m in present):
+        r.append("AGENT_MODEL_MISSING_OR_MIXED")
+    shas = U("shas")
+    if len(shas) != 1 or any(agg[m]["miss_sha"] for m in present):   # one present code SHA across the whole bundle
+        r.append("SHA_MISSING_OR_MIXED")
+    if ds in TOOL_SUBSTRATE:
+        if len(tools) > 1 or any(agg[m]["miss_tool"] for m in present):
+            r.append("TOOL_BACKEND_MISSING_OR_MIXED")
+    elif len(tools) > 1:
+        r.append("TOOL_BACKEND_MIXED")
+    if ds in SEMANTIC_JUDGE:
+        if len(rjs) > 1 or any(agg[m]["miss_rjudge"] for m in present):
+            r.append("RUNTIME_JUDGE_MISSING_OR_MIXED")
+        if len(njs) > 1 or any(agg[m]["miss_njudge"] for m in present):
+            r.append("NATIVE_OUTCOME_JUDGE_MISSING_OR_MIXED")
+    elif len(rjs) > 1:
+        r.append("RUNTIME_JUDGE_MIXED")
+    if len(gjs) > 1:
+        r.append("GOVERNANCE_RESCORE_JUDGE_MIXED")
+    # ---- DIMENSION COMPLETENESS admission: every present mode scores ALL 7 dims (reportable numeric) ----
+    not_scored = set()
+    for m in present:
+        for dim in MODS:
+            if not _num((dims[m].get(dim) or {}).get("score")):
+                not_scored.add(dim)
+    for dim in sorted(not_scored):
+        r.append("DIMENSION_NOT_SCORED:%s" % dim)
+    # ---- GOVERNANCE strictness: a present-and-scored Governance is admitted only if the artifact is current
+    for m in present:
+        if _num((dims[m].get("Governance") or {}).get("score")):
+            g = gov[m]
+            if not (g.get("overall_artifact_status") == "current" and g.get("metadata_agrees") is True
+                    and g.get("disk_equals_report") is True):
+                r.append("GOVERNANCE_NOT_CURRENT:%s@%s" % (g.get("overall_artifact_status"), m))
     valid = not r
-    print("=" * 100)
-    print("%-16s agent=%s tool=%s judge=%s sha=%s" % (ds, "|".join(sorted(agents)) or "?",
-          "|".join(sorted(tools)) or "none", "|".join(sorted(judges)) or "none", "|".join(sorted(shas)) or "MISSING"))
+
+    print("=" * 110)
+    print("%-16s sha=%s agent=%s tool=%s runtime_judge=%s native_outcome_judge=%s governance_rescore_judge=%s" % (
+          ds, "|".join(sorted(shas)) or "MISSING",
+        "|".join(sorted(agents)) or "?",
+        "|".join(sorted(tools)) or ("none" if ds in TOOL_SUBSTRATE else "n/a"),
+        "|".join(sorted(rjs)) or ("none" if ds in SEMANTIC_JUDGE else "n/a"),
+        "|".join(sorted(njs)) or ("none" if ds in SEMANTIC_JUDGE else "n/a"),
+        "|".join(sorted(gjs)) or "none"))
     print("eligible n: " + " ".join("%s=%d" % (m, agg[m]["n"]) for m in modes)
           + "   BUNDLE=" + ("VALID" if valid else "INVALID [" + " ".join(r) + "]"))
     for m in modes:
-        if agg[m]["excl"]: print("  excluded[%s]: %s" % (m, agg[m]["excl"]))
-        if agg[m]["dups"]: print("  DUPLICATE task_ids[%s]: %s" % (m, sorted(agg[m]["dups"])))
+        if agg[m]["excl"]:
+            print("  excluded[%s]: %s" % (m, agg[m]["excl"]))
+        if agg[m]["dups"]:
+            print("  DUPLICATE task_ids[%s]: %s" % (m, sorted(agg[m]["dups"])))
     if not valid and FORMAL:
-        print("  *** INVALID — formal: no comparison numbers. ***"); _exit = 2; continue
+        print("  *** INVALID -- formal: no comparison numbers. ***"); _exit = 2; continue
     if not valid:
-        print("  *** INVALID BUNDLE — DESCRIPTIVE ONLY. ***")
+        print("  *** INVALID BUNDLE -- DESCRIPTIVE ONLY. ***")
+
+    # ---- NATIVE OUTCOME (canonical, native-resolved subset) | strict_gate | answer_delivered ----
     print("  NATIVE OUTCOME (canonical, native-resolved subset) | strict_gate(success) | answer_delivered:")
     for m in modes:
         T = agg[m]["tasks"]
@@ -152,39 +245,58 @@ for ds, modes in MODES_BY_DS.items():
         dl = sum(1 for t in T.values() if t["delivered"] == 1)
         print("    %-9s native=%s [n=%d/%d] strict_gate=%s deliv=%d/%d"
               % (m, f(natr), len(nat), len(T), f(sg), dl, len(T)))
-    print("  7 DIMENSIONS  per-task mean [n scored / N]  (Governance from rescored; N/A if not_rescored):")
+
+    # ---- paired off->enforce 5-state NATIVE transition (never silently drops a task) ----
+    if "off" in present and "enforce" in present:
+        To, Te = agg["off"]["tasks"], agg["enforce"]["tasks"]
+        allt = set(To) | set(Te)
+        pres = harmed = recov = unch = unres = 0
+        for t in sorted(allt):
+            o0 = To.get(t, {}).get("native"); o1 = Te.get(t, {}).get("native")
+            if o0 is None and o1 is None:
+                continue                                          # unresolved in BOTH -> not in resolved set
+            if o0 is None or o1 is None:
+                unres += 1; continue                              # native None in exactly one mode
+            o0, o1 = bool(o0), bool(o1)
+            pres += o0 and o1; harmed += o0 and not o1
+            recov += (not o0) and o1; unch += (not o0) and not o1
+        print("  PAIRED off->enforce NATIVE-OUTCOME 5-STATE: preserved(1->1)=%d harmed(1->0)=%d "
+              "recovered(0->1)=%d unchanged(0->0)=%d unresolved_under_mode=%d"
+              % (pres, harmed, recov, unch, unres))
+        op = pres / (pres + harmed) if (pres + harmed) else None
+        rr = recov / (recov + unch) if (recov + unch) else None
+        print("    outcome_preservation=%s   recovery_rate=%s" % (f(op), f(rr)))
+
+    # ---- 7 DIMENSIONS from the canonical whitelisted pipeline: score [n_with/n_qualified  r=n_reportable] ----
+    print("  7 DIMENSIONS  canonical harness_seven (whitelisted paired set)  score [n_scored/N  r=reportable]:")
     for dim in MODS:
         cells = []
         for m in modes:
-            T = agg[m]["tasks"]; vals = [t["dims"].get(dim) for t in T.values() if isinstance(t["dims"].get(dim), (int, float))]
-            mv = mean(vals)
-            cells.append("%s=%s[%d/%d]" % (m, f(round(mv, 3) if mv is not None else None), len(vals), len(T)))
+            if m not in present:
+                cells.append("%s=--" % m); continue
+            blk = dims[m].get(dim) or {}
+            cells.append("%s=%s[%s/%s r=%s]" % (m, f(blk.get("score")), blk.get("n_with_evidence"),
+                                                blk.get("n_qualified"), blk.get("n_reportable")))
         print("    %-12s %s" % (dim, " ".join(cells)))
-    if same and agg["off"]["n"] and agg["enforce"]["n"]:
-        common = set(agg["off"]["tasks"]) & set(agg["enforce"]["tasks"])
-        common = [t for t in common if agg["off"]["tasks"][t]["native"] is not None and agg["enforce"]["tasks"][t]["native"] is not None]
-        pres = harmed = recov = unch = 0
-        for t in common:
-            o0 = bool(agg["off"]["tasks"][t]["native"]); o1 = bool(agg["enforce"]["tasks"][t]["native"])
-            pres += o0 and o1; harmed += o0 and not o1; recov += (not o0) and o1; unch += (not o0) and not o1
-        op = pres / (pres + harmed) if (pres + harmed) else None
-        rr = recov / (recov + unch) if (recov + unch) else None
-        print("  PAIRED off->enforce NATIVE-OUTCOME TRANSITION (native-resolved n=%d): preserved=%d harmed=%d recovered=%d unchanged=%d"
-              % (len(common), pres, harmed, recov, unch))
-        print("    outcome_preservation=%s   recovery_rate=%s" % (f(op), f(rr)))
-    print("  HARNESS rates  macro|pooled:")
-    for k in POOL:
+
+    # ---- HARNESS rates: pooled = sum(num)/sum(den) over PAIRED tasks (both present); coverage=valid_pairs/N ----
+    print("  HARNESS rates  pooled [valid_pairs/N]:")
+    for k, (nf, df) in POOL.items():
         cells = []
         for m in modes:
+            if m not in present:
+                cells.append("%s=--" % m); continue
             T = agg[m]["tasks"]
-            mac = mean([t["hm"].get(k) for t in T.values()])
-            nf, df = POOL[k]
-            num = sum(t["hm"][nf] for t in T.values() if isinstance(t["hm"].get(nf), int))
-            den = sum(t["hm"][df] for t in T.values() if isinstance(t["hm"].get(df), int))
+            num = den = vp = 0
+            for t in T.values():
+                n, dd = t["hm"].get(nf), t["hm"].get(df)
+                if isinstance(n, int) and isinstance(dd, int):    # both numerator AND denominator present
+                    num += n; den += dd; vp += 1
             poo = (num / den) if den else None
-            cells.append("%s=%s|%s" % (m, f(round(mac, 3) if mac is not None else None), f(round(poo, 3) if poo is not None else None)))
+            cells.append("%s=%s [%d/%d]" % (m, f(poo), vp, len(T)))
         print("    %-24s %s" % (k, " ".join(cells)))
-print("=" * 100)
-print("OUTCOME = aggregate_report.native_task_outcome (NOT result['success']). strict_gate = the all-")
-print("checkpoint gate, shown separately. Dims show [n scored/N]; Governance from result.rescored.json.")
+
+print("=" * 110)
+print("OUTCOME = aggregate_report.native_task_outcome (NOT result['success']). 7 dims = canonical")
+print("harness_seven_for_tasks (strict+proxy+Governance+admission), whitelisted to the paired task set.")
 sys.exit(_exit)
