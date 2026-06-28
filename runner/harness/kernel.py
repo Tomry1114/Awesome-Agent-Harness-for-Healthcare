@@ -202,6 +202,7 @@ class HarnessKernel:
         self.ctx.last_observation = self._last_obs      # the page the agent is currently looking at
         self.ctx.displayed_subject = self._last_displayed_subject   # for the prospective commit guard
         self.ctx.observed_subject = None
+        self.ctx.current_state = env_state   # structured pre-commit state for goal/field checks
         sem = self._canon(action)
         risk = self.ctx.risk
         pid = self.ledger.record_proposed(sem.capability, risk, step)

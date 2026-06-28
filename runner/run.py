@@ -354,7 +354,7 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
             continue
         if _harness is not None:
             try:
-                _hb = _harness.before_action(action, _state_hash(env), step=step)
+                _hb = _harness.before_action(action, _state_snapshot(env), step=step)
             except Exception as _he:
                 _hb = None
                 _harness_runtime_errors.append("before_action: %r" % _he)
