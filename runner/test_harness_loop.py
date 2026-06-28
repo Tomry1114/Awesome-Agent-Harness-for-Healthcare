@@ -140,6 +140,17 @@ def test_run_active_readback_wired():
 
 
 
+def test_run_reconcile_recovery_not_terminal():
+    src = _run_src()
+    # an UNKNOWN commit enters restricted read-back recovery (does NOT terminate); writes are blocked until resolved.
+    assert 'if _hpost.type == "RECONCILE"' in src and "_reconcile = {" in src
+    assert '"event_type": "reconcile_enter"' in src
+    assert '"event_type": "reconcile_block"' in src                # writes blocked during recovery
+    assert '"event_type": "reconcile_resolved"' in src             # read-back resolves committed/failed
+    assert "reconcile_budget_exhausted" in src                     # only then escalate
+
+
+
 def _run():
     fns = [v for kk, v in sorted(globals().items()) if kk.startswith("test_") and callable(v)]
     passed = 0

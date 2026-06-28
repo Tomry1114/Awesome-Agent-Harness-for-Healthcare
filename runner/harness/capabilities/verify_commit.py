@@ -81,11 +81,11 @@ class VerifyAndCommit(Capability):
                             deterministic=True, reason="transport failed AND the expected state change did not occur",
                             feedback="The commit did not take effect (transport error and no observable change) — retry.")
                 ctx.verification = None
-                return self._decide(D.ESCALATE, rule_id="commit_state_unknown", reason_code="unverifiable_commit",
+                return self._decide(D.RECONCILE, rule_id="commit_state_unknown", reason_code="unverifiable_commit",
                                     deterministic=True,
                                     reason="commit result is UNKNOWN (timeout/ambiguous; effect not observable)",
-                                    feedback="This commit timed out and its effect is NOT observable. Read back the "
-                                             "authoritative state to confirm whether it landed before any retry.")
+                                    feedback="This commit timed out and its effect is NOT observable. Use a READ/"
+                                             "inspect tool to read back the authoritative state before any new write.")
             ctx.verification = False
             return self._decide(D.REVISE, rule_id="commit_execution_failed", reason_code="violated_commit",
                                 deterministic=True, reason="the commit tool call failed (did not execute)",

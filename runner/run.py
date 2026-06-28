@@ -186,6 +186,7 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
     _answer_attempts = 0   # count EVERY final answer the agent submits (not just the one that lands)
     _repair_mode = os.environ.get("MH_REPAIR", "hard")   # ablation: off|hard|soft|select|full (answer layer)
     _pending_candidate = None   # Layer-2: a held ORIGINAL answer awaiting its revised candidate for A/B selection
+    _reconcile = None   # P0.1: an UNKNOWN commit under restricted read-back recovery (action,res,budget)
     _deliv_writes_used = 0   # at most ONE reserved over-budget deliverable write (off/enforce budget parity)
     deliv = DeliverableScaffold(task)  # PB deliverable scaffolding (Codex #1: extracted from the generic runner; no-op for non-PB)
     _fail_sig = None; _fail_n = 0; _aborted = False  # circuit breaker: abort on repeated identical failing call
@@ -332,6 +333,14 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
         if action["type"] != "tool_call" or not action.get("tool"):
             trajectory.append({"step": step, "event_type": "agent_error", "error": "bad_action_type", "raw": str(action)[:200], "status": "error"})
             finished = True; break
+        if _reconcile is not None:                 # RESTRICTED recovery: only read/inspect until the commit is reconciled
+            _rst = (_canon.canonical_action(action, env_type) or {}).get("semantic_type")
+            if _rst in ("create", "update", "submit"):
+                trajectory.append({"step": step, "event_type": "reconcile_block", "tool": action.get("tool"),
+                                   "reason": "unconfirmed commit -- read back before any new write", "status": "ok"})
+                last_res = {"feedback": "You have an UNCONFIRMED prior commit (it timed out). Use a READ/inspect "
+                            "tool to read back whether it landed BEFORE any new write."}
+                last_obs = "reconcile_pending"; continue
         _deliv_write = (deliv.is_required_write(action) and deliv._missing(env) and _deliv_writes_used < 1)
         if _env_budget_spent and _deliv_write:
             _deliv_writes_used += 1   # consume the single reserved deliverable slot (success or fail)
@@ -401,6 +410,20 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
                 _recon = {"confirmed": None, "detail": "reconcile_error:%r" % (_rex,)}
             if _recon and _recon.get("confirmed") is True:
                 _err = None                          # active read-back CONFIRMS it landed despite the transport error
+        if _reconcile is not None:                   # a read executed under recovery -> try to resolve the pending commit
+            try:
+                _rr = env.reconcile_write(_reconcile["action"]["tool"], _reconcile["action"].get("args", {}), _reconcile["res"])
+            except Exception as _rrx:
+                _rr = {"confirmed": None, "detail": "reconcile_error:%r" % (_rrx,)}
+            if _rr and _rr.get("confirmed") is True:
+                trajectory.append({"step": step, "event_type": "reconcile_resolved", "outcome": "committed", "detail": _rr.get("detail"), "status": "ok"}); _reconcile = None
+            elif _rr and _rr.get("confirmed") is False:
+                trajectory.append({"step": step, "event_type": "reconcile_resolved", "outcome": "failed", "detail": _rr.get("detail"), "status": "ok"})
+                last_res = {"feedback": "Read-back confirms the prior commit did NOT land -- you may re-attempt it."}; _reconcile = None
+            else:
+                _reconcile["budget"] -= 1
+                if _reconcile["budget"] <= 0:
+                    trajectory.append({"step": step, "event_type": "harness_escalation", "stage": "reconcile", "reason": "reconcile_budget_exhausted", "status": "error"}); _aborted = True; break
         if _recon and _recon.get("confirmed") is not None:
             trajectory.append({"step": step, "event_type": "reconciliation", "tool": action["tool"],
                                "confirmed": _recon.get("confirmed"), "detail": _recon.get("detail"), "status": "ok"})
@@ -449,7 +472,12 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
         trajectory.append(_ev)
         if _hpost is not None:
             trajectory.extend(_hpost.events)
-            if _hpost.type == "ESCALATE":          # retrospective escalation TERMINATES the run
+            if _hpost.type == "RECONCILE":         # UNKNOWN commit -> RECOVER (read back), do NOT terminate
+                _reconcile = {"action": action, "res": res, "budget": int(os.environ.get("MH_RECONCILE_BUDGET", "3"))}
+                trajectory.append({"step": step, "event_type": "reconcile_enter", "stage": "after_action",
+                                   "feedback": _hpost.feedback, "status": "ok"})
+                pending_harness_feedback = _next_feedback(_hpost, "after_action")
+            elif _hpost.type == "ESCALATE":        # retrospective escalation TERMINATES the run
                 trajectory.append({"step": step, "event_type": "harness_escalation",
                                    "stage": "after_action", "feedback": _hpost.feedback, "status": "error"})
                 _aborted = True; break

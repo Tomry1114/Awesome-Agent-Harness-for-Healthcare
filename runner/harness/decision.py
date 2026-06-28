@@ -7,12 +7,13 @@ the run MODE (observe / assist / enforce) to get the EFFECTIVE decision.
 """
 
 ALLOW = "ALLOW"
+RECONCILE = "RECONCILE"   # UNKNOWN commit -> restricted read-back recovery (not terminal)
 REVISE = "REVISE"
 BLOCK = "BLOCK"
 ESCALATE = "ESCALATE"
 
 # higher number = higher precedence
-_PRIORITY = {ALLOW: 0, REVISE: 1, BLOCK: 2, ESCALATE: 3}
+_PRIORITY = {ALLOW: 0, RECONCILE: 1, REVISE: 2, BLOCK: 3, ESCALATE: 4}
 DECISIONS = (ALLOW, REVISE, BLOCK, ESCALATE)
 
 

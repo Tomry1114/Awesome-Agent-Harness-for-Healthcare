@@ -1078,6 +1078,17 @@ def test_active_readback_portal_submit():
     assert g.reconcile_write("click", {}, {"ok": True})["confirmed"] is None          # not a commit
 
 
+def test_unknown_unobservable_commit_reconciles_not_terminates():
+    # P0.1: an UNKNOWN commit whose effect is UNOBSERVABLE -> RECONCILE (restricted read-back recovery), NOT a
+    # terminal ESCALATE. (Observable cases are resolved by the postcondition-first check in the other test.)
+    contract = build_contract(TASK, env_type="fhir", policy=POLICY)
+    create = {"type": "tool", "tool": "create_medication_request", "args": {"patient": "Patient/123"}}
+    k = HarnessKernel(contract, [VerifyAndCommit()], mode="enforce", policy=POLICY, env_type="fhir")
+    e = k.after_action(create, "TimeoutError", None, None, step=1, result_ok=False, result_status="unknown")
+    assert e.type == D.RECONCILE, (e.type, k.ctx.verification)
+    assert k.ctx.verification is None
+
+
 def _run():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     passed = 0
