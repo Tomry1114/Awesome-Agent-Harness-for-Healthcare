@@ -26,6 +26,13 @@ for i in $(seq 1 60); do
   sleep 3
 done
 
-echo "== health =="
-curl -s -m 10 "http://localhost:38080/fhir/Patient?_summary=count" -H "Accept: application/fhir+json"
+echo "== strict ready gate (fail-closed) =="
+ready=0
+for i in $(seq 1 40); do
+  if curl -fsS -m 10 "http://localhost:38080/fhir/metadata" -H "Accept: application/fhir+json" >/dev/null 2>&1; then ready=1; break; fi
+  sleep 3
+done
+if [ "$ready" -ne 1 ]; then echo "[FATAL] FHIR did not become ready after restore_pristine"; exit 1; fi
+echo "== health (ready) =="
+curl -fsS -m 10 "http://localhost:38080/fhir/Patient?_summary=count" -H "Accept: application/fhir+json" || { echo "[FATAL] FHIR health probe failed"; exit 1; }
 echo

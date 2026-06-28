@@ -10,6 +10,16 @@ PY=~/.conda/envs/medicalharness/bin/python
 export MH_OPENAI_BASE=https://www.micuapi.ai MH_API_MODEL=gpt-5.5
 FHIR=http://127.0.0.1:38080/fhir; PORTAL=http://127.0.0.1:3002
 RESCORE_JUDGE=gpt-5.4; LIMIT=10
+# declared task-universe manifest (the first LIMIT task_ids run_batch selects per bench) -> cmp_report
+# requires paired_ids == declared, so a task that fails in ALL modes cannot silently shrink n.
+$PY - "$LIMIT" "$(git rev-parse --short HEAD)" << 'PYMAN'
+import json,sys
+LIM=int(sys.argv[1]); SHA=sys.argv[2]
+modes={"PhysicianBench":["off","enforce"],"MedCTA":["off","observe","assist","enforce"],"HealthAdminBench":["off","enforce"]}
+decl={b:[json.loads(l)["task_id"] for l in open("benchmark_dataprocess/%s/tasks_unified.jsonl"%b)][:LIM] for b in modes}
+json.dump({"git_sha":SHA,"limit":LIM,"declared":decl,"modes":modes}, open("res6_manifest.json","w"), indent=1)
+print("[manifest] res6_manifest.json sha=%s limit=%d"%(SHA,LIM))
+PYMAN
 echo "[start $(date) host=$(hostname) sha=$(git rev-parse --short HEAD)] PARALLEL by dataset"
 curl -s -m8 -o /dev/null -w "FHIR %{http_code}\n" $FHIR/metadata || true
 curl -s -m8 -o /dev/null -w "PORTAL %{http_code}\n" $PORTAL/emr/denied || true

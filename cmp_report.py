@@ -32,6 +32,7 @@ from aggregate_report import native_task_outcome, harness_seven_for_tasks, build
 ARGS = sys.argv[1:]
 FORMAL = "--formal" in ARGS
 PREFIX = next((a for a in ARGS if not a.startswith("--")), "res6")
+_MANIFEST = json.load(open("%s_manifest.json" % PREFIX)) if os.path.exists("%s_manifest.json" % PREFIX) else None
 MODES_BY_DS = {"PhysicianBench": ["off", "enforce"], "MedCTA": ["off", "observe", "assist", "enforce"],
                "HealthAdminBench": ["off", "enforce"]}
 STEM = {"PhysicianBench": "pb", "MedCTA": "mcta", "HealthAdminBench": "hab"}
@@ -187,6 +188,10 @@ for ds, modes in MODES_BY_DS.items():
         r.append("DUPLICATE_TASK_ID")
     if _set_mismatch:
         r.append("ELIGIBLE_TASK_SET_MISMATCH")
+    if _MANIFEST:                                   # eligible paired set must equal the DECLARED task universe
+        _decl = set((_MANIFEST.get("declared") or {}).get(ds) or [])
+        if _decl and frozenset(paired_ids) != _decl:
+            r.append("DECLARED_TASK_SET_INCOMPLETE:%d/%d" % (len(paired_ids), len(_decl)))
     # ---- NATIVE admission: native-resolved id set identical across the compared (present) modes ----
     resolved = {m: frozenset(t for t, v in agg[m]["tasks"].items() if v["native"] is not None) for m in present}
     if len(present) >= 2 and len(set(resolved.values())) > 1:
