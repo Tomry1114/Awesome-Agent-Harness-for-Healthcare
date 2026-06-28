@@ -37,7 +37,8 @@ MODES_BY_DS = {"PhysicianBench": ["off", "enforce"], "MedCTA": ["off", "observe"
 STEM = {"PhysicianBench": "pb", "MedCTA": "mcta", "HealthAdminBench": "hab"}
 MODS = ["Execution", "Tooling", "Context", "Lifecycle", "Observability", "Verification", "Governance"]
 TOOL_SUBSTRATE = {"MedCTA"}
-SEMANTIC_JUDGE = {"MedCTA", "HealthAdminBench"}
+SEMANTIC_JUDGE = {"MedCTA", "HealthAdminBench"}   # runtime semantic judge (observe/assist/enforce)
+NATIVE_OUTCOME_JUDGE = {"MedCTA"}                  # native outcome via GAcc judge (HAB native = Outcome checkpoints)
 POOL = {"wrong_scope_action_rate": ("wrong_scope_count", "wrong_scope_opportunities"),
         "missing_prerequisite_rate": ("missing_prerequisite_count", "missing_prerequisite_opportunities"),
         "verified_commit_rate": ("verified_commit_count", "n_commits"),
@@ -119,7 +120,7 @@ def load(ds, mode):
         nj = ((prov.get("judges") or {}).get("outcome") or {}).get("model")   # native (GAcc) outcome judge
         if nj:
             o["njudge"].add(nj)
-        elif ds in SEMANTIC_JUDGE:
+        elif ds in NATIVE_OUTCOME_JUDGE:
             o["miss_njudge"] += 1
     return o
 
@@ -142,10 +143,15 @@ print("FORMAL COMPARISON  prefix=%s  mode=%s" % (PREFIX, "FORMAL" if FORMAL else
 for ds, modes in MODES_BY_DS.items():
     agg = {m: load(ds, m) for m in modes}
     present = [m for m in modes if agg[m]["n"]]
+    # PAIRED: the FULL eligible task set must be identical across modes; every column then uses ONE common
+    # paired_ids (not each mode's own subset), else this is not a paired comparison.
+    _elig = {m: frozenset(agg[m]["tasks"]) for m in present}
+    _set_mismatch = (len(set(_elig.values())) > 1) if _elig else False
+    paired_ids = sorted(next(iter(_elig.values()))) if (present and not _set_mismatch) else []
     # canonical whitelisted 7-dim profile + dataset-level governance currentness, per present mode.
     dims, gov = {}, {}
     for m in present:
-        wl = list(agg[m]["tasks"].keys())
+        wl = paired_ids
         try:
             dims[m] = harness_seven_for_tasks(agg[m]["base"], ds, wl) or {}
         except Exception as e:
@@ -172,6 +178,8 @@ for ds, modes in MODES_BY_DS.items():
         r.append("MISSING_MODES:%s" % ",".join(missing_modes))
     if any(agg[m]["dups"] for m in modes):
         r.append("DUPLICATE_TASK_ID")
+    if _set_mismatch:
+        r.append("ELIGIBLE_TASK_SET_MISMATCH")
     # ---- NATIVE admission: native-resolved id set identical across the compared (present) modes ----
     resolved = {m: frozenset(t for t, v in agg[m]["tasks"].items() if v["native"] is not None) for m in present}
     if len(present) >= 2 and len(set(resolved.values())) > 1:
@@ -190,20 +198,34 @@ for ds, modes in MODES_BY_DS.items():
     if ds in SEMANTIC_JUDGE:
         if len(rjs) > 1 or any(agg[m]["miss_rjudge"] for m in present):
             r.append("RUNTIME_JUDGE_MISSING_OR_MIXED")
-        if len(njs) > 1 or any(agg[m]["miss_njudge"] for m in present):
+    if ds in NATIVE_OUTCOME_JUDGE:
+        if len(njs) != 1 or any(agg[m]["miss_njudge"] for m in present):
             r.append("NATIVE_OUTCOME_JUDGE_MISSING_OR_MIXED")
     elif len(rjs) > 1:
         r.append("RUNTIME_JUDGE_MIXED")
-    if len(gjs) > 1:
-        r.append("GOVERNANCE_RESCORE_JUDGE_MIXED")
+    _gov_scored = any(_num((dims[m].get("Governance") or {}).get("score")) for m in present)
+    if (_gov_scored and len(gjs) != 1) or len(gjs) > 1:
+        r.append("GOVERNANCE_RESCORE_JUDGE_MISSING_OR_MIXED")
     # ---- DIMENSION COMPLETENESS admission: every present mode scores ALL 7 dims (reportable numeric) ----
-    not_scored = set()
+    not_scored, not_admitted = set(), set()
     for m in present:
         for dim in MODS:
-            if not _num((dims[m].get(dim) or {}).get("score")):
+            blk = dims[m].get(dim) or {}
+            if not _num(blk.get("score")):
                 not_scored.add(dim)
+            elif blk.get("adapter_admission") not in ("ok", None):   # LOW_COVERAGE / VACUOUS / INCOMPLETE
+                not_admitted.add(dim)
     for dim in sorted(not_scored):
         r.append("DIMENSION_NOT_SCORED:%s" % dim)
+    for dim in sorted(not_admitted):
+        r.append("DIMENSION_NOT_ADMITTED:%s" % dim)
+    # role INDEPENDENCE: a runtime/governance judge must differ from the agent brain AND the tool backend
+    _nm = lambda x: str(x or "").strip().lower().split("/")[-1].split(" (")[0]
+    _an = {_nm(x) for x in agents}; _tn = {_nm(x) for x in tools}
+    if {_nm(x) for x in rjs} & (_an | _tn):
+        r.append("RUNTIME_JUDGE_NOT_INDEPENDENT")
+    if {_nm(x) for x in gjs} & (_an | _tn):
+        r.append("GOVERNANCE_JUDGE_NOT_INDEPENDENT")
     # ---- GOVERNANCE strictness: a present-and-scored Governance is admitted only if the artifact is current
     for m in present:
         if _num((dims[m].get("Governance") or {}).get("score")):
@@ -250,19 +272,19 @@ for ds, modes in MODES_BY_DS.items():
     if "off" in present and "enforce" in present:
         To, Te = agg["off"]["tasks"], agg["enforce"]["tasks"]
         allt = set(To) | set(Te)
-        pres = harmed = recov = unch = unres = 0
+        pres = harmed = recov = unch = unres = unres_both = 0
         for t in sorted(allt):
             o0 = To.get(t, {}).get("native"); o1 = Te.get(t, {}).get("native")
             if o0 is None and o1 is None:
-                continue                                          # unresolved in BOTH -> not in resolved set
+                unres_both += 1; continue                         # unresolved in BOTH (counted, not dropped)
             if o0 is None or o1 is None:
                 unres += 1; continue                              # native None in exactly one mode
             o0, o1 = bool(o0), bool(o1)
             pres += o0 and o1; harmed += o0 and not o1
             recov += (not o0) and o1; unch += (not o0) and not o1
-        print("  PAIRED off->enforce NATIVE-OUTCOME 5-STATE: preserved(1->1)=%d harmed(1->0)=%d "
-              "recovered(0->1)=%d unchanged(0->0)=%d unresolved_under_mode=%d"
-              % (pres, harmed, recov, unch, unres))
+        print("  PAIRED off->enforce NATIVE-OUTCOME: preserved(1->1)=%d harmed(1->0)=%d recovered(0->1)=%d "
+              "unchanged(0->0)=%d unresolved_one_mode=%d unresolved_both=%d  (total=%d)"
+              % (pres, harmed, recov, unch, unres, unres_both, pres + harmed + recov + unch + unres + unres_both))
         op = pres / (pres + harmed) if (pres + harmed) else None
         rr = recov / (recov + unch) if (recov + unch) else None
         print("    outcome_preservation=%s   recovery_rate=%s" % (f(op), f(rr)))
