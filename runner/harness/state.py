@@ -138,8 +138,22 @@ class Ledger:
         self.proposed_actions.append({"id": pid, "action": action, "risk": risk, "step": step})
         return pid
 
-    def record_commit(self, action, step, verified=None, detail=None):
-        self.commit_history.append({"action": action, "step": step, "verified": verified, "detail": detail})
+    def record_commit(self, action, step, verified=None, detail=None, semantic_type=None):
+        self.commit_history.append({"action": action, "step": step, "verified": verified, "detail": detail,
+                                    "semantic_type": semantic_type})
+
+    def unresolved_operational_commit(self):
+        """An OPERATIONAL write (create/update/submit) that was ATTEMPTED but whose LATEST attempt did not
+        verify True (failed or unknown) and was never later resolved. Finalizing over it = process-output
+        inconsistency (the answer would report success over a write that did not land)."""
+        latest = {}
+        for c in self.commit_history:
+            if c.get("semantic_type") in ("create", "update", "submit"):
+                latest[c.get("action")] = c          # keep the LAST attempt per capability
+        for c in latest.values():
+            if c.get("verified") is not True:
+                return c
+        return None
 
     def add_unresolved_risk(self, rule_id, reason, risk=None):
         self.unresolved_risks.append({"rule_id": rule_id, "reason": reason, "risk": risk})

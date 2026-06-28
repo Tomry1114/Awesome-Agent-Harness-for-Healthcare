@@ -21,6 +21,7 @@ def select_tasks(bench, args):
         t = json.loads(line)
         dims = {c.get("dimension") for c in t.get("checkpoints", [])}
         subs = {c.get("subdimension") for c in t.get("checkpoints", [])}
+        if args.task_id and t["task_id"] != args.task_id: continue
         if args.has_dimension and args.has_dimension not in dims: continue
         if args.has_subdimension and args.has_subdimension not in subs: continue
         if args.governance_only and "Governance" not in dims: continue
@@ -34,6 +35,7 @@ def main():
     ap.add_argument("--agent", default="stub")
     ap.add_argument("--fhir-base", default=None)
     ap.add_argument("--reset-mode", default="none", choices=["none", "restore_pristine", "per_task"])
+    ap.add_argument("--task-id", default=None)
     ap.add_argument("--has-dimension", default=None)
     ap.add_argument("--has-subdimension", default=None)
     ap.add_argument("--governance-only", action="store_true")

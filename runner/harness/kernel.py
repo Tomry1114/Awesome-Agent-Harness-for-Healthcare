@@ -259,7 +259,7 @@ class HarnessKernel:
             # verified is the EXPLICIT tri-state from verify_commit (True/False/None), NOT inferred from
             # the combined decision — an unverifiable commit must record verified=None, never True.
             self.ledger.record_commit(sem.capability, step, verified=self.ctx.verification,
-                                      detail=winner.reason)
+                                      detail=winner.reason, semantic_type=getattr(sem, "semantic_type", None))
             if self.ctx.verification is True and getattr(sem, "effect", None) == "irreversible":
                 self.ledger.completed_commits.add((sem.semantic_type, sem.resource, self.ledger.subject_id()))
             self._close_verified_repair()    # a gate-passed commit that executed + verified -> repaired
@@ -293,7 +293,7 @@ class HarnessKernel:
         # an ACCEPTED final answer (effective ALLOW) is a committed action.
         if is_commit and eff.type == D.ALLOW:
             self.ledger.record_commit(sem.capability, step, verified=self.ctx.verification,
-                                      detail="final_answer")
+                                      detail="final_answer", semantic_type="answer")
             self._close_verified_repair()    # a final-answer commit verifies + closes its repair too
         return eff
 
@@ -302,7 +302,7 @@ class HarnessKernel:
         CONTRACT(5)) instead of via effective-ALLOW. Record it as a final-answer commit with verified=None
         (delivered but NOT verified) so answer_delivered / outcome_preservation / unknown_verification see it."""
         sem = self._canon({"type": "final", "answer": answer})
-        self.ledger.record_commit(sem.capability, step, verified=None, detail="final_answer")
+        self.ledger.record_commit(sem.capability, step, verified=None, detail="final_answer", semantic_type="answer")
         if self.ledger.commit_history:
             self.ledger.commit_history[-1]["verification_flag"] = flag
 

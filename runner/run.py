@@ -184,6 +184,8 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
     _env_actions = 0   # CONTRACT(2): EXECUTED environment actions; repair turns do NOT count against this
     _insufficient_seen = {}   # CONTRACT: INSUFFICIENT grounding gets at most ONE revise PER evidence_version
     _answer_attempts = 0   # count EVERY final answer the agent submits (not just the one that lands)
+    _repair_mode = os.environ.get("MH_REPAIR", "hard")   # ablation: off|hard|soft|select|full (answer layer)
+    _pending_candidate = None   # Layer-2: a held ORIGINAL answer awaiting its revised candidate for A/B selection
     _deliv_writes_used = 0   # at most ONE reserved over-budget deliverable write (off/enforce budget parity)
     deliv = DeliverableScaffold(task)  # PB deliverable scaffolding (Codex #1: extracted from the generic runner; no-op for non-PB)
     _fail_sig = None; _fail_n = 0; _aborted = False  # circuit breaker: abort on repeated identical failing call
@@ -223,6 +225,21 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
             _ahash = hashlib.sha1((action.get("answer", "") or "").encode("utf-8")).hexdigest()[:12]
             trajectory.append({"step": step, "event_type": "answer_attempt", "attempt_index": _answer_attempts,
                                "answer_hash": _ahash, "answer": (action.get("answer", "") or "")[:500], "status": "ok"})
+            if _pending_candidate is not None and _harness is not None:   # this final is the REVISED candidate B
+                from harness.engines.semantic import compare_answer_candidates, adopt_revised
+                _A = _pending_candidate.get("original", ""); _crit = _pending_candidate.get("critique"); _B = action.get("answer", "")
+                _cm = (_harness.contract.meta if (_harness.contract and _harness.contract.meta) else {})
+                _cmp = compare_answer_candidates(_cm.get("goal"), _cm.get("public_context"), _A, _B, _crit,
+                                                 list(_harness.ledger.evidence), judge_fn=getattr(_harness.ctx, "judge_fn", None))
+                _adopt = (_cmp.get("preferred") == "revised") if _repair_mode == "soft" else adopt_revised(_cmp)
+                _chosen = _B if _adopt else _A
+                trajectory.append({"step": step, "event_type": "final_answer", "thought": _chosen, "status": "ok",
+                                   "final_disposition": "revised_commit_adopted" if _adopt else "kept_original",
+                                   "answer_attempt_index": _answer_attempts, "comparison": _cmp,
+                                   "canonical_action": _canon.canonical_action(action, env_type)})
+                try: _harness.record_flagged_final(_chosen, flag=("repair_adopted" if _adopt else "repair_kept_original"), step=step)
+                except Exception as _re: _harness_runtime_errors.append("record_flagged_final: %r" % _re)
+                _pending_candidate = None; finished = True; break
             if _harness is not None:                    # final answer is a commit point
                 try:
                     _hf = _harness.before_final(action.get("answer", ""), step=step)
@@ -235,6 +252,20 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
                 if _hf is not None:
                     trajectory.extend(_hf.events)
                     if _hf.type in ("REVISE", "BLOCK"):   # ADDITIVE: keep last_obs/last_res (env state) intact
+                        _extra_hf = ((getattr(_hf, "raw", None) and getattr(_hf.raw, "extra", None)) or {})
+                        if _extra_hf.get("candidate"):       # Layer-2 candidate mode: keep A, ask for revised B
+                            _repair_turns += 1
+                            pending_harness_feedback = _next_feedback(_hf, "before_final")
+                            if _repair_turns > max_repair_turns:   # no candidate produced in budget -> keep A
+                                trajectory.append({"step": step, "event_type": "final_answer", "thought": action.get("answer", ""),
+                                    "status": "ok", "verification_flag": "unverified_grounding",
+                                    "final_disposition": "kept_original_no_candidate", "answer_attempt_index": _answer_attempts,
+                                    "harness_feedback": _hf.feedback, "canonical_action": _canon.canonical_action(action, env_type)})
+                                try: _harness.record_flagged_final(action.get("answer", ""), flag="unverified_grounding", step=step)
+                                except Exception as _re: _harness_runtime_errors.append("record_flagged_final: %r" % _re)
+                                finished = True; break
+                            _pending_candidate = {"original": action.get("answer", ""), "critique": _extra_hf.get("critique")}
+                            continue
                         _repair_turns += 1
                         _insuff_exceeded = False
                         if getattr(getattr(_hf, "raw", None), "reason_code", None) == "insufficient_grounding":

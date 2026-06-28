@@ -10,6 +10,7 @@ from ..capability import Capability
 from .. import decision as D
 from ..risk import at_least, R2, R3
 from ..predicates import evaluate as eval_predicate
+import os
 
 
 class VerifyAndCommit(Capability):
@@ -98,7 +99,75 @@ class VerifyAndCommit(Capability):
                 feedback="This commit's effect cannot be verified from the available state; escalating.")
         return None                     # True (verified) -> no block
 
+    def _repmode(self):
+        """Answer-layer repair mode (ablation): none=safety-only, hard=must-resolve closure (default),
+        soft/select/full add Layer-2 candidate repair. Instance attr overrides env (for tests)."""
+        return getattr(self, "repair_mode", None) or os.environ.get("MH_REPAIR", "hard")
+
+    def _audit_path(self, answer, ctx, evid, task_goal, public_context, ptype, side_effecting):
+        """Layer-2: adequacy audit -> a localized HARD violation (must-resolve) or a REPAIRABLE gap
+        (candidate mode: keep A, ask for revised B; run.py runs the conservative A/B selection)."""
+        from ..engines.semantic import audit_answer
+        au = audit_answer(task_goal, public_context, answer, evid, judge_fn=ctx.judge_fn)
+        _ex = {"audit": au.to_dict(), "side_effecting": side_effecting}
+        hv = au.top_hard()
+        if hv:
+            pr = ctx.ledger.pending_resolution
+            if isinstance(pr, dict) and pr.get("violation_type") == "audit_hard":
+                pr["attempts"] = pr.get("attempts", 1) + 1
+            else:
+                ctx.ledger.pending_resolution = {
+                    "resolution_id": "res-au-%d" % ctx.step, "violation_type": "audit_hard",
+                    "critical_claim": hv.get("claim"), "evidence_ids": hv.get("evidence_ids") or [],
+                    "reason": hv.get("reason"), "confidence": au.confidence, "hard_type": hv.get("type"),
+                    "created_at_step": ctx.step, "attempts": 1}
+            ctx.verification = False
+            _mr = dict(_ex); _mr["must_resolve"] = True; _mr["resolution"] = dict(ctx.ledger.pending_resolution)
+            return self._decide(
+                D.REVISE, rule_id=ptype, reason_code="evidence_contradiction", deterministic=False, extra=_mr,
+                reason="answer has a hard defect (%s): %s" % (hv.get("type"), hv.get("reason")),
+                feedback="Your answer has a hard defect (%s) on claim '%s' that the evidence refutes -- "
+                         "remove, correct, or qualify it." % (hv.get("type"), hv.get("claim")))
+        gap = au.top_gap()
+        if gap:
+            ctx.ledger.pending_resolution = None
+            ctx.verification = None
+            _cd = dict(_ex); _cd["candidate"] = True; _cd["critique"] = gap.get("critique") or gap.get("claim")
+            _cd["gap_type"] = gap.get("type"); _cd["verification_flag"] = "unverified_grounding"
+            return self._decide(
+                D.REVISE, rule_id="repairable_gap", reason_code="repairable_gap", deterministic=False, extra=_cd,
+                reason="answer has a repairable gap (%s): %s" % (gap.get("type"), gap.get("critique")),
+                feedback="Your answer can be improved (%s): %s. Produce a REVISED final answer that addresses "
+                         "this specific gap using your validated evidence -- the original is kept unless the "
+                         "revision is clearly better." % (gap.get("type"), gap.get("critique")))
+        ctx.ledger.pending_resolution = None
+        ctx.verification = True if au.addresses_task else None
+        return None
+
     def before_final(self, answer, ctx):
+        mode = self._repmode()
+        # PROCESS-OUTPUT CONSISTENCY (must-resolve, deterministic): if an OPERATIONAL write was attempted and
+        # its latest attempt did not verify (failed/unknown), the agent must NOT finalize over it as if
+        # complete. Not an answer-quality judgement -- process<->output inconsistency.
+        _uoc = ctx.ledger.unresolved_operational_commit() if mode != "none" else None
+        if _uoc is not None:
+            pr = ctx.ledger.pending_resolution
+            if isinstance(pr, dict) and pr.get("violation_type") == "process_output_inconsistency":
+                pr["attempts"] = pr.get("attempts", 1) + 1
+            else:
+                ctx.ledger.pending_resolution = {
+                    "resolution_id": "res-po-%d" % ctx.step, "violation_type": "process_output_inconsistency",
+                    "critical_claim": _uoc.get("action"), "evidence_ids": [], "confidence": 1.0,
+                    "reason": "operational write %r did not verify" % _uoc.get("action"),
+                    "created_at_step": ctx.step, "attempts": 1}
+            _mr = {"must_resolve": True, "resolution": dict(ctx.ledger.pending_resolution), "side_effecting": False}
+            return self._decide(
+                D.REVISE, rule_id="process_output_inconsistency", reason_code="process_output_inconsistency",
+                deterministic=True, extra=_mr,
+                reason="operational write %r did not complete; the answer must not report success" % _uoc.get("action"),
+                feedback="Your action '%s' did NOT complete successfully (failed or unknown). Either complete "
+                         "it successfully, or correct your answer to state it did not land -- do not report "
+                         "success over a write that did not commit." % _uoc.get("action"))
         cp = ctx.contract.commit_point_for(ctx.sem) if (ctx.contract and ctx.sem) else None
         # if the commit's prerequisites are unmet, obligation_lifecycle owns the REVISE — don't add a
         # semantic verdict on top of an answer that isn't even grounded yet.
@@ -143,6 +212,8 @@ class VerifyAndCommit(Capability):
         _meta = (ctx.contract.meta if (ctx.contract and ctx.contract.meta) else {})
         _task_goal = _meta.get("goal")
         _public_context = _meta.get("public_context")
+        if mode in ("soft", "select", "full"):
+            return self._audit_path(answer, ctx, evid, _task_goal, _public_context, ptype, _side_effecting)
         v = verify_claim_support(_task_goal, _public_context, answer, evid, judge_fn=ctx.judge_fn)
         ctx.verification = v.supported
         _extra = {"semantic": v.to_dict(), "relation": v.relation, "side_effecting": _side_effecting}
@@ -158,6 +229,11 @@ class VerifyAndCommit(Capability):
             # consistent with its OWN validated evidence and refuses to deliver an unresolved confirmed
             # conflict. A high-confidence but NON-localizable contradiction is NOT must-resolve (cannot point
             # at a claim) -> it falls through to the low-confidence flag/escalate path below.
+            if mode == "none":     # safety-only: revert to the pre-closure advisory REVISE (flagged delivery)
+                return self._decide(
+                    D.REVISE, rule_id=ptype, reason_code="unsupported_claim", deterministic=False, extra=_extra,
+                    reason="final answer is contradicted by the selected evidence: %s" % v.reason,
+                    feedback="Your answer conflicts with the evidence you gathered (%s)." % v.reason)
             if v.localizable():
                 pr = ctx.ledger.pending_resolution
                 if isinstance(pr, dict) and pr.get("violation_type") == "evidence_contradiction":

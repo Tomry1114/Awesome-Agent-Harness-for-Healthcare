@@ -118,6 +118,19 @@ def test_run_answer_attempt_logged_and_must_resolve_abstains():
     assert '"final_disposition": "abstained_unresolved_violation"' in src
 
 
+def test_run_layer2_candidate_selection_flow():
+    src = _run_src()
+    # Layer-2: the answer-layer repair mode is an ablation flag; a candidate-mode REVISE holds the ORIGINAL
+    # and the next final is compared and only conservatively adopted.
+    assert 'os.environ.get("MH_REPAIR"' in src
+    assert "_pending_candidate" in src
+    assert "compare_answer_candidates" in src and "adopt_revised" in src
+    assert '"revised_commit_adopted"' in src and '"kept_original"' in src
+    # soft = naive adopt-if-preferred; select/full = conservative adopt_revised.
+    assert 'if _repair_mode == "soft"' in src
+
+
+
 def _run():
     fns = [v for kk, v in sorted(globals().items()) if kk.startswith("test_") and callable(v)]
     passed = 0
