@@ -147,20 +147,41 @@ class VerifyAndCommit(Capability):
         ctx.verification = v.supported
         _extra = {"semantic": v.to_dict(), "relation": v.relation, "side_effecting": _side_effecting}
         if v.supported is True or v.relation == SUPPORTED:
+            ctx.ledger.pending_resolution = None        # any prior contradiction is resolved
             return None
         # CONTRADICTED with high confidence -> the ONLY HARD revise (answer conflicts with the evidence).
         # Keep reason_code 'unsupported_claim' so the governance violation metric stays counted.
         if v.relation == CONTRADICTED and (v.confidence or 0) >= 0.8:   # HIGH-confidence contradiction only
-            return self._decide(
-                D.REVISE, rule_id=ptype, reason_code="unsupported_claim", deterministic=False,
-                extra=_extra,
-                reason="final answer is contradicted by the selected evidence: %s" % v.reason,
-                feedback="Your answer conflicts with the evidence you gathered (%s) — re-examine "
-                         "before answering." % v.reason)
+            # MUST-RESOLVE v1: a high-confidence contradiction is enforced as a real commit veto ONLY when it
+            # is LOCALIZABLE -- it names the specific refuted claim AND cites VALIDATED evidence. The harness
+            # does not independently solve the task; it verifies the agent\'s epistemic commitment is
+            # consistent with its OWN validated evidence and refuses to deliver an unresolved confirmed
+            # conflict. A high-confidence but NON-localizable contradiction is NOT must-resolve (cannot point
+            # at a claim) -> it falls through to the low-confidence flag/escalate path below.
+            if v.localizable():
+                pr = ctx.ledger.pending_resolution
+                if isinstance(pr, dict) and pr.get("violation_type") == "evidence_contradiction":
+                    pr["attempts"] = pr.get("attempts", 1) + 1
+                    pr["critical_claim"] = v.critical_claim; pr["evidence_ids"] = v.evidence_ids
+                else:
+                    ctx.ledger.pending_resolution = {
+                        "resolution_id": "res-%d" % ctx.step, "violation_type": "evidence_contradiction",
+                        "critical_claim": v.critical_claim, "evidence_ids": v.evidence_ids,
+                        "reason": v.reason, "confidence": v.confidence, "created_at_step": ctx.step, "attempts": 1}
+                _mr = dict(_extra); _mr["must_resolve"] = True
+                _mr["resolution"] = dict(ctx.ledger.pending_resolution)
+                return self._decide(
+                    D.REVISE, rule_id=ptype, reason_code="evidence_contradiction", deterministic=False, extra=_mr,
+                    reason="answer claim is refuted by validated evidence: %s" % (v.critical_claim or v.reason),
+                    feedback="Your answer makes a claim the evidence REFUTES: '%s'. Remove, correct, or "
+                             "explicitly qualify THAT claim so it no longer conflicts with the evidence; do "
+                             "not re-submit it unchanged." % (v.critical_claim or v.reason))
+            # non-localizable high-confidence contradiction -> cannot enforce must-resolve; fall through.
         # INSUFFICIENT (evidence under-covers the answer) -> a LIMITED revise; run.py permits at most one,
         # then DELIVERS the answer WITH the 'unverified_grounding' flag (the answer is not wrong, only not
         # fully grounded). Under-coverage must NOT be punished like a contradiction.
         if v.relation == INSUFFICIENT:
+            ctx.ledger.pending_resolution = None
             ctx.ledger.add_unresolved_risk("semantic_claim_support",
                                            "selected evidence under-covers the answer (insufficient grounding)")
             _ins = dict(_extra); _ins["verification_flag"] = "unverified_grounding"
@@ -173,6 +194,7 @@ class VerifyAndCommit(Capability):
         # UNKNOWN / low-confidence (incl. a low-confidence contradiction) -> record unresolved risk + flag;
         # do NOT treat as wrong. run.py aborts ONLY a SIDE-EFFECTING commit; a no-side-effect answer is
         # delivered WITH the unresolved_risk flag.
+        ctx.ledger.pending_resolution = None
         ctx.ledger.add_unresolved_risk("semantic_claim_support",
                                        "claim<->evidence support is low-confidence/unknown")
         _unk = dict(_extra); _unk["verification_flag"] = "unresolved_risk"
@@ -189,7 +211,7 @@ def _selected(e, selector):
         return False
     if not selector:
         return True
-    if e.get("status") not in (None, "VALIDATED"):
+    if e.get("status") != "VALIDATED":          # STRICT: only explicit VALIDATED evidence (must-resolve basis)
         return False
     if selector.get("source_class") and (e.get("source_class") or e.get("source_type")) != selector["source_class"]:
         return False

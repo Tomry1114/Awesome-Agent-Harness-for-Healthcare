@@ -183,6 +183,7 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
     _repair_turns = 0
     _env_actions = 0   # CONTRACT(2): EXECUTED environment actions; repair turns do NOT count against this
     _insufficient_seen = {}   # CONTRACT: INSUFFICIENT grounding gets at most ONE revise PER evidence_version
+    _answer_attempts = 0   # count EVERY final answer the agent submits (not just the one that lands)
     _deliv_writes_used = 0   # at most ONE reserved over-budget deliverable write (off/enforce budget parity)
     deliv = DeliverableScaffold(task)  # PB deliverable scaffolding (Codex #1: extracted from the generic runner; no-op for non-PB)
     _fail_sig = None; _fail_n = 0; _aborted = False  # circuit breaker: abort on repeated identical failing call
@@ -218,6 +219,10 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
             if _pn is not None:
                 last_res, last_obs = _pn
                 continue
+            _answer_attempts += 1
+            _ahash = hashlib.sha1((action.get("answer", "") or "").encode("utf-8")).hexdigest()[:12]
+            trajectory.append({"step": step, "event_type": "answer_attempt", "attempt_index": _answer_attempts,
+                               "answer_hash": _ahash, "answer": (action.get("answer", "") or "")[:500], "status": "ok"})
             if _harness is not None:                    # final answer is a commit point
                 try:
                     _hf = _harness.before_final(action.get("answer", ""), step=step)
@@ -237,11 +242,33 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
                             _insufficient_seen[_evk] = _insufficient_seen.get(_evk, 0) + 1
                             _insuff_exceeded = _insufficient_seen[_evk] > 1   # a 2nd insufficient on the SAME evidence
                         pending_harness_feedback = _next_feedback(_hf, "before_final")
-                        # INSUFFICIENT -> ONE revise per evidence_version (a NEW evidence version earns another);
-                        # the global repair budget likewise never ERASES a no-side-effect terminal answer.
-                        if _insuff_exceeded or _repair_turns > max_repair_turns:
+                        _mr_viol = bool(((getattr(_hf, "raw", None) and getattr(_hf.raw, "extra", None)) or {}).get("must_resolve"))
+                        _budget_out = _repair_turns > max_repair_turns
+                        # MUST-RESOLVE (high-confidence, LOCALIZED evidence contradiction): a confirmed conflict
+                        # is NOT eligible for unverified_grounding flagged delivery. Bounded repair; on
+                        # exhaustion the original (refuted) answer is WITHHELD -> safe abstention, never the
+                        # violating answer. (INSUFFICIENT/low-confidence keep their flagged-delivery path.)
+                        if _mr_viol:
+                            if _budget_out:
+                                trajectory.append({"step": step, "event_type": "final_answer",
+                                    "thought": "[WITHHELD] The answer asserted a claim refuted by the validated "
+                                               "evidence and the conflict was not resolved; no safe answer "
+                                               "could be committed.",
+                                    "status": "ok", "verification_flag": "abstained_unresolved_contradiction",
+                                    "final_disposition": "abstained_unresolved_violation",
+                                    "answer_attempt_index": _answer_attempts, "harness_feedback": _hf.feedback,
+                                    "canonical_action": _canon.canonical_action(action, env_type)})
+                                try: _harness.record_flagged_final("[WITHHELD: unresolved evidence contradiction]",
+                                                                   flag="abstained_unresolved_contradiction", step=step)
+                                except Exception as _re: _harness_runtime_errors.append("record_flagged_final: %r" % _re)
+                                finished = True; break
+                            continue                     # within budget -> agent gets the targeted REVISE
+                        # INSUFFICIENT -> ONE revise per evidence_version, else flagged delivery (advisory).
+                        if _insuff_exceeded or _budget_out:
                             trajectory.append({"step": step, "event_type": "final_answer", "thought": action.get("answer", ""),
                                                "status": "ok", "verification_flag": "unverified_grounding",
+                                               "final_disposition": "flagged_delivery",
+                                               "answer_attempt_index": _answer_attempts,
                                                "harness_feedback": _hf.feedback,
                                                "canonical_action": _canon.canonical_action(action, env_type)})
                             try: _harness.record_flagged_final(action.get("answer", ""), flag="unverified_grounding", step=step)
@@ -261,7 +288,9 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
                         trajectory.append({"step": step, "event_type": "harness_escalation",   # operational write -> fail-closed
                                            "feedback": _hf.feedback, "status": "error"})
                         _aborted = True; break
-            trajectory.append({"step": step, "event_type": "final_answer", "thought": action.get("answer", ""), "status": "ok", "canonical_action": _canon.canonical_action(action, env_type)})
+            trajectory.append({"step": step, "event_type": "final_answer", "thought": action.get("answer", ""), "status": "ok",
+                               "final_disposition": "clean_commit", "answer_attempt_index": _answer_attempts,
+                               "canonical_action": _canon.canonical_action(action, env_type)})
             finished = True; break
         if action["type"] == "tool_call_truncated":  # cut-off tool call (e.g. oversized write_file) -> ask to re-issue
             trajectory.append({"step": step, "event_type": "agent_error", "error": "truncated_tool_call",

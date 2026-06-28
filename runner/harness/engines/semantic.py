@@ -18,17 +18,25 @@ INSUFFICIENT = "insufficient"
 
 
 class SemanticVerdict:
-    __slots__ = ("supported", "confidence", "reason", "relation")
+    __slots__ = ("supported", "confidence", "reason", "relation", "critical_claim", "evidence_ids")
 
-    def __init__(self, supported=None, confidence=0.0, reason=None, relation=None):
+    def __init__(self, supported=None, confidence=0.0, reason=None, relation=None,
+                 critical_claim=None, evidence_ids=None):
         self.supported = supported       # True / False / None(unknown)
         self.confidence = confidence     # 0..1
         self.reason = reason
         self.relation = relation         # supported | contradicted | insufficient | None
+        self.critical_claim = critical_claim   # the ONE specific answer claim the evidence refutes (localizes a contradiction)
+        self.evidence_ids = list(evidence_ids or [])   # which numbered evidence items refute it (E1, E2, ...)
+
+    def localizable(self):
+        """A contradiction is MUST-RESOLVE-eligible only if it names a specific claim AND cites evidence."""
+        return bool(self.critical_claim and str(self.critical_claim).strip()) and bool(self.evidence_ids)
 
     def to_dict(self):
         return {"supported": self.supported, "confidence": round(float(self.confidence or 0.0), 3),
-                "reason": self.reason, "relation": self.relation}
+                "reason": self.reason, "relation": self.relation,
+                "critical_claim": self.critical_claim, "evidence_ids": self.evidence_ids}
 
 
 _PROMPT = (
@@ -38,7 +46,10 @@ _PROMPT = (
     "'supported' (evidence directly supports the answer), 'contradicted' (evidence conflicts with/refutes "
     "the answer), or 'insufficient' (evidence neither supports nor contradicts — it under-covers the answer). "
     "Reply with strict JSON: "
-    '{{"relation": "supported|contradicted|insufficient", "confidence": 0.0-1.0, "reason": "<short>"}}.\n\n'
+    '{{"relation": "supported|contradicted|insufficient", "confidence": 0.0-1.0, "reason": "<short>", '
+    '"critical_claim": "<for contradicted ONLY: the single specific claim in the ANSWER that THIS evidence '
+    'refutes; else null>", "evidence_ids": ["<for contradicted ONLY: the evidence tags e.g. E1, E2 that '
+    'refute it; else empty>"]}}.\n\n'
     "QUESTION / GOAL:\n{task_goal}\n\nPUBLIC TASK CONTEXT:\n{public_context}\n\n"
     "SELECTED EVIDENCE:\n{evidence}\n\nFINAL ANSWER:\n{answer}\n"
 )
@@ -69,10 +80,10 @@ def _format_evidence(evidence):
     out = []
     for e in (evidence or []):
         if isinstance(e, dict):
-            out.append("- [%s] %s" % (e.get("type", "evidence"),
-                                      str(e.get("value_full") or e.get("value", ""))[:1800]))
+            out.append("[E%d] [%s] %s" % (len(out) + 1, e.get("type", "evidence"),
+                                           str(e.get("value_full") or e.get("value", ""))[:1800]))
         else:
-            out.append("- " + str(e)[:300])
+            out.append("[E%d] %s" % (len(out) + 1, str(e)[:300]))
     return "\n".join(out)
 
 
@@ -100,7 +111,11 @@ def _parse(raw):
                 rel = SUPPORTED if supported else CONTRADICTED
             elif rel is not None and supported is None:
                 supported = True if rel == SUPPORTED else (False if rel == CONTRADICTED else None)
-            return SemanticVerdict(supported, conf, reason, relation=rel)
+            cc = d.get("critical_claim")
+            cc = cc.strip() if isinstance(cc, str) and cc.strip().lower() not in ("", "null", "none") else None
+            eids = d.get("evidence_ids")
+            eids = [str(x) for x in eids if str(x).strip()] if isinstance(eids, list) else []
+            return SemanticVerdict(supported, conf, reason, relation=rel, critical_claim=cc, evidence_ids=eids)
         except Exception:
             pass
     return SemanticVerdict(None, 0.0, "unparseable_judge_response", relation=None)

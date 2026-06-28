@@ -263,7 +263,11 @@ def test_p3_semantic_claim_support_judge():
         return k
 
     assert mk(lambda p: '{"supported": true, "confidence": 0.9, "reason": "ok"}').before_final("RUL nodule", step=1).type == D.ALLOW
-    assert mk(lambda p: '{"supported": false, "confidence": 0.9, "reason": "LUL vs RUL"}').before_final("LUL effusion", step=1).type == D.REVISE
+    # NON-localizable high-conf contradiction (no critical_claim/evidence_ids) -> NOT must-resolve -> ESCALATE+flag
+    assert mk(lambda p: '{"supported": false, "confidence": 0.9, "reason": "LUL vs RUL"}').before_final("LUL effusion", step=1).type == D.ESCALATE
+    # LOCALIZABLE high-conf contradiction (names the claim + cites evidence) -> must-resolve hard REVISE
+    _dl = mk(lambda p: '{"relation": "contradicted", "confidence": 0.9, "reason": "LUL vs RUL", "critical_claim": "LUL effusion", "evidence_ids": ["E1"]}').before_final("LUL effusion", step=1)
+    assert _dl.type == D.REVISE and _dl.raw.reason_code == "evidence_contradiction", _dl.raw.to_dict()
     assert mk(lambda p: '{"supported": false, "confidence": 0.2, "reason": "unclear"}').before_final("maybe", step=1).type == D.ESCALATE
     nj = mk(None)   # judge unavailable: a contract that REQUIRES claim-support cannot pass in enforce
     assert nj.before_final("RUL nodule", step=1).type == D.ESCALATE
@@ -304,9 +308,12 @@ def test_p3_semantic_relation_tristate():
                        "a 3cm spiculated RUL nodule", None, None, step=0, result_ok=True)
         return k
 
-    # CONTRADICTED (high conf) -> HARD REVISE; reason_code kept 'unsupported_claim' (counted violation).
-    dc = mk(lambda p: '{"relation": "contradicted", "confidence": 0.9, "reason": "LUL vs RUL"}').before_final("LUL effusion", step=1)
-    assert dc.type == D.REVISE and dc.raw.reason_code == "unsupported_claim", dc.raw.to_dict()
+    # high-conf contradiction: LOCALIZABLE (critical_claim + evidence_ids) -> must-resolve REVISE(evidence_contradiction).
+    dc = mk(lambda p: '{"relation": "contradicted", "confidence": 0.9, "reason": "LUL vs RUL", "critical_claim": "LUL", "evidence_ids": ["E1"]}').before_final("LUL effusion", step=1)
+    assert dc.type == D.REVISE and dc.raw.reason_code == "evidence_contradiction", dc.raw.to_dict()
+    # NON-localizable high-conf contradiction -> NOT must-resolve -> ESCALATE (flag), never a silent pass.
+    dnl = mk(lambda p: '{"relation": "contradicted", "confidence": 0.9, "reason": "LUL vs RUL"}').before_final("LUL effusion", step=1)
+    assert dnl.type == D.ESCALATE, dnl.raw.to_dict()
     # INSUFFICIENT -> limited REVISE carrying the unverified_grounding flag + routing fields.
     di = mk(lambda p: '{"relation": "insufficient", "confidence": 0.8, "reason": "under"}').before_final("RUL nodule", step=1)
     assert di.type == D.REVISE and di.raw.reason_code == "insufficient_grounding", di.raw.to_dict()
@@ -946,6 +953,43 @@ def test_no_new_progress_steers_after_second_repeat():
     k2.after_action(read, "noop", {"x": 0}, {"x": 1}, step=1, result_ok=True)   # state changed -> progress
     d = k2.after_action(read, "noop", {"x": 1}, {"x": 2}, step=2, result_ok=True)
     assert d is None or d.type != D.REVISE, d
+
+
+def test_must_resolve_pending_resolution_lifecycle():
+    # must-resolve v1: a LOCALIZED high-conf contradiction opens a pending_resolution the next answer must
+    # close; repeats increment attempts; a SUPPORTED re-answer clears it; non-VALIDATED evidence cannot
+    # establish must-resolve (it degrades to INSUFFICIENT).
+    pol = H.load_policy(env_type="tool_sandbox")
+    task = {"task_id": "m", "goal": "finding?", "context": {}, "environment": {"type": "tool_sandbox"}}
+    contract = build_contract(task, env_type="tool_sandbox", policy=pol)
+
+    def mk(jf, ok=True):
+        k = HarnessKernel(contract, [ScopeEvidenceBinding(), ObligationLifecycle(), VerifyAndCommit()],
+                          mode="enforce", policy=pol, env_type="tool_sandbox", judge_fn=jf,
+                          budget={"max_semantic_checks": 9})
+        k.after_action({"type": "tool", "tool": "ImageDescription", "args": {}},
+                       "a 3cm spiculated RUL nodule", None, None, step=0, result_ok=ok)
+        return k
+
+    cj = lambda p: '{"relation": "contradicted", "confidence": 0.9, "reason": "LUL vs RUL", "critical_claim": "LUL effusion", "evidence_ids": ["E1"]}'
+    k = mk(cj)
+    d1 = k.before_final("LUL effusion", step=1)
+    assert d1.type == D.REVISE and d1.raw.reason_code == "evidence_contradiction", d1.raw.to_dict()
+    pr = k.ledger.pending_resolution
+    assert pr and pr["violation_type"] == "evidence_contradiction" and pr["critical_claim"] == "LUL effusion" \
+        and pr["evidence_ids"] == ["E1"] and pr["attempts"] == 1, pr
+    # agent re-answers but conflict persists -> attempts increments, still unresolved
+    d2 = k.before_final("still LUL effusion", step=2)
+    assert d2.type == D.REVISE and k.ledger.pending_resolution["attempts"] == 2, k.ledger.pending_resolution
+    # agent truly resolves -> SUPPORTED clears the pending resolution
+    k.ctx.judge_fn = lambda p: '{"relation": "supported", "confidence": 0.9, "reason": "now consistent"}'
+    d3 = k.before_final("RUL nodule", step=3)
+    assert d3.type == D.ALLOW and k.ledger.pending_resolution is None, (d3.type, k.ledger.pending_resolution)
+    # NON-VALIDATED evidence basis (failed tool -> ATTEMPTED) cannot establish must-resolve -> no pending
+    kf = mk(cj, ok=False)
+    df = kf.before_final("LUL effusion", step=1)
+    assert kf.ledger.pending_resolution is None and df.raw.reason_code != "evidence_contradiction", \
+        (df.raw.reason_code, kf.ledger.pending_resolution)
 
 
 def _run():

@@ -105,6 +105,19 @@ def test_run_after_action_reserves_room_for_harness_note():
     assert "(obs + \"\\n[HARNESS] \" + json.dumps(_hpost.feedback, ensure_ascii=False))[:int(os.environ.get(\"MH_OBS_MAX_LEN\", \"10000\"))]" not in src
 
 
+
+def test_run_answer_attempt_logged_and_must_resolve_abstains():
+    src = _run_src()
+    # every submitted final answer is logged as an answer_attempt (not only the one that lands).
+    assert '"event_type": "answer_attempt"' in src
+    assert "_answer_attempts += 1" in src
+    # must-resolve (localized contradiction) is NOT eligible for unverified_grounding flagged delivery:
+    # on repair-budget exhaustion the violating answer is WITHHELD -> safe abstention.
+    assert "_mr_viol" in src
+    assert '"abstained_unresolved_contradiction"' in src
+    assert '"final_disposition": "abstained_unresolved_violation"' in src
+
+
 def _run():
     fns = [v for kk, v in sorted(globals().items()) if kk.startswith("test_") and callable(v)]
     passed = 0
