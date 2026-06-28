@@ -74,10 +74,13 @@ def test_run_before_action_is_additive_not_overwrite():
     assert 'last_res = {"harness_decision": _hb.type, "harness_feedback": _hb.feedback}' not in src
     assert 'last_res = {"harness_decision": _hf.type, "harness_feedback": _hf.feedback}' not in src
     # and replaced by the contract additive key + repair counter.
-    assert "pending_harness_feedback = {\"decision\": _hb.type," in src
-    assert "\"stage\": \"before_action\"" in src
+    assert "pending_harness_feedback = _next_feedback(_hb, \"before_action\")" in src
     assert "_repair_turns += 1" in src
     assert "max_repair_turns" in src
+    # the feedback handed to the agent must be the FULL harness feedback (suggested_capabilities etc. NOT
+    # hand-picked away) -- regression guard for the actionable-repair signal.
+    assert "def _next_feedback(hr, stage):" in src
+    assert "fb = dict(hr.feedback or {})" in src
 
 
 def test_run_state_dict_passes_harness_feedback_and_clears():

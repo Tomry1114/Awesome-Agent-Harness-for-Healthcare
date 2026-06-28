@@ -12,6 +12,18 @@ ROOT = os.path.dirname(HERE)
 sys.path.insert(0, HERE)
 import environments, agents, scoring
 
+def _next_feedback(hr, stage):
+    """ADDITIVE structured feedback handed to the agent next turn. Pass the FULL harness feedback dict
+    (suggested_capabilities, evidence_needed, avoid_capabilities, do_not_repeat, ... -- NOT a hand-picked
+    subset) so the agent receives the actionable repair signal, plus the decision + stage. The richer the
+    signal, the more the agent can hill-climb (harness-engineering: feedback quality is the lever)."""
+    fb = dict(hr.feedback or {})
+    fb["reason"] = fb.get("reason") or fb.get("message")
+    fb["decision"] = hr.type
+    fb["stage"] = stage
+    return fb
+
+
 def _resolve_git_sha():
     # the code SHA this run executed -> result.json provenance -> cmp_report flags a MIXED-SHA bundle.
     try:
@@ -224,10 +236,7 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
                             _evk = (_harness.ledger.validated_evidence_version if _harness is not None else 0)
                             _insufficient_seen[_evk] = _insufficient_seen.get(_evk, 0) + 1
                             _insuff_exceeded = _insufficient_seen[_evk] > 1   # a 2nd insufficient on the SAME evidence
-                        pending_harness_feedback = {"decision": _hf.type,
-                            "reason": (_hf.feedback or {}).get("reason") or (_hf.feedback or {}).get("message"),
-                            "missing_obligations": (_hf.feedback or {}).get("missing_obligations", []),
-                            "stage": "before_final"}
+                        pending_harness_feedback = _next_feedback(_hf, "before_final")
                         # INSUFFICIENT -> ONE revise per evidence_version (a NEW evidence version earns another);
                         # the global repair budget likewise never ERASES a no-side-effect terminal answer.
                         if _insuff_exceeded or _repair_turns > max_repair_turns:
@@ -287,10 +296,7 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
                 trajectory.extend(_hb.events)
                 if _hb.type in ("REVISE", "BLOCK"):     # do NOT execute the tool; ADDITIVE feedback (env obs intact)
                     _repair_turns += 1
-                    pending_harness_feedback = {"decision": _hb.type,
-                        "reason": (_hb.feedback or {}).get("reason") or (_hb.feedback or {}).get("message"),
-                        "missing_obligations": (_hb.feedback or {}).get("missing_obligations", []),
-                        "stage": "before_action"}
+                    pending_harness_feedback = _next_feedback(_hb, "before_action")
                     if _repair_turns > max_repair_turns:
                         trajectory.append({"step": step, "event_type": "repair_budget_exhausted", "stage": "before_action", "status": "escalated", "reason": "repair_budget_exhausted"}); _aborted = True; break
                     continue
@@ -371,9 +377,7 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
                 _max = int(os.environ.get("MH_OBS_MAX_LEN", "10000"))
                 _htxt = "\n[HARNESS] " + json.dumps(_hpost.feedback, ensure_ascii=False)
                 obs = (_htxt[:_max] if len(_htxt) >= _max else obs[:_max - len(_htxt)] + _htxt)
-                pending_harness_feedback = {"decision": _hpost.type, "stage": "after_action",
-                    "reason": (_hpost.feedback or {}).get("reason") or (_hpost.feedback or {}).get("message"),
-                    "missing_obligations": (_hpost.feedback or {}).get("missing_obligations", [])}
+                pending_harness_feedback = _next_feedback(_hpost, "after_action")
         _last_tool_ev = _ev   # mark consumed only if a later agent.act() runs (circuit-break -> stays False)
         if _err:
             _sig = (action["tool"], json.dumps(action.get("args", {}), sort_keys=True), _ev.get("error_type"))
