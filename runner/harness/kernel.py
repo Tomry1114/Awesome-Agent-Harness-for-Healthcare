@@ -227,7 +227,7 @@ class HarnessKernel:
         return eff
 
     def after_action(self, action, result, before_state, after_state, step=0, canonical_observation=None,
-                     result_ok=None, raw_observation=None):
+                     result_ok=None, raw_observation=None, result_status=None):
         self.ctx.step = step
         self.ctx.observation = canonical_observation
         self._last_obs = canonical_observation        # carried into the NEXT before_action (prospective scope)
@@ -241,6 +241,7 @@ class HarnessKernel:
             self._last_displayed_subject = _cur
         sem = self._canon(action, observation=canonical_observation)
         self.ctx.result_ok = result_ok      # whether the tool result succeeded (adapter signal)
+        self.ctx.result_status = result_status   # ok|failed|unknown (the kernel passes run.py's tri-state)
         decisions = []
         for cap in self.capabilities:
             try:
@@ -258,6 +259,8 @@ class HarnessKernel:
             # the combined decision — an unverifiable commit must record verified=None, never True.
             self.ledger.record_commit(sem.capability, step, verified=self.ctx.verification,
                                       detail=winner.reason)
+            if self.ctx.verification is True and getattr(sem, "effect", None) == "irreversible":
+                self.ledger.completed_commits.add((sem.semantic_type, sem.resource, self.ledger.subject_id()))
             self._close_verified_repair()    # a gate-passed commit that executed + verified -> repaired
         eff = self._apply_mode(winner, "after_action")
         eff.feedback = _feedback(winner) if eff.type != D.ALLOW else None

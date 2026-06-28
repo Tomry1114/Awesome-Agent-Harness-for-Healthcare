@@ -28,6 +28,18 @@ class VerifyAndCommit(Capability):
                                 feedback="This tool is not declared in the substrate manifest, so its "
                                          "risk/semantics are unknown and it cannot be auto-verified; "
                                          "escalating (fail-closed).")
+        # PRE-COMMIT CONTROL: an IRREVERSIBLE commit that ALREADY SUCCEEDED must not be re-executed -- a
+        # redundant re-submit/re-create risks corrupting the already-landed state (e.g. a second submit that
+        # times out). Block it before it runs; the agent should finalize, not re-commit.
+        if (ctx.sem and getattr(ctx.sem, "semantic_type", None) in ("create", "update", "submit")
+                and getattr(ctx.sem, "effect", None) == "irreversible"
+                and (ctx.sem.semantic_type, ctx.sem.resource, ctx.ledger.subject_id())
+                in getattr(ctx.ledger, "completed_commits", set())):
+            return self._decide(D.BLOCK, rule_id="redundant_commit", reason_code="redundant_commit",
+                                deterministic=True,
+                                reason="this irreversible commit already succeeded; re-executing risks corrupting it",
+                                feedback="You already completed this commit successfully — do NOT re-submit/re-create "
+                                         "it; finalize instead.")
         if ctx.risk == R3:
             return self._decide(D.ESCALATE, rule_id="unjudgeable_high_risk", reason_code="unjudgeable",
                                 deterministic=True,
@@ -50,6 +62,15 @@ class VerifyAndCommit(Capability):
         # the COMMIT TOOL CALL itself failed -> the commit did not land. Do NOT evaluate the postcondition
         # against a coincidental state change and call it verified; this is a failed (not verified) commit.
         if ctx.result_ok is False:
+            if getattr(ctx, "result_status", None) == "unknown":
+                # a TIMEOUT / 5xx leaves an IRREVERSIBLE commit in an UNKNOWN state (it may or may not have
+                # landed). That is the worst case for a clinical write -> verification UNKNOWN, fail-closed.
+                ctx.verification = None
+                return self._decide(D.ESCALATE, rule_id="commit_state_unknown", reason_code="unverifiable_commit",
+                                    deterministic=True,
+                                    reason="commit result is UNKNOWN (timeout/ambiguous) — it may or may not have landed",
+                                    feedback="This commit timed out; its effect is UNKNOWN. Do NOT blindly retry — "
+                                             "read back the state to confirm whether it landed.")
             ctx.verification = False
             return self._decide(D.REVISE, rule_id="commit_execution_failed", reason_code="violated_commit",
                                 deterministic=True, reason="the commit tool call failed (did not execute)",

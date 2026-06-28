@@ -31,6 +31,21 @@ def final_answer(evs):
     return (str(fa[-1].get("thought", ""))[:160], fa[-1].get("verification_flag")) if fa else (None, None)
 
 
+def env_failure(evs):
+    """True if the treated trajectory hit an ENV/infra failure (a tool Timeout/5xx, or a harness
+    commit_state_unknown escalation). Such a flip is an ENVIRONMENT confound, not agent skill or harness."""
+    for e in evs:
+        if e.get("event_type") == "tool_call":
+            cr = e.get("canonical_result") or {}
+            if isinstance(cr, dict) and str(cr.get("error_type")) in ("Timeout",):
+                return "timeout"
+            if e.get("error_type") in ("http_500", "http_502", "http_503", "http_429"):
+                return e.get("error_type")
+        if e.get("event_type") in ("harness_decision", "harness_escalation") and e.get("rule_id") == "commit_state_unknown":
+            return "unknown_commit"
+    return None
+
+
 def harness_decisions(evs):
     return [e for e in evs if e.get("event_type") in ("harness_decision", "harness_escalation")]
 
@@ -58,7 +73,13 @@ for kind, ids in (("RECOVERED", recovered), ("HARMED", harmed)):
         fa_b, _ = final_answer(be)
         n_int = len([e for e in hd if e.get("event_type") == "harness_decision"])
         # CAUSAL verdict: a flip with NO harness decision in the treated run is NOT harness-caused.
-        verdict = "AGENT_VARIANCE (0 harness interventions)" if n_int == 0 else "HARNESS_INTERVENED -> review below"
+        _envf = env_failure(te)
+        if _envf:
+            verdict = "ENV_FAILURE:%s (environment confound, not harness/agent)" % _envf
+        elif n_int == 0:
+            verdict = "AGENT_VARIANCE (0 harness interventions)"
+        else:
+            verdict = "HARNESS_INTERVENED -> review below"
         if n_int > 0:
             caused["recovered" if kind == "RECOVERED" else "harmed"] += 1
         print("\n############ %s: %s  ->  %s ############" % (kind, tid, verdict))

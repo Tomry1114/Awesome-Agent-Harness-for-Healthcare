@@ -901,6 +901,34 @@ def test_validated_evidence_version_only_on_genuine_progress():
     assert L.validated_evidence_version == 1   # a repeated identical validated read is NOT new progress
 
 
+def test_pre_commit_redundant_commit_blocked():
+    # PRE-COMMIT CONTROL: an irreversible commit that already SUCCEEDED must be BLOCKED on re-execution
+    # (prevents a redundant re-submit/re-create from corrupting the landed state).
+    contract = build_contract(TASK, env_type="fhir", policy=POLICY)
+    k = HarnessKernel(contract, [VerifyAndCommit()], mode="enforce", policy=POLICY, env_type="fhir")
+    create = {"type": "tool", "tool": "create_medication_request", "args": {"patient": "Patient/123"}}
+    k.ledger.completed_commits.add(("create", "MedicationRequest", k.ledger.subject_id()))
+    eff = k.before_action(create, {"x": 0}, step=2)
+    assert eff.type == D.BLOCK and getattr(eff.raw, "reason_code", None) == "redundant_commit", (eff.type, getattr(eff.raw, "reason_code", None))
+    # a FIRST commit (not yet in completed_commits) is NOT blocked by this rule
+    k2 = HarnessKernel(contract, [VerifyAndCommit()], mode="enforce", policy=POLICY, env_type="fhir")
+    eff2 = k2.before_action(create, {"x": 0}, step=1)
+    assert getattr(getattr(eff2, "raw", None), "reason_code", None) != "redundant_commit"
+
+
+def test_unknown_commit_state_escalates_not_failed():
+    # a TIMEOUT/ambiguous commit result -> UNKNOWN state -> ESCALATE (verification None), NOT a failed REVISE.
+    contract = build_contract(TASK, env_type="fhir", policy=POLICY)
+    create = {"type": "tool", "tool": "create_medication_request", "args": {"patient": "Patient/123"}}
+    ku = HarnessKernel(contract, [VerifyAndCommit()], mode="enforce", policy=POLICY, env_type="fhir")
+    eu = ku.after_action(create, "TimeoutError", {"x": 0}, {"x": 0}, step=1, result_ok=False, result_status="unknown")
+    assert eu.type == D.ESCALATE and ku.ctx.verification is None, (eu.type, ku.ctx.verification)
+    # a CLEAR failure stays a REVISE with verification False (unchanged behaviour)
+    kf = HarnessKernel(contract, [VerifyAndCommit()], mode="enforce", policy=POLICY, env_type="fhir")
+    ef = kf.after_action(create, "{error}", {"x": 0}, {"x": 0}, step=1, result_ok=False, result_status="failed")
+    assert ef.type == D.REVISE and kf.ctx.verification is False, (ef.type, kf.ctx.verification)
+
+
 def _run():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     passed = 0

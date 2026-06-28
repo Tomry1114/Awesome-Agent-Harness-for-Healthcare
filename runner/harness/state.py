@@ -24,6 +24,7 @@ class Ledger:
                                             # come from here so a lower-priority finding (e.g. missing_prereq)
                                             # is not erased when a higher one (e.g. wrong_scope) wins the hook.
         self.commit_history = []            # [{"action","step","verified":bool,...}]
+        self.completed_commits = set()      # keys of irreversible commits that ALREADY succeeded (verified True)
         self.unresolved_risks = []          # [{"rule_id","reason","risk"}]
         self.resolutions = []               # [harness_resolution dicts] — a REVISE later repaired (causal)
         # per-metric OPPORTUNITY counts (denominators): each metric is rate = numerator / its own

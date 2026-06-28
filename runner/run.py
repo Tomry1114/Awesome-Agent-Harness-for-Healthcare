@@ -318,6 +318,11 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
                 _marker = (_out[_out.find("[") + 1:_out.find("]")] if "]" in _out else _out[:40]).lower()
                 if any(w in _marker for w in ("error", "unknown", "invalid", "fail")):
                     _err = _out[:120]
+        _cres = _canon.canonical_result(res) or {}
+        _estr = ("%s %s" % (_cres.get("error_type"), _err)).lower()
+        _result_status = ("ok" if not _err
+                          else ("unknown" if ("timeout" in _estr or any(c in _estr for c in ("500", "502", "503", "429")))
+                                else "failed"))
         _hpost = None
         if _harness is not None:
             try:
@@ -327,7 +332,7 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
                 _hb_after = _snap_after if _snap_after is not None else _state_after
                 _hpost = _harness.after_action(action, res, _hb_before, _hb_after, step=step,
                                                canonical_observation=_canon.canonical_observation(res, env_type),
-                                               result_ok=not _err, raw_observation=res)
+                                               result_ok=not _err, raw_observation=res, result_status=_result_status)
             except Exception as _he:
                 _hpost = None
                 _harness_runtime_errors.append("after_action: %r" % _he)

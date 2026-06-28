@@ -40,7 +40,7 @@ class HarnessContext:
     """What every capability + the kernel share for one task."""
     __slots__ = ("ledger", "contract", "policy", "mode", "step", "env_type", "risk_of", "observation",
                  "judge_fn", "judge_model", "semantic_remaining", "manifest", "sem", "risk",
-                 "result_ok", "verification", "last_observation", "observed_subject", "displayed_subject",
+                 "result_ok", "result_status", "verification", "last_observation", "observed_subject", "displayed_subject",
                  "action_key")
 
     def __init__(self, ledger, contract, policy, mode, env_type=None, risk_of=None,
@@ -57,6 +57,7 @@ class HarnessContext:
         self.sem = None             # SemanticAction of the current action (set by the kernel)
         self.risk = None            # risk tier of the current action (set by the kernel)
         self.result_ok = None       # did the current action's tool result succeed? (set by the kernel)
+        self.result_status = None   # tri-state ok|failed|unknown (timeout/ambiguous) -> unknown commit = ESCALATE
         self.verification = None     # tri-state commit verification: True/False/None (set by verify_commit)
         self.last_observation = None  # the most recent canonical_observation
         self.action_key = None       # canonical id of the current action (dedup before/after interventions)
