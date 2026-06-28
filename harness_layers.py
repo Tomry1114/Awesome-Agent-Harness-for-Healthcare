@@ -15,6 +15,7 @@ def collect(globs):
     layer_fired = collections.Counter()  # layer -> tasks with >=1 decision in that layer
     disp = collections.Counter()
     unclassified = collections.Counter()
+    commits = {"operational": 0, "confirmed": 0, "unconfirmed": 0, "failed": 0}
     n = 0
     for g in globs:
         for f in glob.glob("%s/gpt5/*/trajectory.jsonl" % g):
@@ -29,13 +30,29 @@ def collect(globs):
                     seen_mech.add((lay, mech)); seen_layer.add(lay)
                 if e.get("event_type") == "final_answer" and e.get("final_disposition") in DISPOSITION_LAYER:
                     disp[e["final_disposition"]] += 1
+            _WR = ("create", "update", "submit", "write", "order", "prescribe", "post", "save")
+            for e in ev:
+                if e.get("event_type") == "tool_call":
+                    cr = e.get("canonical_result") or {}; sr = e.get("state_record") or {}
+                    tool = str(e.get("tool") or "").lower()
+                    st = str(cr.get("status") or e.get("status") or "")
+                    is_write = (any(w in tool for w in _WR) or cr.get("kind") == "Failure"
+                                or sr.get("state_changed") is True)
+                    if is_write:
+                        commits["operational"] += 1
+                        if sr.get("state_changed") is True and st in ("success", "ok", ""):
+                            commits["confirmed"] += 1                # observable mutation == read-back confirmed
+                        elif st in ("failure", "error") or cr.get("kind") == "Failure":
+                            commits["failed"] += 1
+                        else:
+                            commits["unconfirmed"] += 1              # write claimed but no observable state change
             for lm in seen_mech: fired[lm] += 1
             for la in seen_layer: layer_fired[la] += 1
-    return n, fired, layer_fired, disp, unclassified
+    return n, fired, layer_fired, disp, unclassified, commits
 
 def main():
     globs = sys.argv[1:] or ["res6_mcta_enforce", "res6_hab_enforce"]
-    n, fired, layer_fired, disp, unclassified = collect(globs)
+    n, fired, layer_fired, disp, unclassified, commits = collect(globs)
     if not n:
         print("no enforce bundles matched:", globs); return
     print("=" * 84)
@@ -62,6 +79,14 @@ def main():
         trig = adopted + kept + disp.get("kept_original_no_candidate", 0)
         if trig:
             print("    repair trigger=%d  adoption=%d/%d (%.0f%%)" % (trig, adopted, trig, 100 * adopted / trig))
+    if commits["operational"]:
+        op = commits["operational"]
+        print("\n[INFRASTRUCTURE: commit read-back reconciliation]")
+        print("    operational writes=%d  confirmed(observable state change)=%d (%.0f%%)  "
+              "unconfirmed(claimed-only)=%d  failed=%d"
+              % (op, commits["confirmed"], 100 * commits["confirmed"] / op, commits["unconfirmed"], commits["failed"]))
+        print("    (unconfirmed/failed writes must NOT be finalized over as success -- enforced by the "
+              "process-output must-resolve gate; ACTIVE re-read of the written resource is the next infra step)")
     if unclassified:
         print("\n[UNCLASSIFIED mechanisms -- add to layers.LAYER_OF]:", dict(unclassified))
     print("\nReading: a COMPENSATION mechanism near 0%% is vestigial on this model tier -> ablate it. "
