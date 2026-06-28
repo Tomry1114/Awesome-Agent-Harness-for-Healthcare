@@ -24,7 +24,7 @@ verify_rescored () {
 pb_stream () { set -e
   for M in off enforce; do
     MH_HARNESS_MODE=$M $PY runner/run_batch.py --bench PhysicianBench --agent gpt5 --limit $LIMIT \
-       --fhir-base $FHIR --reset-mode none --out res6_pb_$M/ > res6_pb_$M.log 2>&1
+       --fhir-base $FHIR --reset-mode restore_pristine --out res6_pb_$M/ > res6_pb_$M.log 2>&1
     rescore res6_pb_$M PhysicianBench; verify_rescored res6_pb_$M $LIMIT; echo "[done PB $M $(date)]"
   done
 }
@@ -53,4 +53,5 @@ wait $PB; r=$?; [ $r -ne 0 ] && { RC=1; echo "[stream PB FAILED rc=$r]"; }
 wait $MC; r=$?; [ $r -ne 0 ] && { RC=1; echo "[stream MCTA FAILED rc=$r]"; }
 wait $HB; r=$?; [ $r -ne 0 ] && { RC=1; echo "[stream HAB FAILED rc=$r]"; }
 echo "[ALL STREAMS DONE $(date) rc=$RC]"
+if [ "$RC" -ne 0 ]; then echo "[FATAL] one or more dataset streams failed -> no formal report"; exit "$RC"; fi
 $PY cmp_report.py res6 --formal

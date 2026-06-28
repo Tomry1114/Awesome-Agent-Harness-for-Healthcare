@@ -48,7 +48,14 @@ POOL = {"wrong_scope_action_rate": ("wrong_scope_count", "wrong_scope_opportunit
         "escalation_rate": ("escalation_count", "n_proposed_actions")}
 
 
+HARD_EXCLUDE = {"api_backend_error", "degraded_tool_health", "mock_env", "replay_tool_backend",
+                "uses_hidden_reference", "scorer_validation_only", "non_independent_judge", "outcome_proxy"}
+
+
 def eligible(d, mode):
+    _q = set(d.get("qualification") or []) & HARD_EXCLUDE
+    if _q:
+        return False, "qualification:%s" % ",".join(sorted(_q))
     if d.get("evaluation_status") not in ("complete", "completed", "evaluated"):
         return False, "not_evaluated"
     sv = d.get("schema_validation")
@@ -184,6 +191,9 @@ for ds, modes in MODES_BY_DS.items():
     resolved = {m: frozenset(t for t, v in agg[m]["tasks"].items() if v["native"] is not None) for m in present}
     if len(present) >= 2 and len(set(resolved.values())) > 1:
         r.append("NATIVE_RESOLVED_SET_MISMATCH")
+    for m in present:
+        if paired_ids and frozenset(resolved[m]) != frozenset(paired_ids):
+            r.append("NATIVE_OUTCOME_UNRESOLVED:%s" % m)
     # ---- ROLE admission: each role present (where applicable) + single-valued across modes ----
     if len(agents) > 1 or any(agg[m]["miss_agent"] for m in present):
         r.append("AGENT_MODEL_MISSING_OR_MIXED")
@@ -213,7 +223,7 @@ for ds, modes in MODES_BY_DS.items():
             blk = dims[m].get(dim) or {}
             if not _num(blk.get("score")):
                 not_scored.add(dim)
-            elif blk.get("adapter_admission") not in ("ok", None):   # LOW_COVERAGE / VACUOUS / INCOMPLETE
+            elif blk.get("adapter_admission") != "ok":   # must be PROVEN ok (missing/None is not success)
                 not_admitted.add(dim)
     for dim in sorted(not_scored):
         r.append("DIMENSION_NOT_SCORED:%s" % dim)
