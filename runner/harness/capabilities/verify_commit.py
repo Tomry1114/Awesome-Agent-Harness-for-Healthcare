@@ -35,8 +35,7 @@ class VerifyAndCommit(Capability):
         # times out). Block it before it runs; the agent should finalize, not re-commit.
         if (ctx.sem and getattr(ctx.sem, "semantic_type", None) in ("create", "update", "submit")
                 and getattr(ctx.sem, "effect", None) == "irreversible"
-                and (ctx.sem.semantic_type, ctx.sem.resource, ctx.ledger.subject_id())
-                in getattr(ctx.ledger, "completed_commits", set())):
+                and commit_identity(ctx.sem, ctx.ledger) in getattr(ctx.ledger, "completed_commits", set())):
             return self._decide(D.BLOCK, rule_id="redundant_commit", reason_code="redundant_commit",
                                 deterministic=True,
                                 reason="this irreversible commit already succeeded; re-executing risks corrupting it",
@@ -65,14 +64,28 @@ class VerifyAndCommit(Capability):
         # against a coincidental state change and call it verified; this is a failed (not verified) commit.
         if ctx.result_ok is False:
             if getattr(ctx, "result_status", None) == "unknown":
-                # a TIMEOUT / 5xx leaves an IRREVERSIBLE commit in an UNKNOWN state (it may or may not have
-                # landed). That is the worst case for a clinical write -> verification UNKNOWN, fail-closed.
+                # TRANSPORT ack != ENVIRONMENT commit state. A timeout/5xx is ambiguous about whether the
+                # IRREVERSIBLE commit landed -> check the declared postconditions against the OBSERVED
+                # after-state FIRST (the env may already reflect it, e.g. a playwright submit timed out but
+                # localStorage changed). Only a genuinely UNOBSERVABLE effect stays unknown.
+                _cp0 = ctx.contract.commit_point_for(ctx.sem) if (ctx.contract and ctx.sem) else None
+                _posts0 = (_cp0 or {}).get("postconditions") or []
+                if _posts0:
+                    _vs = [eval_predicate(p, before_state, after_state, ctx.sem) for p in _posts0]
+                    if _vs and all(v is True for v in _vs):
+                        ctx.verification = True
+                        return None                  # the commit LANDED despite the transport timeout -> ALLOW
+                    if any(v is False for v in _vs):
+                        ctx.verification = False
+                        return self._decide(D.REVISE, rule_id="commit_execution_failed", reason_code="violated_commit",
+                            deterministic=True, reason="transport failed AND the expected state change did not occur",
+                            feedback="The commit did not take effect (transport error and no observable change) — retry.")
                 ctx.verification = None
                 return self._decide(D.ESCALATE, rule_id="commit_state_unknown", reason_code="unverifiable_commit",
                                     deterministic=True,
-                                    reason="commit result is UNKNOWN (timeout/ambiguous) — it may or may not have landed",
-                                    feedback="This commit timed out; its effect is UNKNOWN. Do NOT blindly retry — "
-                                             "read back the state to confirm whether it landed.")
+                                    reason="commit result is UNKNOWN (timeout/ambiguous; effect not observable)",
+                                    feedback="This commit timed out and its effect is NOT observable. Read back the "
+                                             "authoritative state to confirm whether it landed before any retry.")
             ctx.verification = False
             return self._decide(D.REVISE, rule_id="commit_execution_failed", reason_code="violated_commit",
                                 deterministic=True, reason="the commit tool call failed (did not execute)",
@@ -297,6 +310,16 @@ class VerifyAndCommit(Capability):
             D.ESCALATE, rule_id="semantic_low_confidence", reason_code="unjudgeable", deterministic=False,
             extra=_unk,
             reason="claim<->evidence support is low-confidence/unknown: %s" % v.reason)
+
+
+def commit_identity(sem, ledger):
+    """Intent-level identity for an irreversible commit: not just (type, resource, subject) but ALSO the
+    target object and a normalized payload hash -> a re-attempt of the SAME intent matches (redundant), while
+    another LEGITIMATE intent of the same resource type (a second, different order) does NOT."""
+    import hashlib, json
+    _pl = json.dumps(getattr(sem, "raw", None) or {}, sort_keys=True, default=str)
+    return (getattr(sem, "semantic_type", None), getattr(sem, "resource", None), ledger.subject_id(),
+            getattr(sem, "target_entity", None), hashlib.sha1(_pl.encode("utf-8")).hexdigest()[:10])
 
 
 def _selected(e, selector):

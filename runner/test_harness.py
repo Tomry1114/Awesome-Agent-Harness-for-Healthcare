@@ -912,25 +912,30 @@ def test_pre_commit_redundant_commit_blocked():
     # PRE-COMMIT CONTROL: an irreversible commit that already SUCCEEDED must be BLOCKED on re-execution
     # (prevents a redundant re-submit/re-create from corrupting the landed state).
     contract = build_contract(TASK, env_type="fhir", policy=POLICY)
+    from harness.capabilities.verify_commit import commit_identity
     k = HarnessKernel(contract, [VerifyAndCommit()], mode="enforce", policy=POLICY, env_type="fhir")
-    create = {"type": "tool", "tool": "create_medication_request", "args": {"patient": "Patient/123"}}
-    k.ledger.completed_commits.add(("create", "MedicationRequest", k.ledger.subject_id()))
-    eff = k.before_action(create, {"x": 0}, step=2)
+    create = {"type": "tool", "tool": "create_medication_request", "args": {"patient": "Patient/123", "med": "X"}}
+    k.before_action(create, {"x": 0}, step=1)                       # first attempt -> populates ctx.sem
+    k.ledger.completed_commits.add(commit_identity(k.ctx.sem, k.ledger))   # this EXACT intent succeeded
+    eff = k.before_action(create, {"x": 0}, step=2)                # SAME intent re-attempted -> BLOCK
     assert eff.type == D.BLOCK and getattr(eff.raw, "reason_code", None) == "redundant_commit", (eff.type, getattr(eff.raw, "reason_code", None))
-    # a FIRST commit (not yet in completed_commits) is NOT blocked by this rule
-    k2 = HarnessKernel(contract, [VerifyAndCommit()], mode="enforce", policy=POLICY, env_type="fhir")
-    eff2 = k2.before_action(create, {"x": 0}, step=1)
+    # a DIFFERENT intent (different payload) of the SAME resource type is NOT blocked
+    create2 = {"type": "tool", "tool": "create_medication_request", "args": {"patient": "Patient/123", "med": "Y"}}
+    eff2 = k.before_action(create2, {"x": 0}, step=3)
     assert getattr(getattr(eff2, "raw", None), "reason_code", None) != "redundant_commit"
 
 
-def test_unknown_commit_state_escalates_not_failed():
-    # a TIMEOUT/ambiguous commit result -> UNKNOWN state -> ESCALATE (verification None), NOT a failed REVISE.
+def test_unknown_commit_resolved_by_postcondition():
+    # TRANSPORT timeout != commit failure: check the postcondition against the after-state FIRST. State
+    # CHANGED -> the commit LANDED despite the timeout (ALLOW); state UNCHANGED -> it did not land (REVISE).
     contract = build_contract(TASK, env_type="fhir", policy=POLICY)
     create = {"type": "tool", "tool": "create_medication_request", "args": {"patient": "Patient/123"}}
+    ka = HarnessKernel(contract, [VerifyAndCommit()], mode="enforce", policy=POLICY, env_type="fhir")
+    ea = ka.after_action(create, "TimeoutError", {"x": 0}, {"x": 1}, step=1, result_ok=False, result_status="unknown")
+    assert ea.type == D.ALLOW and ka.ctx.verification is True, (ea.type, ka.ctx.verification)
     ku = HarnessKernel(contract, [VerifyAndCommit()], mode="enforce", policy=POLICY, env_type="fhir")
     eu = ku.after_action(create, "TimeoutError", {"x": 0}, {"x": 0}, step=1, result_ok=False, result_status="unknown")
-    assert eu.type == D.ESCALATE and ku.ctx.verification is None, (eu.type, ku.ctx.verification)
-    # a CLEAR failure stays a REVISE with verification False (unchanged behaviour)
+    assert eu.type == D.REVISE and ku.ctx.verification is False, (eu.type, ku.ctx.verification)
     kf = HarnessKernel(contract, [VerifyAndCommit()], mode="enforce", policy=POLICY, env_type="fhir")
     ef = kf.after_action(create, "{error}", {"x": 0}, {"x": 0}, step=1, result_ok=False, result_status="failed")
     assert ef.type == D.REVISE and kf.ctx.verification is False, (ef.type, kf.ctx.verification)

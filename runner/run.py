@@ -394,6 +394,13 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
                 _recon = {"confirmed": None, "detail": "reconcile_error:%r" % (_rex,)}
             if _recon and _recon.get("confirmed") is False:
                 _err = "readback_unconfirmed"
+        elif _err:                                   # a CLAIMED-FAILED write: read back -- it may have landed
+            try:
+                _recon = env.reconcile_write(action["tool"], action.get("args", {}), res)
+            except Exception as _rex:
+                _recon = {"confirmed": None, "detail": "reconcile_error:%r" % (_rex,)}
+            if _recon and _recon.get("confirmed") is True:
+                _err = None                          # active read-back CONFIRMS it landed despite the transport error
         if _recon and _recon.get("confirmed") is not None:
             trajectory.append({"step": step, "event_type": "reconciliation", "tool": action["tool"],
                                "confirmed": _recon.get("confirmed"), "detail": _recon.get("detail"), "status": "ok"})

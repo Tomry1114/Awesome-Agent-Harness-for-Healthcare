@@ -261,7 +261,8 @@ class HarnessKernel:
             self.ledger.record_commit(sem.capability, step, verified=self.ctx.verification,
                                       detail=winner.reason, semantic_type=getattr(sem, "semantic_type", None))
             if self.ctx.verification is True and getattr(sem, "effect", None) == "irreversible":
-                self.ledger.completed_commits.add((sem.semantic_type, sem.resource, self.ledger.subject_id()))
+                from .capabilities.verify_commit import commit_identity
+                self.ledger.completed_commits.add(commit_identity(sem, self.ledger))
             self._close_verified_repair()    # a gate-passed commit that executed + verified -> repaired
         eff = self._apply_mode(winner, "after_action")
         eff.feedback = _feedback(winner) if eff.type != D.ALLOW else None
