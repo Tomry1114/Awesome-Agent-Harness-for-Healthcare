@@ -318,3 +318,38 @@ def compile_goal_spec(goal, public_context, judge_fn=None):
     return {"requested_operation": str(d.get("requested_operation") or "")[:300],
             "required_effects": _l("required_effects"), "required_fields": _l("required_fields"),
             "forbidden_effects": _l("forbidden_effects"), "success_observables": _l("success_observables")}
+
+
+_ALIGN_PROMPT = (
+    "A clinical agent is about to COMMIT a write. Using ONLY the public goal-spec, the current draft state, "
+    "and the proposed action, decide whether the proposed commit SATISFIES the task's stated requirements. "
+    "Do NOT infer the correct clinical decision -- only check whether the requested_operation, required "
+    "fields, and required effects are present/addressed in the draft+action. Reply STRICT JSON: "
+    '{{"aligned": true|false, "missing": ["<required field/effect not yet satisfied>"], "critique": "<short>"}}.'
+    "\n\nGOAL-SPEC:\n{goal_spec}\n\nCURRENT DRAFT STATE:\n{state}\n\nPROPOSED ACTION:\n{action}\n"
+)
+
+
+def verify_goal_alignment(goal_spec, current_state, proposed_action, judge_fn=None):
+    """Does the PROPOSED commit satisfy the public goal_spec (operation/fields/effects)? Oracle-blind; no
+    judge/goal_spec -> aligned None (no opinion). Returns {aligned: True|False|None, missing: [...], critique}."""
+    if not judge_fn or not goal_spec:
+        return {"aligned": None, "missing": [], "critique": "no_check"}
+    try:
+        raw = judge_fn(_ALIGN_PROMPT.format(
+            goal_spec=json.dumps(goal_spec, ensure_ascii=False)[:1500],
+            state=json.dumps(current_state, default=str, ensure_ascii=False)[:3000],
+            action=json.dumps(proposed_action, default=str, ensure_ascii=False)[:1000]))
+    except Exception as ex:
+        return {"aligned": None, "missing": [], "critique": "align_error:%r" % (ex,)}
+    s = raw if isinstance(raw, str) else str(raw or "")
+    i, j = s.find("{"), s.rfind("}")
+    if i >= 0 and j > i:
+        try:
+            d = json.loads(s[i:j + 1])
+            al = d.get("aligned")
+            mi = [str(x) for x in (d.get("missing") or []) if str(x).strip()] if isinstance(d.get("missing"), list) else []
+            return {"aligned": al if isinstance(al, bool) else None, "missing": mi, "critique": d.get("critique")}
+        except Exception:
+            pass
+    return {"aligned": None, "missing": [], "critique": "unparseable"}

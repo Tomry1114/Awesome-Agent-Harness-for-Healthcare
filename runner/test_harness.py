@@ -1106,6 +1106,37 @@ def test_goal_spec_compilation_oracle_blind():
     assert au.top_gap() is not None and "goal_spec" not in str(au.to_dict())   # spec is in the prompt, not the verdict
 
 
+def test_goal_alignment_before_commit():
+    # P1.3: BEFORE a commit, check the proposed write against the public goal_spec; missing required field
+    # -> REVISE(goal_misalignment) so the agent completes it before committing. Off unless MH_REPAIR enabled.
+    import os
+    from harness.capabilities.goal_alignment import GoalAlignment
+    os.environ["MH_REPAIR"] = "full"
+    try:
+        contract = build_contract(TASK, env_type="fhir", policy=POLICY)
+        contract.meta = dict(contract.meta or {})
+        contract.meta["goal_spec"] = {"requested_operation": "order X", "required_fields": ["dose"],
+                                      "required_effects": [], "forbidden_effects": [], "success_observables": []}
+        create = {"type": "tool", "tool": "create_medication_request", "args": {"patient": "Patient/123"}}
+        kf = HarnessKernel(contract, [GoalAlignment(), VerifyAndCommit()], mode="enforce", policy=POLICY,
+                           env_type="fhir", judge_fn=lambda p: '{"aligned": false, "missing": ["dose"], "critique": "no dose"}',
+                           budget={"max_semantic_checks": 5})
+        eff = kf.before_action(create, {"x": 0}, step=1)
+        assert eff.type == D.REVISE and getattr(eff.raw, "reason_code", None) == "goal_misalignment", (eff.type, getattr(eff.raw, "reason_code", None))
+        ka = HarnessKernel(contract, [GoalAlignment(), VerifyAndCommit()], mode="enforce", policy=POLICY,
+                           env_type="fhir", judge_fn=lambda p: '{"aligned": true, "missing": []}',
+                           budget={"max_semantic_checks": 5})
+        eff2 = ka.before_action(create, {"x": 0}, step=1)
+        assert getattr(getattr(eff2, "raw", None), "reason_code", None) != "goal_misalignment"
+        # ablation: MH_REPAIR=none -> goal_alignment is a no-op
+        os.environ["MH_REPAIR"] = "none"
+        kn = HarnessKernel(contract, [GoalAlignment()], mode="enforce", policy=POLICY, env_type="fhir",
+                           judge_fn=lambda p: '{"aligned": false, "missing": ["dose"]}', budget={"max_semantic_checks": 5})
+        assert kn.before_action(create, {"x": 0}, step=1).type == D.ALLOW
+    finally:
+        os.environ.pop("MH_REPAIR", None)
+
+
 def _run():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     passed = 0

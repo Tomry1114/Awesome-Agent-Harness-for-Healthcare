@@ -17,14 +17,15 @@ from .risk import classify_risk                                                 
 from .capabilities.scope_evidence import ScopeEvidenceBinding
 from .capabilities.obligation_lifecycle import ObligationLifecycle
 from .capabilities.verify_commit import VerifyAndCommit
+from .capabilities.goal_alignment import GoalAlignment
 from .engines.policy import load_policy, PolicyError                              # noqa: F401
 
-DEFAULT_CAPABILITIES = ("scope_evidence", "obligation_lifecycle", "verify_commit")
+DEFAULT_CAPABILITIES = ("scope_evidence", "obligation_lifecycle", "goal_alignment", "verify_commit")
 
 
 def _make_capabilities(names):
     reg = {"scope_evidence": ScopeEvidenceBinding, "obligation_lifecycle": ObligationLifecycle,
-           "verify_commit": VerifyAndCommit}
+           "goal_alignment": GoalAlignment, "verify_commit": VerifyAndCommit}
     return [reg[n]() for n in names if n in reg]
 
 
