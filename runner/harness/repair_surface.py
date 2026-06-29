@@ -81,6 +81,26 @@ class RepairSurface:
                 "protected_changed": {p: before.get("protected", {}).get(p) != after.get("protected", {}).get(p)
                                       for p in (before.get("protected") or {})}}
 
+    def can_localize(self, state, candidate, finding):
+        """ADMISSIBILITY INVARIANT: a finding is emittable only if its target is addressable in the CURRENT
+        surface — the target resolves, OR (for an additive defect) its parent container resolves so there is
+        a real place to add. A finding whose path resolves NOWHERE is a hallucinated target -> inadmissible,
+        dropped (no churn). Substrate-agnostic: each adapter inherits this; only `root` differs."""
+        root = self.root(state, candidate)
+        if resolve(root, finding.target_path) is not None:
+            return True
+        op = getattr(finding.operation, "value", str(finding.operation))
+        additive = op in ("ADD",) or finding.defect_type in ("missing", "insufficient_content", "unobserved_target")
+        if additive:
+            path = finding.target_path
+            parent = path.rsplit(".", 1)[0] if "." in path else None
+            parent = parent.rsplit("[", 1)[0] if parent and parent.endswith("]") else parent
+            if parent and resolve(root, parent) is not None:
+                return True
+            if "." not in path and "[" not in path and isinstance(root, dict):
+                return True   # a top-level new key on a real object
+        return False
+
 
 class FormRepairSurface(RepairSurface):     # HAB: portal form fields / note sections / submission fields
     name = "form"
@@ -101,6 +121,35 @@ class AnswerRepairSurface(RepairSurface):   # claims / observations / evidence s
         if isinstance(candidate, dict):
             return candidate
         return state if isinstance(state, dict) else {}
+
+
+def path_space(root, max_paths=80):
+    """All addressable leaf+container paths actually present in the state. Given to the judge so it picks a
+    REAL target_path instead of hallucinating one (the verified churn cause: judge guessed emr.denials.DEN-014
+    while the real output path was agentActions.selectedDisposition)."""
+    out = []
+
+    def walk(o, p):
+        if len(out) >= max_paths:
+            return
+        if isinstance(o, dict):
+            for k, v in o.items():
+                np = ("%s.%s" % (p, k)) if p else str(k)
+                out.append(np)
+                walk(v, np)
+        elif isinstance(o, list):
+            for i, v in enumerate(o[:6]):
+                np = "%s[%d]" % (p, i)
+                out.append(np)
+                walk(v, np)
+    walk(root if isinstance(root, dict) else {}, "")
+    return out[:max_paths]
+
+
+def target_sig(projection):
+    """The finding-relevant slice of a projection (target + protected) — used for dedup/'did the agent act on
+    THIS finding' comparisons. Excludes `root`, whose every-step churn otherwise defeats dedup."""
+    return {"target": projection.get("target"), "protected": projection.get("protected")}
 
 
 _SURFACES = (FormRepairSurface, FhirRepairSurface, AnswerRepairSurface)

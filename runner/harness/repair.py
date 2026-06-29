@@ -20,10 +20,16 @@ class RepairOperation(str, Enum):
     REPLACE = "REPLACE"
     VERIFY = "VERIFY"
     REACQUIRE_EVIDENCE = "REACQUIRE_EVIDENCE"
+    VERIFY_OR_REMOVE = "VERIFY_OR_REMOVE"   # observed target but observation does not support the claim
+    EDIT_OR_REMOVE = "EDIT_OR_REMOVE"       # claim cannot be localized to a concrete target
 
 
 # defect categories accepted from the judge / deterministic layer
-DEFECT_TYPES = ("missing", "insufficient_content", "unsupported", "conflicting", "wrong_operation")
+DEFECT_TYPES = ("missing", "insufficient_content", "unsupported", "conflicting", "wrong_operation",
+                # claim-observation coverage (evidence_coverage gate) -- substrate ANSWER:
+                "unobserved_target",          # perceptual claim whose target region/modality was never observed
+                "unsupported_by_observation",  # target observed but the observation does not support the claim
+                "untraceable_claim")           # claim cannot be tied to any concrete target
 TARGET_TYPES = ("field", "resource_path", "claim", "action")
 
 
@@ -46,6 +52,8 @@ class RepairFinding:
     protected_paths: tuple = ()
     preserve_requirements: tuple = ()
     evidence_refs: tuple = ()
+    allowed_capabilities: tuple = ()    # executable tool/capability names (filled by the KERNEL affordance
+                                        # registry, never invented by the judge) — for REACQUIRE_EVIDENCE
     confidence: float | None = None
     metadata: dict = field(default_factory=dict)
 
@@ -55,7 +63,8 @@ class RepairFinding:
                 "operation": self.operation.value if isinstance(self.operation, RepairOperation) else str(self.operation),
                 "required_change": self.required_change, "protected_paths": list(self.protected_paths),
                 "preserve_requirements": list(self.preserve_requirements),
-                "evidence_refs": list(self.evidence_refs), "confidence": self.confidence}
+                "evidence_refs": list(self.evidence_refs),
+                "allowed_capabilities": list(self.allowed_capabilities), "confidence": self.confidence}
 
 
 def _coerce_op(v):

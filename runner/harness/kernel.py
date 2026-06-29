@@ -242,6 +242,18 @@ class HarnessKernel:
             self._last_displayed_subject = _cur
         sem = self._canon(action, observation=canonical_observation)
         self.ctx.result_ok = result_ok      # whether the tool result succeeded (adapter signal)
+        try:   # record a normalized observation for perception/read tools (evidence_coverage input)
+            from .affordance import is_perception_tool
+            _tn = action.get("tool") if isinstance(action, dict) else None
+            if _tn and is_perception_tool(_tn) and getattr(sem, "semantic_type", None) not in ("create", "update", "submit"):
+                _ar = (action.get("args") or {}) if isinstance(action, dict) else {}
+                self.ledger.record_observation(tool_capability=_tn,
+                    subject=_ar.get("image") or _ar.get("subject") or _ar.get("image_id"),
+                    region=_ar.get("region"), modality=_ar.get("modality"),
+                    attributes_observed=[x for x in [_ar.get("attribute")] if x],
+                    result_status=("invalid" if result_ok is False else "valid"))
+        except Exception:
+            pass
         self.ctx.result_status = result_status   # ok|failed|unknown (the kernel passes run.py's tri-state)
         self.ctx.evidence_version_before = self.ledger.validated_evidence_version  # progress baseline (pre-bind)
         decisions = []

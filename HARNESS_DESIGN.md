@@ -55,3 +55,155 @@ evaporates with the next model. It is:
 
 The ~0 outcome effect measured on a strong model is the EXPECTED signature of compensation against a model
 that has already passed the weakness — evidence the taxonomy is correct, not that the harness failed.
+
+---
+
+# Scoped Repair: one unified repair backbone across all three substrates
+
+(Added 2026-06-30.) The harness no longer "only constrains safety". Its **outcome-facing** mechanism is a
+single backbone — **RepairFinding → Scoped Repair lifecycle → Delta Validation** — shared by every substrate.
+A new dataset is added by writing a *repair surface adapter*, not by adding kernel branches.
+
+## Why a backbone and not per-dataset verifiers
+
+A channel-position study (inline self-distrust vs external reviewer assertion of the **same** finding) showed
+the agent acts on harness findings far more under the external framing — but acting on a *vague, goal-level
+obligation* ("write a triage note") made a weak model **overwrite already-substantive content** to look
+compliant (HAB-12/-50pp, HAB-15/-60pp). Lesson: once you fix signal *position*, the binding constraint moves
+to finding *content quality*. The fix must make every finding **localized, minimal, and non-degrading** —
+identically for a form field, a FHIR path, or an answer claim.
+
+## The unit: RepairFinding
+
+`{target_type, target_path, defect_type, operation, required_change, protected_paths,
+preserve_requirements, allowed_capabilities}` — names exactly ONE concrete defect, the smallest fix, and what
+must be preserved. A finding with no concrete target+change is dropped (no vague REVISE). Stable `finding_id`
+= hash(task, rule, target, defect) → the dedup key that stops re-nagging.
+
+## The lifecycle (ledger.repair_findings)
+
+`OPEN → DELIVERED → ATTEMPTED → {RESOLVED | REGRESSED | EXHAUSTED}`. A delivered finding is NOT re-sent until
+the agent changes the target (anti-churn; ≤2 attempts). Every attempt is **delta-validated**.
+
+## Delta validation (what makes it non-degrading)
+
+`accept ⇔ target_resolved ∧ protected_content_preserved ∧ ¬new_conflict`. Structured/numeric protected
+content must be EQUAL (PB dose/route can't drift); text must be retained (APPEND keeps it, OVERWRITE fails →
+`repair_regression`). Reindex-tolerant for list targets. After a REMOVE, an answer-level consistency recheck
+runs (a removed premise must not orphan an interpretation).
+
+## Mapping the three repair surfaces
+
+| Proposal surface | completeness criterion | repair operations |
+|---|---|---|
+| FORM (GUI portal) | required field present & sufficient | ADD / EDIT |
+| FHIR (clinical API) | required path present & consistent | ADD / EDIT / REPLACE |
+| ANSWER (perception) | every perceptual claim has an observation trace | REACQUIRE / VERIFY_OR_REMOVE / EDIT_OR_REMOVE |
+
+---
+
+# evidence_coverage: claim-conditioned observational coverage (the ANSWER gate)
+
+The dominant failure on the perceptual substrate is **not** an incomplete write — it is the agent stating
+findings it never actually observed (tool_selection / tool_path / fabrication). No prior capability touched
+this; `verify_commit` is inert without a commit. `evidence_coverage` fills it, through the SAME backbone.
+
+## Naming discipline (avoid concept-smuggling)
+
+It is **claim-conditioned observational coverage / perceptual traceability** — NOT "gold tool-path
+completeness". There is no gold path, so it can prove only:
+
+> every *perceptual* claim in the final answer traces to an actually-executed observation of its target
+
+It cannot (and does not) claim the agent called every tool a correct decision needs. Use `claim-observation
+coverage` in code/paper; never `tool-path completeness`.
+
+## Claims must be typed first
+
+| claim_type | gated by evidence_coverage? |
+|---|---|
+| perceptual ("nodule in RLL") | YES — must have an observation trace |
+| interpretive ("favors malignancy") | only requires ≥1 covered perceptual premise |
+| background ("malignancy usually …") | NO |
+| recommendation ("recommend biopsy") | NO |
+
+This prevents flagging the diagnosis label itself as "no tool observed the diagnosis".
+
+## Deterministic-first, judge at the margin
+
+1. Ledger records a normalized observation per perception/read tool call
+   `{subject, region, modality, attributes_observed, result_status}`.
+2. Deterministic match: region never observed → finding; region+attribute observed → covered (no judge).
+3. Judge consulted ONLY when the region was looked at but the attribute is unclear (whole-image look) —
+   "do the agent's own observations support this claim?"
+
+## Three defect cases (not always REACQUIRE)
+
+| situation | defect_type | operation |
+|---|---|---|
+| target never observed | `unobserved_target` | REACQUIRE_EVIDENCE |
+| observed, but observation doesn't support the claim | `unsupported_by_observation` | VERIFY_OR_REMOVE |
+| claim names no concrete target | `untraceable_claim` | EDIT_OR_REMOVE |
+
+## The judge never names a tool — the affordance registry does
+
+The judge says only *what observation is missing*. The kernel's **affordance registry** maps that need to
+*executable* tool names drawn from the task manifest (`select_tools(available_tools, region, modality)`), so
+feedback can never suggest a non-existent / wrong-affordance tool. No match → no tool suggested (silent beats
+hallucinated).
+
+---
+
+# Reclassification: layer by MECHANISM, not by file
+
+A single capability can contain mechanisms of different layers. Classify each mechanism, not the file.
+
+| Capability | Infrastructure part | Amplification / Compensation part |
+|---|---|---|
+| `repair_delta` | non-degrading delta validation (deterministic) | — |
+| `evidence_coverage` | deterministic observation↔claim coverage; affordance registry | claim decomposition/classification; margin semantic support; L2 suggested-acquisition (soft only) |
+| `goal_alignment` (Scoped Repair) | the lifecycle + dedup + delta | L2 semantic sufficiency (judge locates the defect) |
+| `obligation_lifecycle` | obligation state machine; no-progress; dedup; retry budget | judge-inferred "which obligation is missing" |
+| `scope_evidence` | — | grounding veto (Compensation; being superseded by evidence_coverage) |
+
+A v1 caution carried from the review: L2 "a relevant tool seems unused" is **soft only** — it records an
+opportunity, it does NOT block `before_final`. Blocking on "possibly-relevant tool unused" pushes a weak
+agent into over-checking loops; only a *strong* observational gap (a perceptual claim with zero observation)
+is allowed to REVISE.
+
+---
+
+# Framework (current)
+
+```
+                       ORACLE-BLIND boundary  (never reads gold / reference / checkpoints)
+ ----------------------------------------------------------------------------------------
+                                  AGENT  (brain: weak..strong)
+       propose action -> execute -> observe -> ... -> final answer
+             |                          ^                  |
+   KERNEL    v before_action           | after_action     v before_final     (3 commit points)
+   capabilities, layered by MECHANISM:
+     INFRASTRUCTURE   subject_binding | verify_commit (+RECONCILE) | repair_delta |
+                      obligation state-machine/no-progress/dedup/retry |
+                      evidence_coverage: deterministic observation coverage | affordance_registry
+     AMPLIFICATION    scoped_repair L2 (judge locates defect) |
+                      evidence_coverage: claim decomposition / semantic support / soft suggested-acquisition |
+                      obligation: judge-inferred missing obligation
+     COMPENSATION     scope_evidence grounding veto (being superseded)
+             |
+             v  combine(ESCALATE > BLOCK > REVISE > RECONCILE > ALLOW)
+     SCOPED REPAIR core (shared by all substrates):
+        finding sources -> RepairFinding{target, defect, op, protected, allowed_caps}
+           scoped_repair (FORM / FHIR)    evidence_coverage (ANSWER claim)
+           -> ledger lifecycle: dedup -> delivered -> attempted -> DELTA-validate ->
+              RESOLVED / REGRESSED(veto) / EXHAUSTED ; REMOVE -> answer-level consistency recheck
+           -> repair surface adapter (the ONLY substrate-specific code): FORM | FHIR | ANSWER
+     feedback render:  inline (self-distrust)  |  external (localized patch protocol;
+                       tool names from affordance registry, NOT the judge)
+             |
+             v  back to AGENT  (ADD / EDIT / REMOVE / REACQUIRE …, preserve substantive content)
+
+ LEDGER (harness-external state, agent cannot mutate):
+   active_subject | observations{subject,region,modality,attrs,status} | evidence | obligations |
+   commit_history | completed_commits | repair_findings(lifecycle) | opportunities(denominators)
+```

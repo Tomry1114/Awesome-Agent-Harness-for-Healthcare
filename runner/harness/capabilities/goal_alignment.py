@@ -14,7 +14,7 @@ import os
 from ..capability import Capability
 from .. import decision as D
 from ..risk import at_least, R2
-from ..repair_surface import surface_for, is_present
+from ..repair_surface import surface_for, is_present, target_sig
 from ..repair_delta import validate_repair
 
 
@@ -53,26 +53,28 @@ class GoalAlignment(Capability):
         surf = surface_for(ctx.env_type)
         led = ctx.ledger
 
-        # 1) DELTA-VALIDATE delivered findings the agent may have acted on (deterministic; no judge spend).
+        # 1) DELTA-VALIDATE delivered findings the agent acted on. The 'did the agent act on THIS finding'
+        #    test compares only the TARGET signature (target+protected), NOT the whole state root -- else
+        #    every unrelated state change re-triggers validation every step (the verified churn cause).
         for fid, rec in list(led.repair_findings.items()):
-            if rec.status not in ("delivered", "attempted"):
+            if rec.finding.rule_id != "scoped_repair" or rec.status not in ("delivered", "attempted"):
                 continue
             after = surf.project(state, candidate, rec.finding)
-            if after == rec.last_projection:
-                continue                                   # agent has not touched this target -> later
-            led.mark_attempted(fid, after, ctx.step)
+            sig = target_sig(after)
+            if sig == rec.last_projection:
+                continue                                   # this target unchanged -> agent has not acted
+            led.mark_attempted(fid, sig, ctx.step)
             v = validate_repair(rec.finding, rec.baseline_projection, after)
             if v.accepted:
-                led.resolve_finding(fid)                   # patch applied cleanly -> stop tracking
+                led.resolve_finding(fid)
                 continue
-            # regression / not-yet-resolved -> re-scope the SAME finding (anti-churn: capped by attempts)
             return self._emit([rec.finding], v.reason, stage, ctx)
 
-        # 2) If something is already delivered and unresolved, WAIT (don't pile on new findings).
-        if any(r.status in ("delivered", "attempted") for r in led.repair_findings.values()):
+        if any(r.finding.rule_id == "scoped_repair" and r.status in ("delivered", "attempted")
+               for r in led.repair_findings.values()):
             return None
 
-        # 3) DISCOVER new localized findings (judge-gated by the semantic budget).
+        # 2) DISCOVER new localized findings (judge-gated).
         gs = self._goal_spec(ctx)
         if not gs or not ctx.judge_fn or not ctx.spend_semantic():
             return None
@@ -81,16 +83,20 @@ class GoalAlignment(Capability):
 
         fresh = []
         for f in findings:
-            proj = surf.project(state, candidate, f)
-            # L1 deterministic guard: never claim a 'missing' field that is actually present.
-            if f.defect_type == "missing" and is_present(proj.get("target")):
+            # ADMISSIBILITY INVARIANT: drop findings whose target cannot be localized in the real state
+            # (hallucinated paths). This is what stops churn on phantom targets like emr.denials.DEN-014.
+            if not surf.can_localize(state, candidate, f):
                 continue
-            mode, _rec = led.repair_decision(f, proj)
+            proj = surf.project(state, candidate, f)
+            if f.defect_type == "missing" and is_present(proj.get("target")):
+                continue                                   # L1 guard: present-but-claimed-missing
+            sig = target_sig(proj)
+            mode, _rec = led.repair_decision(f, sig)
             if mode == "suppress":
                 continue
             if mode == "new":
-                led.open_finding(f, proj, ctx.step)
-            led.mark_delivered(f.finding_id, proj, ctx.step)
+                led.open_finding(f, proj, ctx.step)        # baseline = FULL projection (for delta membership)
+            led.mark_delivered(f.finding_id, sig, ctx.step)  # last_projection = target SIGNATURE (for dedup)
             fresh.append(f)
         if not fresh:
             return None

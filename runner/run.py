@@ -184,6 +184,8 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
                               getattr(_harness.ctx, "judge_fn", None))
                 if _gspec:
                     _harness.contract.meta["goal_spec"] = _gspec
+                _harness.contract.meta.setdefault("available_tools", task.get("available_tools"))
+                _harness.contract.meta.setdefault("task_id", task.get("task_id"))
         except Exception as _ge:
             _harness_runtime_errors.append("goal_spec: %r" % _ge)
 

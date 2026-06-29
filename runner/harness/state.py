@@ -55,6 +55,8 @@ class Ledger:
         self.unresolved_risks = []          # [{"rule_id","reason","risk"}]
         self.resolutions = []               # [harness_resolution dicts] — a REVISE later repaired (causal)
         self.repair_findings = {}           # finding_id -> FindingRecord (Scoped Repair lifecycle)
+        self.observations = []              # normalized perception observations (evidence_coverage)
+        self._obsk = 0
         # per-metric OPPORTUNITY counts (denominators): each metric is rate = numerator / its own
         # opportunity set, never / task-count. e.g. commit_proposal, subject_bearing_action, eligible_revise.
         self.opportunities = {}
@@ -184,6 +186,17 @@ class Ledger:
 
     def add_unresolved_risk(self, rule_id, reason, risk=None):
         self.unresolved_risks.append({"rule_id": rule_id, "reason": reason, "risk": risk})
+
+    # ---- normalized observations (evidence_coverage gate input) -------------
+    def record_observation(self, tool_capability, subject=None, region=None, modality=None,
+                           attributes_observed=None, result_status="valid"):
+        """One perception/read act -> a normalized observation the claim-coverage check matches against."""
+        self._obsk += 1
+        rec = {"observation_id": "obs-%d" % self._obsk, "tool_capability": tool_capability,
+               "subject": subject, "region": region, "modality": modality,
+               "attributes_observed": list(attributes_observed or []), "result_status": result_status}
+        self.observations.append(rec)
+        return rec
 
     # ---- scoped repair lifecycle --------------------------------------------
     REPAIR_MAX_ATTEMPTS = 2

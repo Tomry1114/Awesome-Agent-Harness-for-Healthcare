@@ -385,10 +385,16 @@ def scoped_goal_findings(goal_spec, state, candidate, judge_fn=None, task_id="t"
     no goal_spec / unparseable -> [] (stay silent). Oracle-blind."""
     if not judge_fn or not goal_spec:
         return []
+    from ..repair_surface import path_space
+    _paths = path_space(state)
+    _state_str = (json.dumps(state, default=str, ensure_ascii=False)[:2600]
+                  + "\n\nADDRESSABLE PATHS (target_path MUST be EXACTLY one of these existing paths, or a "
+                    "new child 'parent.newkey' of one; do NOT invent a path that is not listed here): "
+                  + json.dumps(_paths, ensure_ascii=False)[:1200])
     try:
         raw = judge_fn(_SCOPED_REPAIR_PROMPT.format(
             goal_spec=json.dumps(goal_spec, ensure_ascii=False)[:1500],
-            state=json.dumps(state, default=str, ensure_ascii=False)[:3000],
+            state=_state_str,
             candidate=json.dumps(candidate, default=str, ensure_ascii=False)[:1500]))
     except Exception:
         return []
@@ -402,3 +408,80 @@ def scoped_goal_findings(goal_spec, state, candidate, judge_fn=None, task_id="t"
         return []
     from ..repair import parse_findings
     return parse_findings(d, task_id, rule_id)
+
+
+# ---------------------------------------------------------------------------------------------------------
+# EVIDENCE COVERAGE judge steps. (1) decompose the final answer into atomic, TYPED claims with a concrete
+# target; (2) for margin claims, batch-decide whether the agent OWN observations support them. Oracle-blind:
+# classify/locate only, never judge clinical correctness, never name a tool (the affordance registry does).
+# ---------------------------------------------------------------------------------------------------------
+_CLAIM_DECOMP_PROMPT = (
+    "Decompose the agent FINAL ANSWER into atomic claims. Classify EACH and, for perceptual claims, name "
+    "the concrete target. Reply STRICT JSON: "
+    '{{"claims": [{{"text": "...", "claim_type": "perceptual|interpretive|background|recommendation", '
+    '"region": "<target or null>", "modality": "<modality or null>", "attribute": "<feature or null>"}}]}}. '
+    "Definitions: perceptual = a directly-observed image feature at a location; interpretive = a judgment "
+    "derived from features; background = general medical knowledge; recommendation = a suggested action. Do "
+    "NOT judge correctness; only classify and locate.\n\nFINAL ANSWER:\n{answer}\n\nPUBLIC CONTEXT:\n{context}\n"
+)
+
+
+def decompose_claims(answer, public_context, judge_fn=None, task_id="t"):
+    """Final answer -> [observation.Claim]. No judge / unparseable -> []."""
+    if not judge_fn or not answer:
+        return []
+    try:
+        raw = judge_fn(_CLAIM_DECOMP_PROMPT.format(answer=str(answer)[:2500], context=str(public_context or "")[:1500]))
+    except Exception:
+        return []
+    t = raw if isinstance(raw, str) else str(raw or "")
+    i, j = t.find("{"), t.rfind("}")
+    if i < 0 or j <= i:
+        return []
+    try:
+        d = json.loads(t[i:j + 1])
+    except Exception:
+        return []
+    from ..observation import Claim, CLAIM_TYPES
+    out = []
+    for k, c in enumerate(d.get("claims") or []):
+        if not isinstance(c, dict):
+            continue
+        ct = str(c.get("claim_type") or "").strip().lower()
+        if ct not in CLAIM_TYPES:
+            ct = "interpretive"
+        def _v(key):
+            x = c.get(key)
+            return str(x).strip() if x not in (None, "", "null") else None
+        out.append(Claim(claim_id="claim-%d" % k, idx=k, claim_type=ct, text=str(c.get("text") or "")[:300],
+                         region=_v("region"), modality=_v("modality"), attribute=_v("attribute")))
+    return out
+
+
+_CLAIM_SUPPORT_PROMPT = (
+    "For EACH claim, decide whether the agent OWN listed observations SUPPORT it. Use ONLY the observations "
+    "shown; do not use outside knowledge and do not judge clinical correctness. Reply STRICT JSON: "
+    '{{"support": {{"<claim_id>": true|false}}}}.'
+    "\n\nOBSERVATIONS:\n{obs}\n\nCLAIMS:\n{claims}\n"
+)
+
+
+def claim_semantic_support(claims, observation_summaries, judge_fn=None):
+    """{claim_id: bool} for the given margin claims. No judge -> {} (caller stays silent -> conservative)."""
+    if not judge_fn or not claims:
+        return {}
+    cl = "\n".join("%s: %s" % (c.claim_id, c.text or ("%s @ %s" % (c.attribute, c.region))) for c in claims)
+    try:
+        raw = judge_fn(_CLAIM_SUPPORT_PROMPT.format(obs=str(observation_summaries)[:2500], claims=cl[:2000]))
+    except Exception:
+        return {}
+    t = raw if isinstance(raw, str) else str(raw or "")
+    i, j = t.find("{"), t.rfind("}")
+    if i < 0 or j <= i:
+        return {}
+    try:
+        d = json.loads(t[i:j + 1])
+        sup = d.get("support") or {}
+        return {str(k): bool(v) for k, v in sup.items()}
+    except Exception:
+        return {}
