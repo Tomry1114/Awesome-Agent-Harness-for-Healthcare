@@ -368,4 +368,7 @@ def _feedback(decision):
         fb["avoid_capabilities"] = decision.avoid_capabilities
     if decision.feedback:
         fb["message"] = decision.feedback
+    _rf = (decision.extra or {}).get("repair_findings")
+    if _rf:
+        fb["repair_findings"] = _rf   # Scoped Repair: localized patch spec for the renderer
     return fb

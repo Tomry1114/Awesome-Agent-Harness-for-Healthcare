@@ -353,3 +353,52 @@ def verify_goal_alignment(goal_spec, current_state, proposed_action, judge_fn=No
         except Exception:
             pass
     return {"aligned": None, "missing": [], "critique": "unparseable"}
+
+
+# ---------------------------------------------------------------------------------------------------------
+# SCOPED REPAIR (replaces the NL obligation list). The judge inspects the proposed output against the public
+# goal-spec + the current draft state and returns ONLY localized defects, each naming an exact target_path
+# (drawn from the state keys it is shown), the smallest repair operation, and the content to PRESERVE. A
+# finding with no concrete target/change is dropped by parse_findings -> the harness never emits a vague
+# "write a triage note" REVISE. Oracle-blind: never infers the correct clinical decision.
+# ---------------------------------------------------------------------------------------------------------
+_SCOPED_REPAIR_PROMPT = (
+    "Inspect the PROPOSED output against the public goal specification and the current draft state. Return "
+    "ONLY concrete, localized defects. Do NOT restate broad task obligations. A finding is valid ONLY if you "
+    "can name: (1) the exact target location that exists in the draft/state; (2) the exact missing, "
+    "unsupported, or conflicting content; (3) the smallest permitted repair; (4) content that must be "
+    "preserved. Do NOT infer the correct clinical decision. Reply STRICT JSON: "
+    '{{"aligned": true|false, "findings": [{{"target_type": "field|resource_path|claim|action", '
+    '"target_path": "<key that appears in the DRAFT STATE/GOAL-SPEC>", "defect_type": '
+    '"missing|insufficient_content|unsupported|conflicting|wrong_operation", "repair_operation": '
+    '"ADD|EDIT|REMOVE|REPLACE|VERIFY", "required_change": "<the concrete content to add/fix>", '
+    '"protected_paths": ["<paths whose existing content must NOT change>"], "preserve_requirements": '
+    '["<substantive content to retain>"], "evidence_refs": ["<evidence supporting the change>"], '
+    '"confidence": 0.0}}]}}. Do NOT emit a finding such as "write a triage note" or "document reasoning" -- '
+    "state WHAT concrete content is absent and WHERE. Use target_path values that match the keys shown.\n\n"
+    "GOAL-SPEC:\n{goal_spec}\n\nCURRENT DRAFT STATE:\n{state}\n\nPROPOSED OUTPUT:\n{candidate}\n"
+)
+
+
+def scoped_goal_findings(goal_spec, state, candidate, judge_fn=None, task_id="t", rule_id="scoped_repair"):
+    """PUBLIC goal_spec + draft state + proposed output -> [RepairFinding] (localized, structured). No judge /
+    no goal_spec / unparseable -> [] (stay silent). Oracle-blind."""
+    if not judge_fn or not goal_spec:
+        return []
+    try:
+        raw = judge_fn(_SCOPED_REPAIR_PROMPT.format(
+            goal_spec=json.dumps(goal_spec, ensure_ascii=False)[:1500],
+            state=json.dumps(state, default=str, ensure_ascii=False)[:3000],
+            candidate=json.dumps(candidate, default=str, ensure_ascii=False)[:1500]))
+    except Exception:
+        return []
+    s2 = raw if isinstance(raw, str) else str(raw or "")
+    i, j = s2.find("{"), s2.rfind("}")
+    if i < 0 or j <= i:
+        return []
+    try:
+        d = json.loads(s2[i:j + 1])
+    except Exception:
+        return []
+    from ..repair import parse_findings
+    return parse_findings(d, task_id, rule_id)

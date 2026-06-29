@@ -492,9 +492,12 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
                                    "stage": "after_action", "feedback": _hpost.feedback, "status": "error"})
                 _aborted = True; break
             if _hpost.type in ("REVISE", "BLOCK") and _hpost.feedback:   # fold into next obs (RESERVE room)
-                _max = int(os.environ.get("MH_OBS_MAX_LEN", "10000"))
-                _htxt = "\n[HARNESS] " + json.dumps(_hpost.feedback, ensure_ascii=False)
-                obs = (_htxt[:_max] if len(_htxt) >= _max else obs[:_max - len(_htxt)] + _htxt)
+                # external channel routes the finding via act_fc as an external-reviewer claim; skip the
+                # duplicate in-context "[HARNESS]" obs copy so the signal is not also posed as self-distrust.
+                if os.environ.get("MH_REPAIR_CHANNEL", "inline").strip().lower() != "external":
+                    _max = int(os.environ.get("MH_OBS_MAX_LEN", "10000"))
+                    _htxt = "\n[HARNESS] " + json.dumps(_hpost.feedback, ensure_ascii=False)
+                    obs = (_htxt[:_max] if len(_htxt) >= _max else obs[:_max - len(_htxt)] + _htxt)
                 pending_harness_feedback = _next_feedback(_hpost, "after_action")
         _last_tool_ev = _ev   # mark consumed only if a later agent.act() runs (circuit-break -> stays False)
         if _err:

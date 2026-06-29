@@ -12,6 +12,32 @@ PENDING, SATISFIED, VIOLATED, WAIVED, UNKNOWN = "PENDING", "SATISFIED", "VIOLATE
 OBLIGATION_STATES = (PENDING, SATISFIED, VIOLATED, WAIVED, UNKNOWN)
 
 
+# ---- Scoped Repair finding lifecycle ---------------------------------------------------------------------
+from enum import Enum
+from dataclasses import dataclass, field as _dc_field
+
+
+class FindingStatus(str, Enum):
+    OPEN = "open"
+    DELIVERED = "delivered"        # handed to the agent; awaiting an attempt
+    ATTEMPTED = "attempted"        # target projection changed since delivery -> revalidate
+    RESOLVED = "resolved"          # delta-validated: defect fixed, protected content preserved
+    REGRESSED = "regressed"        # attempt fixed the target but destroyed protected content
+    EXHAUSTED = "exhausted"        # repair-attempt budget spent -> stop prompting (anti-churn)
+
+
+@dataclass
+class FindingRecord:
+    finding: object                # RepairFinding
+    status: "FindingStatus"
+    first_step: int
+    last_step: int
+    delivery_count: int = 0
+    repair_attempts: int = 0
+    baseline_projection: dict = None
+    last_projection: dict = None
+
+
 class Ledger:
     def __init__(self):
         self.active_subject = None          # {"type","id"}
@@ -28,6 +54,7 @@ class Ledger:
         self.pending_resolution = None      # an OPEN must-resolve violation the next final answer must close
         self.unresolved_risks = []          # [{"rule_id","reason","risk"}]
         self.resolutions = []               # [harness_resolution dicts] — a REVISE later repaired (causal)
+        self.repair_findings = {}           # finding_id -> FindingRecord (Scoped Repair lifecycle)
         # per-metric OPPORTUNITY counts (denominators): each metric is rate = numerator / its own
         # opportunity set, never / task-count. e.g. commit_proposal, subject_bearing_action, eligible_revise.
         self.opportunities = {}
@@ -157,6 +184,64 @@ class Ledger:
 
     def add_unresolved_risk(self, rule_id, reason, risk=None):
         self.unresolved_risks.append({"rule_id": rule_id, "reason": reason, "risk": risk})
+
+    # ---- scoped repair lifecycle --------------------------------------------
+    REPAIR_MAX_ATTEMPTS = 2
+
+    def repair_decision(self, finding, current_projection):
+        """Dedup gate. Returns (mode, record) where mode in {new, revalidate, suppress}. 'new' => first
+        sighting (open+deliver). 'suppress' => already resolved/exhausted, or delivered but the agent has
+        not changed the target since (don't re-nag). 'revalidate' => the agent changed the target; run
+        delta validation on the attempt instead of re-prompting the same text."""
+        rec = self.repair_findings.get(finding.finding_id)
+        if rec is None:
+            return ("new", None)
+        if rec.status in (FindingStatus.RESOLVED, FindingStatus.EXHAUSTED):
+            return ("suppress", rec)
+        if rec.repair_attempts >= self.REPAIR_MAX_ATTEMPTS:
+            rec.status = FindingStatus.EXHAUSTED
+            return ("suppress", rec)
+        if rec.status == FindingStatus.DELIVERED and current_projection == rec.last_projection:
+            return ("suppress", rec)        # no new attempt -> silence
+        return ("revalidate", rec)
+
+    def open_finding(self, finding, baseline_projection, step):
+        rec = FindingRecord(finding=finding, status=FindingStatus.OPEN, first_step=step, last_step=step,
+                            baseline_projection=baseline_projection, last_projection=baseline_projection)
+        self.repair_findings[finding.finding_id] = rec
+        return rec
+
+    def mark_delivered(self, finding_id, projection, step):
+        rec = self.repair_findings.get(finding_id)
+        if rec is None:
+            return None
+        rec.status = FindingStatus.DELIVERED
+        rec.delivery_count += 1
+        rec.last_projection = projection
+        rec.last_step = step
+        return rec
+
+    def mark_attempted(self, finding_id, projection, step):
+        rec = self.repair_findings.get(finding_id)
+        if rec is None:
+            return None
+        rec.status = FindingStatus.ATTEMPTED
+        rec.repair_attempts += 1
+        rec.last_projection = projection
+        rec.last_step = step
+        return rec
+
+    def resolve_finding(self, finding_id):
+        rec = self.repair_findings.get(finding_id)
+        if rec is not None:
+            rec.status = FindingStatus.RESOLVED
+        return rec
+
+    def regress_finding(self, finding_id):
+        rec = self.repair_findings.get(finding_id)
+        if rec is not None:
+            rec.status = FindingStatus.REGRESSED
+        return rec
 
     # ---- audit ---------------------------------------------------------------
     def to_dict(self):

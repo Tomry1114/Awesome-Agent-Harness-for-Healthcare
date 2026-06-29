@@ -1119,7 +1119,7 @@ def test_goal_alignment_before_commit():
                                       "required_effects": [], "forbidden_effects": [], "success_observables": []}
         create = {"type": "tool", "tool": "create_medication_request", "args": {"patient": "Patient/123"}}
         kf = HarnessKernel(contract, [GoalAlignment(), VerifyAndCommit()], mode="enforce", policy=POLICY,
-                           env_type="fhir", judge_fn=lambda p: '{"aligned": false, "missing": ["dose"], "critique": "no dose"}',
+                           env_type="fhir", judge_fn=lambda p: '{"aligned": false, "findings": [{"target_type": "resource_path", "target_path": "dose", "defect_type": "missing", "repair_operation": "ADD", "required_change": "Add the dose to the medication order.", "protected_paths": ["patient"]}]}',  # Scoped Repair structured finding
                            budget={"max_semantic_checks": 5})
         eff = kf.before_action(create, {"x": 0}, step=1)
         assert eff.type == D.REVISE and getattr(eff.raw, "reason_code", None) == "goal_misalignment", (eff.type, getattr(eff.raw, "reason_code", None))

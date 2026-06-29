@@ -125,11 +125,44 @@ class ApiToolAgent(ToolProtocolAgent):
     def act_fc(self, state):
         _hfb = state.get("harness_feedback")
         if isinstance(_hfb, dict):   # CONTRACT(1): function-calling brain also sees the harness verdict (additive)
-            _msg = "[HARNESS %s] %s" % (_hfb.get("decision", "REVISE"), _hfb.get("reason") or "")
+            _reason = _hfb.get("reason") or ""
             _mo = _hfb.get("missing_obligations")
-            if _mo:
-                _msg += "; missing: " + json.dumps(_mo, ensure_ascii=False)
-            _msg += "\nRevise accordingly; the ENVIRONMENT observation below is still current."
+            _chan = os.environ.get("MH_REPAIR_CHANNEL", "inline").strip().lower()
+            _rf = _hfb.get("repair_findings")
+            if _chan == "external" and _rf:
+                # Scoped patch protocol: target + defect + smallest op + what to PRESERVE, so the agent
+                # ADDS the missing content without overwriting already-substantive fields (anti-regression).
+                _f0 = _rf[0]
+                _preserve = list(_f0.get("protected_paths") or []) + list(_f0.get("preserve_requirements") or [])
+                _msg = ("[INDEPENDENT REVIEW -- SCOPED REPAIR] The reviewer identified one localized defect.\n"
+                        "Target: %s\nDefect (%s): %s\nRequired operation: %s\nRequired patch: %s\n"
+                        "Modification scope: modify ONLY %s.\n"
+                        % (_f0.get("target_path"), _f0.get("defect_type"), _f0.get("required_change"),
+                           _f0.get("operation"), _f0.get("required_change"), _f0.get("target_path")))
+                if _preserve:
+                    _msg += "Preserve (do NOT change or compress):\n" + "".join("  - %s\n" % p for p in _preserve)
+                _msg += ("Do not replace the entire note/answer. Do not summarize or compress already "
+                         "substantive content. Either (A) accept and apply this exact localized patch, or "
+                         "(B) rebut the finding using specific validated evidence. The ENVIRONMENT observation "
+                         "below is still current.")
+            elif _chan == "external":
+                # Move A: same finding posed as an EXTERNAL reviewer's addressable claim inviting
+                # verify-and-rebut (Self-Correction Illusion 2606.05976; CCR 2603.12123). 70-93% vs
+                # 0-23% for in-context self-distrust. Position/framing changes; content is identical.
+                _msg = ("[INDEPENDENT REVIEWER -- a separate party, not you] An independent reviewer, looking only "
+                        "at your proposed action and the validated evidence, raises this SPECIFIC finding:\n  \u201c"
+                        + (_reason or "(see the observation below)") + "\u201d")
+                if _mo:
+                    _msg += "\nItems the reviewer names as unresolved: " + json.dumps(_mo, ensure_ascii=False)
+                _msg += ("\nTreat this as an external assertion to adjudicate, not your own conclusion. Either "
+                         "(a) REBUT it -- cite the specific evidence showing the reviewer is wrong, then proceed -- "
+                         "or (b) ACCEPT it and revise your action to resolve the named finding. The ENVIRONMENT "
+                         "observation below is still current.")
+            else:
+                _msg = "[HARNESS %s] %s" % (_hfb.get("decision", "REVISE"), _reason)
+                if _mo:
+                    _msg += "; missing: " + json.dumps(_mo, ensure_ascii=False)
+                _msg += "\nRevise accordingly; the ENVIRONMENT observation below is still current."
             self.messages.append({"role": "user", "content": _msg})
         if self._fc_call_id is not None:
             lr = state.get("last_result")

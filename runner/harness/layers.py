@@ -28,6 +28,11 @@ LAYER_OF = {
     "unjudgeable_low_confidence":     (COMPENSATION, "low-confidence grounding"),
     # --- AMPLIFICATION: a better way to use existing capability (provisional; re-measure each generation) ---
     "repairable_gap":                 (AMPLIFICATION, "selective epistemic repair (candidate)"),
+    # Scoped Repair layer -- localized, non-degrading repair (verification of the patch = infrastructure)
+    "scoped_repair":                  (AMPLIFICATION, "scoped repair (localized patch)"),
+    "goal_misalignment":              (AMPLIFICATION, "scoped repair: localized defect"),
+    "target_not_resolved":            (AMPLIFICATION, "scoped repair: defect not yet fixed"),
+    "repair_regression":              (INFRASTRUCTURE, "scoped repair: protected content lost (delta veto)"),
     "process_gap":                    (AMPLIFICATION, "in-process behavior guidance"),
     # rule_id fallbacks (older bundles surfaced rule_id but not reason_code)
     "commit_execution_failed":        (INFRASTRUCTURE, "commit integrity (failed/unknown write)"),
