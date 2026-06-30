@@ -285,6 +285,7 @@ class HarnessKernel:
     def before_final(self, answer, step=0):
         self.ctx.step = step
         sem = self._canon({"type": "final", "answer": answer})
+        self.ctx.final_is_commit = bool(sem and sem.is_commit())  # P0-A: manifest commit status of the final
         from .risk import at_least, R2
         # the final answer is a commit -> it enters the SAME commit lifecycle (proposal + opportunity).
         self.ctx.action_key = self.ledger.record_proposed(sem.capability, self.ctx.risk, step)

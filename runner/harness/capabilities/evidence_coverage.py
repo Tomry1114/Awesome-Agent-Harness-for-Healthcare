@@ -26,7 +26,9 @@ class EvidenceCoverage(Capability):
     name = "evidence_coverage"
 
     def before_final(self, answer, ctx):
-        if not _enabled() or not ctx.judge_fn:
+        # P0-A: claim-coverage runs ONLY when the answer IS the manifest-declared graded commit (perceptual
+        # substrate). On form/FHIR substrates the chat answer is a non-commit terminal_response -> OFF.
+        if not _enabled() or not ctx.judge_fn or not getattr(ctx, "final_is_commit", False):
             return None
         meta = (ctx.contract.meta or {}) if ctx.contract else {}
         obs = self._observations(ctx.ledger)

@@ -37,9 +37,12 @@ class GoalAlignment(Capability):
         return self._run(ctx, state=ctx.current_state, candidate=candidate, stage="before_action")
 
     def before_final(self, answer, ctx):
-        if not _enabled():
+        # P0-A: answer-repair runs ONLY when the manifest declares the terminal answer the graded commit
+        # (perceptual answer substrate). For a non-commit terminal_response (form / FHIR -- the graded
+        # deliverable is created resources / written files, NOT the chat answer), answer-repair is OFF
+        # (it otherwise re-projects EMR/resource findings onto the answer surface -> guaranteed-fail churn).
+        if not _enabled() or not getattr(ctx, "final_is_commit", False):
             return None
-        # answer substrate: the candidate IS the answer; coarse text projection (no env state).
         cand = {"answer": answer if isinstance(answer, str) else str(answer)}
         return self._run(ctx, state=cand, candidate=cand, stage="before_final")
 
@@ -59,6 +62,11 @@ class GoalAlignment(Capability):
         #    every unrelated state change re-triggers validation every step (the verified churn cause).
         for fid, rec in list(led.repair_findings.items()):
             if rec.finding.rule_id != "scoped_repair" or rec.status not in ("delivered", "attempted"):
+                continue
+            # P0-B: only revalidate a finding on a surface where its target can localize. A form/EMR finding
+            # re-projected onto a different substrate fails spuriously and BURNS an attempt every step; leave
+            # it pending for its own surface's hook instead.
+            if not surf.can_localize(state, candidate, rec.finding):
                 continue
             after = surf.project(state, candidate, rec.finding)
             sig = target_sig(after)
@@ -80,7 +88,7 @@ class GoalAlignment(Capability):
         if not gs or not ctx.judge_fn or not ctx.spend_semantic():
             return None
         from ..engines.semantic import scoped_goal_findings
-        findings = scoped_goal_findings(gs, state, candidate, ctx.judge_fn, self._task_id(ctx), surface=surf)
+        findings = scoped_goal_findings(gs, state, candidate, ctx.judge_fn, self._task_id(ctx))
 
         fresh = []
         for f in findings:
