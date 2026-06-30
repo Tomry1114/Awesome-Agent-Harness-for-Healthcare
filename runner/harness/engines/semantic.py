@@ -380,14 +380,15 @@ _SCOPED_REPAIR_PROMPT = (
 )
 
 
-def scoped_goal_findings(goal_spec, state, candidate, judge_fn=None, task_id="t", rule_id="scoped_repair"):
+def scoped_goal_findings(goal_spec, state, candidate, judge_fn=None, task_id="t", rule_id="scoped_repair", surface=None):
     """PUBLIC goal_spec + draft state + proposed output -> [RepairFinding] (localized, structured). No judge /
     no goal_spec / unparseable -> [] (stay silent). Oracle-blind."""
     if not judge_fn or not goal_spec:
         return []
     from ..repair_surface import path_space
-    _paths = path_space(state)
-    _state_str = (json.dumps(state, default=str, ensure_ascii=False)[:2600]
+    _root = surface.root(state, candidate) if surface is not None else state
+    _paths = path_space(_root)
+    _state_str = (json.dumps(_root, default=str, ensure_ascii=False)[:2600]
                   + "\n\nADDRESSABLE PATHS (target_path MUST be EXACTLY one of these existing paths, or a "
                     "new child 'parent.newkey' of one; do NOT invent a path that is not listed here): "
                   + json.dumps(_paths, ensure_ascii=False)[:1200])

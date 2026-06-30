@@ -86,9 +86,27 @@ class EvidenceCoverage(Capability):
                 led.open_finding(f, {"path": f.target_path}, ctx.step)
             led.mark_delivered(f.finding_id, {"path": f.target_path}, ctx.step)
             deliver.append(f)
-        if not deliver:
-            return None
-        return self._emit(deliver, "claim_unobserved", ctx, meta, obs)
+        if deliver:
+            return self._emit(deliver, "claim_unobserved", ctx, meta, obs)
+
+        # No DETERMINISTIC defect. If there are UNCERTAIN semantic findings, route them to CANDIDATE mode:
+        # keep the original answer A, ask for a revised B, and let the conservative A/B selector adopt B ONLY
+        # if it is clearly better -- so external cannot amplify an uncertain finding into a wrong deletion.
+        semantic = [f for f in all_fresh if not enforceable(f)]
+        if semantic:
+            return self._emit_candidate(semantic)
+        return None
+
+    def _emit_candidate(self, findings):
+        crit = "; ".join(f.required_change for f in findings[:3])
+        return self._decide(
+            D.REVISE, rule_id="evidence_coverage", reason_code="candidate_review", deterministic=False,
+            extra={"candidate": True, "critique": crit},
+            reason="uncertain observational support -- candidate A/B review",
+            feedback="An automated check is UNCERTAIN whether some claims are fully supported by your own "
+                     "observations: %s. If you can ground or refine them, give a revised answer; otherwise "
+                     "restate your current answer. Your ORIGINAL is kept unless the revision is clearly better "
+                     "-- do NOT delete claims you are confident in." % crit)
 
     # ---- helpers ----------------------------------------------------------------------------------------
     def _observations(self, ledger):

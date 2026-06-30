@@ -80,7 +80,7 @@ class GoalAlignment(Capability):
         if not gs or not ctx.judge_fn or not ctx.spend_semantic():
             return None
         from ..engines.semantic import scoped_goal_findings
-        findings = scoped_goal_findings(gs, state, candidate, ctx.judge_fn, self._task_id(ctx))
+        findings = scoped_goal_findings(gs, state, candidate, ctx.judge_fn, self._task_id(ctx), surface=surf)
 
         fresh = []
         for f in findings:

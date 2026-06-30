@@ -107,9 +107,18 @@ class FormRepairSurface(RepairSurface):     # HAB: portal form fields / note sec
     env_types = ("gui",)
 
 
-class FhirRepairSurface(RepairSurface):     # PB: FHIR resource path / planned action payload
+class FhirRepairSurface(RepairSurface):     # FHIR resource path / planned action payload
     name = "fhir"
     env_types = ("fhir",)
+
+    def root(self, state, candidate):
+        """PRE-COMMIT, the editable object is the PROPOSED action payload (candidate), NOT the mutable-state
+        digest (which only holds already-created resources / deliverables). Expose BOTH under explicit keys so
+        findings can target the candidate the agent is about to submit (candidate.args.*) and protect existing
+        state. When there is no candidate payload (delta unit tests), fall back to state for back-compat."""
+        if isinstance(candidate, dict) and candidate:
+            return {"candidate": candidate, "state": state if isinstance(state, dict) else {}}
+        return state if isinstance(state, dict) else {}
 
 
 class AnswerRepairSurface(RepairSurface):   # claims / observations / evidence spans in a single-shot answer
