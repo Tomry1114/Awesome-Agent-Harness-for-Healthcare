@@ -7,6 +7,23 @@ substrate: structured_record
 clinical_modules: [medication_safety]
 
 manifest:
+  # repair_targets (item 3): the proposed FHIR payload paths (harness root {candidate, state}). Standard
+  # FHIR resource structure -- adapter schema, not gold.
+  repair_targets:
+    - match: {field_keywords: [subject, patient]}
+      writable_paths: [candidate.args.resource.subject.reference, candidate.args.subject]
+      verification: {type: path_present}
+    - match: {field_keywords: [dose, dosage, doseandrate]}
+      writable_paths: ["candidate.args.resource.dosageInstruction[0].doseAndRate", candidate.args.dose]
+      verification: {type: path_present}
+    - match: {field_keywords: [route]}
+      writable_paths: ["candidate.args.resource.dosageInstruction[0].route", candidate.args.route]
+    - match: {field_keywords: [frequency, timing]}
+      writable_paths: ["candidate.args.resource.dosageInstruction[0].timing", candidate.args.frequency]
+    - match: {field_keywords: [medication, drug, code]}
+      writable_paths: [candidate.args.resource.medicationCodeableConcept, candidate.args.resource.code, candidate.args.medication]
+    - match: {field_keywords: [reason, indication]}
+      writable_paths: [candidate.args.resource.reasonCode, candidate.args.reason]
   subject:
     type: patient
     binding: required        # every patient action must NAME its patient; "no target" != "active patient"

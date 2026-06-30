@@ -5,6 +5,22 @@ substrate: interactive_gui
 clinical_modules: []        # no extra clinical rules beyond the substrate submission invariant
 
 manifest:
+  # repair_targets (item 3): writable-path equivalences so the effect verifier resolves a finding the judge
+  # mis-located. Paths target the harness state root {route, emr: full_state}. Field keywords match the
+  # finding target/required_change. This is the portal schema (adapter layer), not gold.
+  repair_targets:
+    - match: {field_keywords: [disposition]}
+      writable_paths: [emr.agentActions.selectedDisposition]
+      verification: {type: any_path_nonempty}
+    - match: {field_keywords: [note, document, reasoning, rationale, triage]}
+      writable_paths: [emr.agentActions.addedAuthNote, emr.agentActions.addedProgressNote, emr.agentActions.documentedAppealInEpic]
+      verification: {type: any_path_nonempty}
+    - match: {field_keywords: [appeal, dispute, submit]}
+      writable_paths: [emr.appealActions.submittedAppeal, emr.appealActions.submittedAttachmentNames]
+      verification: {type: any_path_nonempty}
+    - match: {field_keywords: [review, view, access, inspect, retrieve]}
+      writable_paths: [emr.agentActions.viewedDenialDetails, emr.agentActions.viewedRemittanceImage, emr.agentActions.accessedPayerPortalForDenial, emr.agentActions.viewedAuthLetter]
+      verification: {type: any_path_nonempty}
   subject:
     type: admin_case
     binding: implicit_active   # the operated case is the one DISPLAYED on the page (no per-action arg)
