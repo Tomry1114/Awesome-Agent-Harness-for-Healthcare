@@ -293,7 +293,7 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
                         # observation, not a truncated authority message (P0-6). Read-only tools only.
                         _na = ((getattr(_hf, "raw", None) and getattr(_hf.raw, "extra", None)) or {}).get("next_action") or {}
                         if _na.get("tool") and _na.get("read_only"):
-                            _forced_action = {"type": "tool", "tool": _na["tool"], "args": _na.get("args") or {},
+                            _forced_action = {"type": "tool_call", "tool": _na["tool"], "args": _na.get("args") or {},
                                               "_harness_acquire": True}
                             try:
                                 _harness.ledger.acquire_count = getattr(_harness.ledger, "acquire_count", 0) + 1
@@ -398,7 +398,7 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
         _deliv_write = (deliv.is_required_write(action) and deliv._missing(env) and _deliv_writes_used < 1)
         if _env_budget_spent and _deliv_write:
             _deliv_writes_used += 1   # consume the single reserved deliverable slot (success or fail)
-        if _env_budget_spent and not _deliv_write:   # past the tool budget: allow ONLY the one exact deliverable write
+        if _env_budget_spent and not _deliv_write and not action.get("_harness_acquire"):   # past the tool budget: allow ONLY the one exact deliverable write (harness read-only acquisition exempt)
             _repair_turns += 1
             pending_harness_feedback = {"decision": "REVISE", "stage": "runtime_budget", "missing_obligations": [],
                 "reason": "Environment-action budget is exhausted. Do NOT call another tool; give your best "
