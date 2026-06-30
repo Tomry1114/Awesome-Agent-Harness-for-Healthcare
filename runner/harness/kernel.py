@@ -251,7 +251,7 @@ class HarnessKernel:
                 self.ledger.record_observation(tool_capability=_tn,
                     subject=_ar.get("image") or _ar.get("subject") or _ar.get("image_id"),
                     region=_ar.get("region"), modality=_ar.get("modality"),
-                    attributes_observed=[x for x in [_ar.get("attribute")] if x],
+                    attributes_observed=[],  # P0-7: the agent's REQUESTED attribute is not OBSERVED; the content judge decides
                     result_status=("invalid" if result_ok is False else "valid"), content=_content)
         except Exception:
             pass

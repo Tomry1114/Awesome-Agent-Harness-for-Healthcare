@@ -117,7 +117,8 @@ class EvidenceCoverage(Capability):
             out.append(Observation(observation_id=o.get("observation_id"), tool_capability=o.get("tool_capability"),
                                    subject=o.get("subject"), region=o.get("region"), modality=o.get("modality"),
                                    attributes_observed=tuple(o.get("attributes_observed") or []),
-                                   result_status=o.get("result_status", "valid")))
+                                   result_status=o.get("result_status", "valid"),
+                                   content=o.get("content", "")))   # P0-6: the support judge MUST see tool output
         return out
 
     def _with_affordance(self, f, meta):

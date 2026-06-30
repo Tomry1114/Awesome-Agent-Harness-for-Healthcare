@@ -273,4 +273,15 @@ class Ledger:
                 "proposed_actions": self.proposed_actions, "interventions": self.interventions,
                 "commit_history": self.commit_history, "unresolved_risks": self.unresolved_risks,
                 "resolutions": self.resolutions,
+                "repair_lifecycle": [{"finding_id": _fid,
+                                      "status": (_r.status.value if hasattr(_r.status, "value") else str(_r.status)),
+                                      "target_path": _r.finding.target_path, "defect_type": _r.finding.defect_type,
+                                      "rule_id": _r.finding.rule_id, "delivery_count": _r.delivery_count,
+                                      "repair_attempts": _r.repair_attempts, "first_step": _r.first_step,
+                                      "last_step": _r.last_step} for _fid, _r in self.repair_findings.items()],
+                "observations": [{"observation_id": _o.get("observation_id"), "tool": _o.get("tool_capability"),
+                                  "region": _o.get("region"), "modality": _o.get("modality"),
+                                  "status": _o.get("result_status"), "content": (_o.get("content") or "")[:300]}
+                                 for _o in self.observations],
+                "advisories": self.advisories,
                 "opportunities": self.opportunities}

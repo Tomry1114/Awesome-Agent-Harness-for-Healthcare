@@ -34,16 +34,7 @@ class GoalAlignment(Capability):
         if not (ctx.sem and getattr(ctx.sem, "semantic_type", None) in ("create", "update", "submit")):
             return None
         candidate = getattr(ctx.sem, "raw", None) or action
-        dec = self._run(ctx, state=ctx.current_state, candidate=candidate, stage="before_action")
-        # P1-E: only the TERMINAL deliverable commit (submit) is GATED on output-completeness. A create/update
-        # is an INTERMEDIATE build step; blocking it to demand "add X" while the agent is in the act of adding X
-        # derails the agent (verified: external 4->0 FHIR orders). Downgrade such pre-commit findings to advisory
-        # -- let the create execute; completeness is judged at the terminal commit / after_action.
-        if dec is not None and dec.type != D.ALLOW and getattr(ctx.sem, "semantic_type", None) != "submit":
-            for rf in (dec.extra or {}).get("repair_findings", []):
-                ctx.ledger.record_advisory(rf)
-            return None
-        return dec
+        return self._run(ctx, state=ctx.current_state, candidate=candidate, stage="before_action")
 
     def before_final(self, answer, ctx):
         # P0-A: answer-repair runs ONLY when the manifest declares the terminal answer the graded commit
@@ -97,33 +88,54 @@ class GoalAlignment(Capability):
         if not gs or not ctx.judge_fn or not ctx.spend_semantic():
             return None
         from ..engines.semantic import scoped_goal_findings
-        findings = scoped_goal_findings(gs, state, candidate, ctx.judge_fn, self._task_id(ctx))
+        # P0-3: pass the surface so FHIR findings target the PROPOSED payload (candidate.args.*), not the
+        # mutable-state digest.
+        findings = scoped_goal_findings(gs, state, candidate, ctx.judge_fn, self._task_id(ctx), surface=surf)
 
         fresh = []
         for f in findings:
-            # ADMISSIBILITY INVARIANT: drop findings whose target cannot be localized in the real state
-            # (hallucinated paths). This is what stops churn on phantom targets like emr.denials.DEN-014.
-            if not surf.can_localize(state, candidate, f):
+            cls = self._classify(f, ctx, stage, surf, state, candidate)
+            if cls == "drop":
                 continue
-            # ADMISSION GATE: only DETERMINISTIC structural defects are enforced; uncertain semantic findings
-            # become ADVISORY (recorded, not blocked) -- so external cannot amplify a wrong/soft signal.
-            if not enforceable(f):
+            if cls == "advise":
+                # P0-5: an advisory finding NEVER enters the enforce lifecycle (no open_finding/mark_delivered)
+                # -- else it sits forever as DELIVERED, the agent never sees it, and it suppresses every later
+                # finding. Advisory findings live only in ledger.advisories.
                 led.record_advisory(f.to_dict())
                 continue
             proj = surf.project(state, candidate, f)
             if f.defect_type == "missing" and is_present(proj.get("target")):
                 continue                                   # L1 guard: present-but-claimed-missing
+            # one-finding-at-a-time: open/deliver only the FIRST enforce finding; the agent fixes one concrete
+            # patch per turn (weak models succeed far more often on a single patch than on a batch).
             sig = target_sig(proj)
             mode, _rec = led.repair_decision(f, sig)
             if mode == "suppress":
                 continue
             if mode == "new":
-                led.open_finding(f, proj, ctx.step)        # baseline = FULL projection (for delta membership)
-            led.mark_delivered(f.finding_id, sig, ctx.step)  # last_projection = target SIGNATURE (for dedup)
+                led.open_finding(f, proj, ctx.step)
+            led.mark_delivered(f.finding_id, sig, ctx.step)
             fresh.append(f)
+            break
         if not fresh:
             return None
         return self._emit(fresh, "goal_misalignment", stage, ctx)
+
+    def _classify(self, f, ctx, stage, surf, state, candidate):
+        """Four-gate routing -> 'enforce' | 'advise' | 'drop'. Only DETERMINISTIC, localizable, stage-
+        appropriate defects are ENFORCED (external high-gain). Everything else is advisory or dropped, so
+        external can never amplify an uncertain / unactionable signal."""
+        if not surf.can_localize(state, candidate, f):
+            return "drop"                                  # not localizable -> observe-only
+        if not enforceable(f):
+            return "advise"                                # uncertain semantic -> advisory / candidate
+        # action-vs-task completeness: an intermediate create/update is a BUILD step; a task-completeness
+        # finding on it is advisory (blocking it derails the agent mid-build). Only the terminal `submit`
+        # enforces output-completeness. (Action-level checks -- subject, required API fields, safety prereq --
+        # are enforced by the dedicated infrastructure capabilities, not here.)
+        if stage == "before_action" and getattr(ctx.sem, "semantic_type", None) in ("create", "update"):
+            return "advise"
+        return "enforce"
 
     # ---- decision rendering -----------------------------------------------------------------------------
     def _emit(self, findings, reason_code, stage, ctx):
