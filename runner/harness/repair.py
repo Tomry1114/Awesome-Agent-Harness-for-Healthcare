@@ -33,6 +33,22 @@ DEFECT_TYPES = ("missing", "insufficient_content", "unsupported", "conflicting",
 TARGET_TYPES = ("field", "resource_path", "claim", "action")
 
 
+# FEEDBACK ADMISSION GATE (routing by signal validity, not by a global inline/external switch).
+# external is a high-GAIN channel: it amplifies a CORRECT signal AND a wrong one. So only DETERMINISTIC,
+# structurally-verifiable defects are ENFORCED (REVISE, high-gain). Defects that rest on an uncertain
+# semantic judge are ADVISORY (never overwrite the agent's answer; future: candidate-B + A/B select).
+ENFORCEABLE_DEFECTS = ("missing", "unobserved_target")          # deterministic structural absence
+ADVISORY_DEFECTS = ("insufficient_content", "unsupported", "unsupported_by_observation",
+                    "untraceable_claim", "conflicting", "wrong_operation")  # judge-dependent
+
+
+def enforceable(finding) -> bool:
+    """True => deterministic structural defect, safe to ENFORCE via REVISE. False => semantic/uncertain ->
+    ADVISORY only (do not block, do not force a rewrite)."""
+    dt = getattr(finding, "defect_type", finding) if not isinstance(finding, str) else finding
+    return dt in ENFORCEABLE_DEFECTS
+
+
 def make_finding_id(task_id, rule_id, target_type, target_path, defect_type) -> str:
     """Stable id: same task + same target + same defect => same finding id, forever. This is what lets the
     lifecycle suppress duplicate prompting instead of re-nagging the same obligation every step."""

@@ -482,6 +482,8 @@ def claim_semantic_support(claims, observation_summaries, judge_fn=None):
     try:
         d = json.loads(t[i:j + 1])
         sup = d.get("support") or {}
-        return {str(k): bool(v) for k, v in sup.items()}
+        def _b(v):  # strict: judge may return the STRING "false" -> bool("false") is True (wrong)
+            return v is True or (isinstance(v, str) and v.strip().lower() in ("true", "yes", "1"))
+        return {str(k): _b(v) for k, v in sup.items()}
     except Exception:
         return {}

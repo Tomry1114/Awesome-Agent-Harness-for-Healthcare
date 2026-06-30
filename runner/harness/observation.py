@@ -33,6 +33,14 @@ class Observation:
     modality: str | None = None
     attributes_observed: tuple = ()
     result_status: str = "valid"
+    content: str = ""              # the tool's ACTUAL output text -- what the support judge must read
+
+    def summary(self):
+        """The dict shown to the semantic-support judge: metadata PLUS the actual observed content (without
+        content the judge is blind and defaults to 'unsupported' -> false over-correction)."""
+        return {"tool": self.tool_capability, "region": self.region, "modality": self.modality,
+                "attributes": list(self.attributes_observed), "status": self.result_status,
+                "observed_content": (self.content or "")[:600]}
 
 
 @dataclass(frozen=True)
@@ -49,6 +57,15 @@ class Claim:
     @property
     def path(self):
         return "answer.claims[%d]" % self.idx
+
+    @property
+    def stable_key(self):
+        """Content-based identity (text+region+modality+attribute) so a finding's id survives re-decomposition
+        even when claim ORDER changes between answer revisions (index-based ids were unstable)."""
+        import hashlib
+        raw = "|".join([(_n(self.text) or ""), (_n(self.region) or ""),
+                        (_n(self.modality) or ""), (_n(self.attribute) or "")])
+        return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:12]
 
 
 def _n(s):
@@ -114,7 +131,9 @@ def coverage_findings(claims, observations, task_id, semantic_support=None, rule
 
     def _mk(c, defect, op, change):
         return RepairFinding(
-            finding_id=make_finding_id(task_id, rule_id, "claim", c.path, defect),
+            # id keys on the CONTENT (stable_key), not the index -> survives re-decomposition reordering;
+            # target_path stays the positional path for localization in the current answer.
+            finding_id=make_finding_id(task_id, rule_id, "claim", c.stable_key, defect),
             rule_id=rule_id, target_type="claim", target_path=c.path, defect_type=defect, operation=op,
             required_change=change, protected_paths=tuple(p for p in protected if p != c.path),
             metadata={"claim_id": c.claim_id, "region": c.region, "modality": c.modality,

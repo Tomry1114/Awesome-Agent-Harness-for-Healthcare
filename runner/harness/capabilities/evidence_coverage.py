@@ -14,6 +14,7 @@ import os
 from ..capability import Capability
 from .. import decision as D
 from ..observation import Observation, region_observed, attribute_observed, coverage_findings
+from ..repair import enforceable
 from .. import affordance
 
 
@@ -47,9 +48,17 @@ class EvidenceCoverage(Capability):
                   and region_observed(c, obs) is not None and attribute_observed(c, obs) is None]
         support = {}
         if margin and ctx.spend_semantic():
-            support = claim_semantic_support(margin, [o.__dict__ for o in obs], ctx.judge_fn)
+            # pass the ACTUAL observed content (o.summary), not just metadata -- otherwise the judge is blind
+            # and defaults to 'unsupported' -> false over-correction (verified on the perceptual substrate).
+            support = claim_semantic_support(margin, [o.summary() for o in obs], ctx.judge_fn)
 
-        fresh = coverage_findings(claims, obs, task_id, semantic_support=support)
+        all_fresh = coverage_findings(claims, obs, task_id, semantic_support=support)
+        # ADMISSION GATE: enforce only DETERMINISTIC defects (unobserved_target = never looked); semantic
+        # ones (unsupported_by_observation / untraceable) are ADVISORY -> never force a claim deletion.
+        for f in all_fresh:
+            if not enforceable(f):
+                led.record_advisory(f.to_dict())
+        fresh = [f for f in all_fresh if enforceable(f)]
         fresh_paths = {f.target_path for f in fresh}
 
         # ---- lifecycle: resolve delivered findings the agent fixed; detect regression on protected claims ----

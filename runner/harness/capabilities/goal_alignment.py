@@ -16,6 +16,7 @@ from .. import decision as D
 from ..risk import at_least, R2
 from ..repair_surface import surface_for, is_present, target_sig
 from ..repair_delta import validate_repair
+from ..repair import enforceable
 
 
 def _enabled():
@@ -86,6 +87,11 @@ class GoalAlignment(Capability):
             # ADMISSIBILITY INVARIANT: drop findings whose target cannot be localized in the real state
             # (hallucinated paths). This is what stops churn on phantom targets like emr.denials.DEN-014.
             if not surf.can_localize(state, candidate, f):
+                continue
+            # ADMISSION GATE: only DETERMINISTIC structural defects are enforced; uncertain semantic findings
+            # become ADVISORY (recorded, not blocked) -- so external cannot amplify a wrong/soft signal.
+            if not enforceable(f):
+                led.record_advisory(f.to_dict())
                 continue
             proj = surf.project(state, candidate, f)
             if f.defect_type == "missing" and is_present(proj.get("target")):
