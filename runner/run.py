@@ -203,6 +203,7 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
     _repair_mode = os.environ.get("MH_REPAIR", "hard")   # ablation: off|hard|soft|select|full (answer layer)
     _pending_candidate = None   # Layer-2: a held ORIGINAL answer awaiting its revised candidate for A/B selection
     _reconcile = None   # P0.1: an UNKNOWN commit under restricted read-back recovery (action,res,budget)
+    _forced_action = None   # harness-dispatched read-only acquisition, run through the NORMAL tool pipeline
     _deliv_writes_used = 0   # at most ONE reserved over-budget deliverable write (off/enforce budget parity)
     deliv = DeliverableScaffold(task)  # PB deliverable scaffolding (Codex #1: extracted from the generic runner; no-op for non-PB)
     _fail_sig = None; _fail_n = 0; _aborted = False  # circuit breaker: abort on repeated identical failing call
@@ -226,10 +227,15 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
         if _last_tool_ev is not None:          # the previous tool observation is about to be consumed
             _last_tool_ev["delivery_record"]["consumed_by_agent"] = True
             _last_tool_ev = None
-        action = agent.act({"goal": task.get("goal"), "context": task.get("context"),
-                            "tools": env.available_tools(), "last_observation": last_obs, "last_result": last_res,
-                            "harness_feedback": pending_harness_feedback})
-        pending_harness_feedback = None   # consumed this turn
+        if _forced_action is not None:   # harness-dispatched read-only acquisition -> run via the NORMAL
+            action = _forced_action; _forced_action = None   # tool pipeline (real tool_call, error/localization
+            trajectory.append({"step": step, "event_type": "harness_acquire_dispatch",   # normalization,
+                               "tool": action.get("tool"), "args": action.get("args"), "status": "ok"})
+        else:
+            action = agent.act({"goal": task.get("goal"), "context": task.get("context"),
+                                "tools": env.available_tools(), "last_observation": last_obs, "last_result": last_res,
+                                "harness_feedback": pending_harness_feedback})
+            pending_harness_feedback = None   # consumed this turn
         if not isinstance(action, dict) or "type" not in action:  # #7 agent contract violation
             trajectory.append({"step": step, "event_type": "agent_error", "error": "invalid_action", "raw": str(action)[:200], "status": "error"})
             finished = True; break
@@ -280,30 +286,26 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
                                            "reason": "hook_error", "status": "error"}); _aborted = True; break
                 if _hf is not None:
                     trajectory.extend(_hf.events)
-                    if _hf.type == "ACQUIRE":   # ACTIVE read-only evidence acquisition -> feed back -> re-reason
+                    if _hf.type == "ACQUIRE":   # ACTIVE read-only evidence acquisition: dispatch through the
+                        # NORMAL tool pipeline (P0-1) -> a real tool_call event (scorers count it), error +
+                        # localization normalization (P0-2: failed/fallback obs is NOT marked valid), after_action
+                        # observation + provenance, and last_obs update -> the agent re-reasons on a NORMAL
+                        # observation, not a truncated authority message (P0-6). Read-only tools only.
                         _na = ((getattr(_hf, "raw", None) and getattr(_hf.raw, "extra", None)) or {}).get("next_action") or {}
-                        if _na.get("tool"):
+                        if _na.get("tool") and _na.get("read_only"):
+                            _forced_action = {"type": "tool", "tool": _na["tool"], "args": _na.get("args") or {},
+                                              "_harness_acquire": True}
                             try:
-                                _ares = env.call_tool(_na["tool"], _na.get("args") or {})
-                            except Exception as _ae:
-                                _ares = None; _harness_runtime_errors.append("acquire: %r" % _ae)
-                            _ac = _ares if isinstance(_ares, str) else json.dumps(_ares, default=str, ensure_ascii=False)
-                            try:
-                                _harness.ledger.record_observation(tool_capability=_na["tool"],
-                                    region=(_na.get("args") or {}).get("region"), attributes_observed=[],
-                                    result_status="valid", content=(_ac or "")[:1500])
                                 _harness.ledger.acquire_count = getattr(_harness.ledger, "acquire_count", 0) + 1
                             except Exception:
                                 pass
-                            trajectory.append({"step": step, "event_type": "evidence_acquired", "stage": "before_final",
-                                               "tool": _na.get("tool"), "args": _na.get("args"),
-                                               "result": (str(_ac) or "")[:400], "reason": getattr(getattr(_hf, "raw", None), "reason", None)})
+                            _aq = _na.get("args") or {}
                             pending_harness_feedback = {"decision": "ACQUIRE", "stage": "before_final",
-                                "reason": "The harness acquired a discriminating observation for you: "
-                                          + (str(_ac) or "")[:600] + " -- Re-assess your answer in light of THIS "
-                                          "observation; change it ONLY if this observation contradicts it, otherwise keep it.",
-                                "missing_obligations": []}
-                            continue   # loop back so the agent re-answers with the new evidence
+                                "reason": "A targeted observation of %s (%s) was just performed for you; its full "
+                                          "result is in your last observation. Reassess your answer using it, and "
+                                          "change your answer only if it contradicts your current one."
+                                          % (_aq.get("region"), _aq.get("attribute")), "missing_obligations": []}
+                            continue   # the acquisition runs via the normal pipeline next iteration, then re-answer
                     if _hf.type in ("REVISE", "BLOCK"):   # ADDITIVE: keep last_obs/last_res (env state) intact
                         _extra_hf = ((getattr(_hf, "raw", None) and getattr(_hf.raw, "extra", None)) or {})
                         if _extra_hf.get("candidate"):       # Layer-2 candidate mode: keep A, ask for revised B

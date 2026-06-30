@@ -31,7 +31,13 @@ class ActiveEvidence(Capability):
         if not ctx.spend_semantic():
             return None
         from ..engines.semantic import elicit_discriminator
-        disc = elicit_discriminator(answer, meta.get("goal") or meta.get("public_context"), ctx.judge_fn)
+        obs_summ = []
+        for o in getattr(led, "observations", []):
+            if o.get("result_status") in ("valid", "ok") and (o.get("content") or o.get("region")):
+                r, c = o.get("region"), (o.get("content") or "")
+                obs_summ.append((("%s: %s" % (r, c)) if r else str(c))[:200])
+        disc = elicit_discriminator(answer, meta.get("goal") or meta.get("public_context"),
+                                    observations=obs_summ, judge_fn=ctx.judge_fn)
         if not disc or not disc.get("region"):
             return None                                    # certain / non-perceptual -> nothing to acquire
         region, attribute = disc.get("region"), disc.get("attribute")

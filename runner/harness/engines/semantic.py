@@ -491,22 +491,25 @@ def claim_semantic_support(claims, observation_summaries, judge_fn=None):
 
 
 _DISCRIMINATOR_PROMPT = (
-    "An agent gave the answer below to a perceptual/diagnostic task. WITHOUT outside knowledge or a gold "
-    "answer, name the TWO most plausible interpretations and the SINGLE most discriminating OBSERVABLE feature "
-    "(a region + attribute) a perception tool could check to tell them apart. Reply STRICT JSON: "
-    '{{"hypotheses": ["<h1>", "<h2>"], "region": "<spatial/anatomical region or null>", "attribute": '
-    '"<feature to check or null>"}}. If the answer is already certain or non-perceptual, use null region.'
-    "\n\nGOAL:\n{goal}\n\nANSWER:\n{answer}\n"
+    "An agent gave the answer below to a perceptual/diagnostic task. Decide whether a SINGLE additional targeted "
+    "observation could still change the answer. WITHOUT outside knowledge or a gold answer, name the TWO most "
+    "plausible interpretations and the SINGLE most discriminating OBSERVABLE feature (region + attribute) a "
+    "perception tool could check to tell them apart. If that feature was ALREADY observed in OBSERVATIONS ALREADY "
+    "MADE below, OR the answer is already certain / non-perceptual, return null region (do NOT invent a target "
+    "that adds nothing). Reply STRICT JSON: "
+    '{{"hypotheses": ["<h1>", "<h2>"], "region": "<region or null>", "attribute": "<feature or null>"}}.'
+    "\n\nGOAL:\n{goal}\n\nOBSERVATIONS ALREADY MADE:\n{obs}\n\nANSWER:\n{answer}\n"
 )
 
 
-def elicit_discriminator(answer, goal, judge_fn=None):
+def elicit_discriminator(answer, goal, observations=None, judge_fn=None):
     """answer -> {hypotheses[2], region, attribute} (oracle-blind: reads only the agent answer/goal). region
     None when the answer is certain / non-perceptual."""
     if not judge_fn or not answer:
         return None
     try:
-        raw = judge_fn(_DISCRIMINATOR_PROMPT.format(goal=str(goal or "")[:1500], answer=str(answer)[:1500]))
+        obs = "\n".join("- %s" % o for o in (observations or [])[:12]) or "(none)"
+        raw = judge_fn(_DISCRIMINATOR_PROMPT.format(goal=str(goal or "")[:1200], obs=obs[:1500], answer=str(answer)[:1200]))
     except Exception:
         return None
     t = raw if isinstance(raw, str) else str(raw or ""); i, j = t.find("{"), t.rfind("}")
