@@ -103,12 +103,15 @@ class EvidenceCoverage(Capability):
         crit = "; ".join(f.required_change for f in findings[:3])
         return self._decide(
             D.REVISE, rule_id="evidence_coverage", reason_code="candidate_review", deterministic=False,
+            # bug-1 fix: the agent renderer reads `reason` + `missing_obligations`, NOT feedback/extra.critique.
+            # Put the SPECIFIC critique there so the revised candidate B targets the right claims (not a random
+            # rewrite).
+            missing_obligations=[f.required_change for f in findings[:3]],
             extra={"candidate": True, "critique": crit},
-            reason="uncertain observational support -- candidate A/B review",
-            feedback="An automated check is UNCERTAIN whether some claims are fully supported by your own "
-                     "observations: %s. If you can ground or refine them, give a revised answer; otherwise "
-                     "restate your current answer. Your ORIGINAL is kept unless the revision is clearly better "
-                     "-- do NOT delete claims you are confident in." % crit)
+            reason=("A check is UNCERTAIN whether these claims are fully supported by your own observations: %s. "
+                    "Ground or refine them, OR keep your answer -- your ORIGINAL is kept unless a revision is "
+                    "clearly better; do NOT delete claims you are confident in." % crit),
+            feedback="Uncertain observational support; ground the named claims or restate your answer.")
 
     # ---- helpers ----------------------------------------------------------------------------------------
     def _observations(self, ledger):

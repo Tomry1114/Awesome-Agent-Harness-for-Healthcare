@@ -246,12 +246,24 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
                                                  list(_harness.ledger.evidence), judge_fn=getattr(_harness.ctx, "judge_fn", None))
                 _adopt = (_cmp.get("preferred") == "revised") if _repair_mode == "soft" else adopt_revised(_cmp)
                 _chosen = _B if _adopt else _A
+                # bug-2: RE-VERIFY the chosen answer through before_final (deterministic checks) instead of
+                # blindly recording verified=None -- else an adopted B with a new unsupported claim commits
+                # unverified (Verification/Governance silently drop). Bounded: a candidate REVISE here is NOT
+                # re-entered (it just yields a flagged delivery). bug-3: canonical_action reflects the CHOSEN
+                # answer, not B (else thought=A but canonical_action=B -> scorers disagree).
+                _rv = None
+                try:
+                    _rv = _harness.before_final(_chosen, step=step)
+                except Exception as _re:
+                    _harness_runtime_errors.append("candidate re-verify: %r" % _re)
+                _rv_clean = (_rv is not None and _rv.type == "ALLOW")
                 trajectory.append({"step": step, "event_type": "final_answer", "thought": _chosen, "status": "ok",
-                                   "final_disposition": "revised_commit_adopted" if _adopt else "kept_original",
-                                   "answer_attempt_index": _answer_attempts, "comparison": _cmp,
-                                   "canonical_action": _canon.canonical_action(action, env_type)})
-                try: _harness.record_flagged_final(_chosen, flag=("repair_adopted" if _adopt else "repair_kept_original"), step=step)
-                except Exception as _re: _harness_runtime_errors.append("record_flagged_final: %r" % _re)
+                                   "final_disposition": ("revised_commit_adopted" if _adopt else "kept_original"),
+                                   "answer_attempt_index": _answer_attempts, "comparison": _cmp, "reverified": _rv_clean,
+                                   "canonical_action": _canon.canonical_action({"type": "final", "answer": _chosen}, env_type)})
+                if not _rv_clean:   # re-verification did not pass cleanly -> degraded (flagged) delivery
+                    try: _harness.record_flagged_final(_chosen, flag=("repair_adopted" if _adopt else "repair_kept_original"), step=step)
+                    except Exception as _re: _harness_runtime_errors.append("record_flagged_final: %r" % _re)
                 _pending_candidate = None; finished = True; break
             if _harness is not None:                    # final answer is a commit point
                 try:
