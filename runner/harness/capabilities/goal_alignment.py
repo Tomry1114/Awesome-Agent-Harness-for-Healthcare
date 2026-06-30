@@ -34,7 +34,16 @@ class GoalAlignment(Capability):
         if not (ctx.sem and getattr(ctx.sem, "semantic_type", None) in ("create", "update", "submit")):
             return None
         candidate = getattr(ctx.sem, "raw", None) or action
-        return self._run(ctx, state=ctx.current_state, candidate=candidate, stage="before_action")
+        dec = self._run(ctx, state=ctx.current_state, candidate=candidate, stage="before_action")
+        # P1-E: only the TERMINAL deliverable commit (submit) is GATED on output-completeness. A create/update
+        # is an INTERMEDIATE build step; blocking it to demand "add X" while the agent is in the act of adding X
+        # derails the agent (verified: external 4->0 FHIR orders). Downgrade such pre-commit findings to advisory
+        # -- let the create execute; completeness is judged at the terminal commit / after_action.
+        if dec is not None and dec.type != D.ALLOW and getattr(ctx.sem, "semantic_type", None) != "submit":
+            for rf in (dec.extra or {}).get("repair_findings", []):
+                ctx.ledger.record_advisory(rf)
+            return None
+        return dec
 
     def before_final(self, answer, ctx):
         # P0-A: answer-repair runs ONLY when the manifest declares the terminal answer the graded commit

@@ -55,6 +55,25 @@ def _present(v):
                 or (isinstance(v, (list, dict)) and len(v) == 0))
 
 
+def _leaf_count(o):
+    """Number of non-empty scalar leaves in a structure -- a cheap measure of 'how much content exists'."""
+    n = 0
+    for v in _walk(o):
+        if not isinstance(v, (dict, list)) and _present(v):
+            n += 1
+    return n
+
+
+def _new_content_added(before_root, after_root):
+    """Did the agent write substantive NEW content anywhere in the surface vs baseline? Used to resolve an
+    additive defect BY EFFECT when the judge named a slightly-wrong / GUI-unreachable target path (the agent
+    persists to its own fixed schema slot, not the guessed one) -- so we don't churn forever on an unreachable
+    path the agent can never fill."""
+    if after_root is None:
+        return False
+    return _leaf_count(after_root) > _leaf_count(before_root)
+
+
 def _walk(o):
     if isinstance(o, dict):
         yield o
@@ -96,8 +115,12 @@ def validate_repair(finding, before_proj, after_proj, surface=None):
             return RepairVerdict(False, "target_not_resolved", "claim unchanged / unverified")
     elif op in (RepairOperation.ADD,) or dt in ("missing", "insufficient_content"):
         if not _present(ta):
-            return RepairVerdict(False, "target_not_resolved", "target still empty")
-        if dt == "insufficient_content" and ta == tb:
+            # P1-C: resolve by EFFECT, not by the (possibly mis-guessed / GUI-unreachable) target path -- if
+            # the agent made a substantive new write anywhere in the surface, treat the additive defect as
+            # plausibly addressed instead of churning forever on a slot the agent never populates.
+            if not _new_content_added(before_proj.get("root"), after_proj.get("root")):
+                return RepairVerdict(False, "target_not_resolved", "target still empty")
+        elif dt == "insufficient_content" and ta == tb:
             return RepairVerdict(False, "target_not_resolved", "content unchanged")
     else:   # EDIT / REPLACE / conflicting / wrong_operation
         if not _present(ta) or ta == tb:

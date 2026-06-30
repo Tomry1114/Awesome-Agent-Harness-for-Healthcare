@@ -1122,7 +1122,11 @@ def test_goal_alignment_before_commit():
                            env_type="fhir", judge_fn=lambda p: '{"aligned": false, "findings": [{"target_type": "resource_path", "target_path": "dose", "defect_type": "missing", "repair_operation": "ADD", "required_change": "Add the dose to the medication order.", "protected_paths": ["patient"]}]}',  # Scoped Repair structured finding
                            budget={"max_semantic_checks": 5})
         eff = kf.before_action(create, {"x": 0}, step=1)
-        assert eff.type == D.REVISE and getattr(eff.raw, "reason_code", None) == "goal_misalignment", (eff.type, getattr(eff.raw, "reason_code", None))
+        # P1-E: a create/update is an INTERMEDIATE build step -> a completeness finding is recorded as
+        # advisory, NOT a blocking REVISE (blocking intermediate creates derails the agent). Only a
+        # terminal `submit` is gated. So a create now yields ALLOW + an advisory record.
+        assert eff.type == D.ALLOW, eff.type
+        assert kf.ledger.advisories, "the completeness finding should be recorded as advisory"
         ka = HarnessKernel(contract, [GoalAlignment(), VerifyAndCommit()], mode="enforce", policy=POLICY,
                            env_type="fhir", judge_fn=lambda p: '{"aligned": true, "missing": []}',
                            budget={"max_semantic_checks": 5})
