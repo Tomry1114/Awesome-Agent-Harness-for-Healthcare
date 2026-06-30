@@ -82,7 +82,18 @@ class RequiredContext(Capability):
                                   or (hasattr(sem, "is_commit") and sem.is_commit())))
         if not is_commit or not ctx.contract:
             return None
-        return self._missing_obligation_acquire(ctx, self._all_evidence_obligations(ctx.contract))
+        obligations = self._all_evidence_obligations(ctx.contract)
+        if not obligations:
+            return None
+        # P2 INTENT-SCOPE: for a content-bearing deliverable write, restrict required context to the obligations
+        # the deliverable's own clinical actions depend on (don't acquire allergies/meds for a non-medication
+        # plan). Oracle-blind: reads the agent's proposed content + public goal.
+        content = ((action or {}).get("args") or {}).get("content")
+        if content:
+            from ..engines.semantic import select_relevant_obligations
+            obligations = select_relevant_obligations((ctx.contract.meta or {}).get("goal"), content,
+                                                      obligations, getattr(ctx, "judge_fn", None))
+        return self._missing_obligation_acquire(ctx, obligations)
 
     # -- helpers (pure; over contract obligations + ledger evidence) --
     def _required_evidence_obligations(self, c, sem):

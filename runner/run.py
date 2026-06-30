@@ -202,6 +202,7 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
     _answer_attempts = 0   # count EVERY final answer the agent submits (not just the one that lands)
     _repair_mode = os.environ.get("MH_REPAIR", "hard")   # ablation: off|hard|soft|select|full (answer layer)
     _pending_iv = None   # Unified PendingIntervention (answer surface): held root A + pre-intervention evidence baseline, awaiting candidate B
+    _pending_artifact = None   # artifact surface: held root deliverable content A + evidence baseline, awaiting candidate B
     _reconcile = None   # P0.1: an UNKNOWN commit under restricted read-back recovery (action,res,budget)
     _forced_action = None   # harness-dispatched read-only acquisition, run through the NORMAL tool pipeline
     _deliv_writes_used = 0   # at most ONE reserved over-budget deliverable write (off/enforce budget parity)
@@ -443,6 +444,10 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
                                       % ((_nab.get("args") or {}).get("resourceType")), "missing_obligations": []}
                         trajectory.append({"step": step, "event_type": "harness_acquire_predispatch",
                                            "tool": _nab.get("tool"), "args": _nab.get("args"), "status": "ok"})
+                        if _pending_artifact is None and action.get("tool") == "write_file" and (action.get("args") or {}).get("content"):
+                            _pending_artifact = {"root_payload": action["args"]["content"],   # ArtifactRetention: hold A
+                                                 "path": (action.get("args") or {}).get("path"),
+                                                 "baseline_ev_ids": {e.get("evidence_id") for e in _harness.ledger.evidence}}
                         continue   # the acquisition runs next iteration; the original commit is deferred
                 if _hb.type in ("REVISE", "BLOCK"):     # do NOT execute the tool; ADDITIVE feedback (env obs intact)
                     _repair_turns += 1
@@ -454,6 +459,30 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
                     trajectory.append({"step": step, "event_type": "harness_escalation",
                                        "feedback": _hb.feedback, "status": "error"})
                     _aborted = True; break
+        if (_pending_artifact is not None and _harness is not None and action.get("tool") == "write_file"
+                and (action.get("args") or {}).get("content")
+                and (action.get("args") or {}).get("path") == _pending_artifact.get("path")):
+            # ARTIFACT PROMOTION (dual-surface): the deliverable is epistemic content (promote via the SAME
+            # evidence-grounded gate as the answer surface) persisted operationally. Adopt the re-written plan B
+            # ONLY if its core change is supported by the newly-acquired evidence delta; else retain root A.
+            from harness.engines.semantic import evaluate_candidate
+            _Aart = _pending_artifact.get("root_payload", ""); _Bart = action["args"]["content"]
+            _cm = (_harness.contract.meta if (_harness.contract and _harness.contract.meta) else {})
+            _base = _pending_artifact.get("baseline_ev_ids") or set()
+            _newev = [e for e in _harness.ledger.evidence if e.get("evidence_id") not in _base
+                      and e.get("status") == "VALIDATED" and e.get("scope_relation") != "foreign"]
+            try:
+                _adec, _adisp = evaluate_candidate({"type": "ACQUIRE", "root_answer": _Aart}, _Bart, _cm,
+                                                   list(_harness.ledger.evidence), _newev,
+                                                   judge_fn=getattr(_harness.ctx, "judge_fn", None), reverify_fn=None)
+            except Exception as _ae:
+                _harness_runtime_errors.append("evaluate_artifact: %r" % _ae); _adec, _adisp = "KEEP_A", "kept_original_gate_error"
+            if _adec != "ADOPT_B":
+                action["args"]["content"] = _Aart    # retain root plan A (B not evidence-justified)
+            trajectory.append({"step": step, "event_type": "artifact_promotion", "path": _pending_artifact.get("path"),
+                               "decision": _adec, "final_disposition": _adisp, "surface": "artifact",
+                               "n_new_evidence": len(_newev), "status": "ok"})
+            _pending_artifact = None
         _state_before = _state_hash(env); _snap_before = _state_snapshot(env)
         try:
             res = env.call_tool(action["tool"], action.get("args", {}))
@@ -585,7 +614,7 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
         trajectory.append({"step": max_steps, "event_type": "agent_error", "error": "max_steps_exceeded", "status": "error"})
     # deliverable enforcement (final): guarantee ONE write attempt if the required file is still missing
     # (covers both "finished early" and "ran out of steps"), then normalize a mis-named single file.
-    deliv.enforce(env, agent, task, trajectory, max_steps)
+    deliv.enforce(env, agent, task, trajectory, max_steps, harness=_harness, state_snapshot=_state_snapshot)
     try:
         _caps = env.capabilities()   # Codex #10: four-state manifest captured while env is alive (pre-teardown)
     except Exception:

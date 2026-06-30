@@ -99,9 +99,9 @@ def canonical_result(res):
     if res.get("error"):
         return {"status": "failure", "kind": "Failure", "error_type": classify_error(res["error"]),
                 "detail": str(res["error"])[:200]}
-    if res.get("downloaded") or res.get("uploaded"):
+    if res.get("downloaded") or res.get("uploaded") or res.get("written"):   # a WRITTEN file is a first-class artifact
         return {"status": "success", "kind": "ArtifactProduced",
-                "artifact": res.get("downloaded") or res.get("uploaded")}
+                "artifact": res.get("downloaded") or res.get("uploaded") or res.get("written")}
     sc = res.get("state_changed")
     if sc is False:
         return {"status": "success", "kind": "NoProgress", "state_changed": False, "surface_changed": False}
@@ -121,7 +121,7 @@ def canonical_observation(res, env_type):
         modalities["structured" if not isinstance(out, str) else "text"] = out
     if res.get("image_ref"):
         modalities["image_ref"] = res["image_ref"]
-    artifacts = [res[k] for k in ("downloaded", "uploaded") if res.get(k)]
+    artifacts = [res[k] for k in ("downloaded", "uploaded", "written") if res.get(k)]
     return {"observation_type": "environment_state", "modalities": modalities,
             "current_url": res.get("url"), "artifacts": artifacts,
             "previous_action_result": canonical_result(res)}

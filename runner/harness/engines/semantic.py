@@ -717,3 +717,40 @@ def evaluate_candidate(intervention, candidate_b, goal_spec, all_evidence, new_e
             return ("KEEP_A", "rolled_back_candidate_reverify_failed")
 
     return ("ADOPT_B", "adopted_evidence_supported_core_change" if core_changed else "adopted_noncore_refinement")
+
+
+# =====================================================================================================
+# INTENT-SCOPED CONTEXT (P2). A deliverable does NOT require every policy obligation -- only those tied to the
+# clinical ACTIONS the deliverable actually expresses. Oracle-blind: reads the PUBLIC goal + the agent's own
+# proposed deliverable content + the candidate obligations' resources; never gold. A plan that starts/changes a
+# medication makes AllergyIntolerance/MedicationRequest relevant; a pure imaging-follow-up plan does not.
+# =====================================================================================================
+
+_RELEVANCE_PROMPT = (
+    "A clinical DELIVERABLE (a plan/note) is about to be committed. Decide which of the CANDIDATE required-"
+    "context records are RELEVANT to the clinical ACTIONS the deliverable actually expresses (e.g. a record is "
+    "relevant only if the plan makes a decision that depends on it). Do NOT judge correctness; do NOT require a "
+    "record the plan's actions do not depend on. Reply STRICT JSON: {{\"relevant\": [\"<obligation_id>\"...]}}.\n\n"
+    "PUBLIC GOAL:\n{goal}\n\nDELIVERABLE CONTENT:\n{content}\n\nCANDIDATE REQUIRED-CONTEXT (id -> resource):\n{obs}\n")
+
+
+def select_relevant_obligations(goal, content, obligations, judge_fn=None):
+    """obligations = [(oid, resource)]. Return the subset whose record the deliverable's clinical actions
+    actually depend on. No judge / parse-fail / no content -> return ALL (fail-safe: do not silently drop a
+    required check). Empty obligations -> []."""
+    obs = [(oid, res) for (oid, res) in (obligations or []) if oid]
+    if not obs:
+        return []
+    if not judge_fn or not content:
+        return obs
+    listing = "\n".join("%s -> %s" % (oid, res) for (oid, res) in obs)
+    prompt = _RELEVANCE_PROMPT.format(goal=str(goal or "")[:1200], content=str(content or "")[:4000], obs=listing)
+    try:
+        d = _json_obj(judge_fn(prompt))
+    except Exception:
+        return obs
+    if not isinstance(d, dict) or "relevant" not in d:
+        return obs
+    keep = set(str(x) for x in (d.get("relevant") or []))
+    sel = [(oid, res) for (oid, res) in obs if oid in keep]
+    return sel       # may be empty -> the deliverable's actions depend on no required record

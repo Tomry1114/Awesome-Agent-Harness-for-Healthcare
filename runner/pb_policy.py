@@ -71,7 +71,7 @@ class DeliverableScaffold:
                            "attempt": self.nudges, "status": "ok"})
         return {"feedback": fb}, fb
 
-    def enforce(self, env, agent, task, trajectory, max_steps):
+    def enforce(self, env, agent, task, trajectory, max_steps, harness=None, state_snapshot=None):
         # post-loop: guarantee ONE write attempt if still missing, then normalize a mis-named single file
         if not self.active:
             return
@@ -85,11 +85,34 @@ class DeliverableScaffold:
                                "tools": env.available_tools(), "last_observation": fb,
                                "last_result": {"feedback": fb}})
                 if isinstance(a, dict) and a.get("type") == "tool_call" and a.get("tool") == "write_file":
-                    wr = env.call_tool("write_file", a.get("args", {}))
-                    trajectory.append({"step": max_steps, "event_type": "tool_call", "tool": "write_file",
-                                       "args": a.get("args", {}), "result": wr,
-                                       "observation": json.dumps(wr)[:200], "ts": str(max_steps),
-                                       "status": "ok", "forced_deliverable": True})
+                    # NO side channel: route the forced deliverable through the SAME harness pipeline a normal
+                    # tool_call takes -> before_action (RequiredContext / MutationAuthorization see it) and
+                    # after_action (read-back + provenance). A BLOCK/ESCALATE from before_action is honored.
+                    _snap = (state_snapshot(env) if state_snapshot else None)
+                    _blocked = None
+                    if harness is not None:
+                        try:
+                            _hbe = harness.before_action(a, _snap, step=max_steps)
+                            if _hbe is not None and getattr(_hbe, "type", None) in ("BLOCK", "ESCALATE"):
+                                _blocked = _hbe.type
+                        except Exception:
+                            pass
+                    if _blocked is not None:
+                        trajectory.append({"step": max_steps, "event_type": "forced_deliverable_blocked",
+                                           "decision": _blocked, "tool": "write_file", "status": "ok"})
+                    else:
+                        wr = env.call_tool("write_file", a.get("args", {}))
+                        _snap2 = (state_snapshot(env) if state_snapshot else None)
+                        trajectory.append({"step": max_steps, "event_type": "tool_call", "tool": "write_file",
+                                           "args": a.get("args", {}), "result": wr,
+                                           "observation": json.dumps(wr)[:200], "ts": str(max_steps),
+                                           "status": "ok", "forced_deliverable": True,
+                                           "via_pipeline": harness is not None})
+                        if harness is not None:
+                            try:
+                                harness.after_action(a, wr, _snap, _snap2, step=max_steps)
+                            except Exception:
+                                pass
             except Exception as fe:
                 trajectory.append({"step": max_steps, "event_type": "agent_error",
                                    "error": "forced_deliverable_failed", "raw": repr(fe)[:120], "status": "error"})
