@@ -58,6 +58,7 @@ class Ledger:
         self.observations = []              # normalized perception observations (evidence_coverage)
         self._obsk = 0
         self.advisories = []                # non-enforced (advisory) findings -- for measurement
+        self.acquire_count = 0              # read-only evidence acquisitions this task (ACQUIRE cap)
         # per-metric OPPORTUNITY counts (denominators): each metric is rate = numerator / its own
         # opportunity set, never / task-count. e.g. commit_proposal, subject_bearing_action, eligible_revise.
         self.opportunities = {}

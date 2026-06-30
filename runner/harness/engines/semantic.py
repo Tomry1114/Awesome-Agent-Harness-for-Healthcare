@@ -488,3 +488,36 @@ def claim_semantic_support(claims, observation_summaries, judge_fn=None):
         return {str(k): _b(v) for k, v in sup.items()}
     except Exception:
         return {}
+
+
+_DISCRIMINATOR_PROMPT = (
+    "An agent gave the answer below to a perceptual/diagnostic task. WITHOUT outside knowledge or a gold "
+    "answer, name the TWO most plausible interpretations and the SINGLE most discriminating OBSERVABLE feature "
+    "(a region + attribute) a perception tool could check to tell them apart. Reply STRICT JSON: "
+    '{{"hypotheses": ["<h1>", "<h2>"], "region": "<spatial/anatomical region or null>", "attribute": '
+    '"<feature to check or null>"}}. If the answer is already certain or non-perceptual, use null region.'
+    "\n\nGOAL:\n{goal}\n\nANSWER:\n{answer}\n"
+)
+
+
+def elicit_discriminator(answer, goal, judge_fn=None):
+    """answer -> {hypotheses[2], region, attribute} (oracle-blind: reads only the agent answer/goal). region
+    None when the answer is certain / non-perceptual."""
+    if not judge_fn or not answer:
+        return None
+    try:
+        raw = judge_fn(_DISCRIMINATOR_PROMPT.format(goal=str(goal or "")[:1500], answer=str(answer)[:1500]))
+    except Exception:
+        return None
+    t = raw if isinstance(raw, str) else str(raw or ""); i, j = t.find("{"), t.rfind("}")
+    if i < 0 or j <= i:
+        return None
+    try:
+        d = json.loads(t[i:j + 1])
+    except Exception:
+        return None
+    def _v(k):
+        x = d.get(k)
+        return str(x).strip() if x not in (None, "", "null") and str(x).strip().lower() != "null" else None
+    return {"hypotheses": [str(x) for x in (d.get("hypotheses") or [])][:2], "region": _v("region"),
+            "attribute": _v("attribute")}

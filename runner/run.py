@@ -280,6 +280,30 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
                                            "reason": "hook_error", "status": "error"}); _aborted = True; break
                 if _hf is not None:
                     trajectory.extend(_hf.events)
+                    if _hf.type == "ACQUIRE":   # ACTIVE read-only evidence acquisition -> feed back -> re-reason
+                        _na = ((getattr(_hf, "raw", None) and getattr(_hf.raw, "extra", None)) or {}).get("next_action") or {}
+                        if _na.get("tool"):
+                            try:
+                                _ares = env.call_tool(_na["tool"], _na.get("args") or {})
+                            except Exception as _ae:
+                                _ares = None; _harness_runtime_errors.append("acquire: %r" % _ae)
+                            _ac = _ares if isinstance(_ares, str) else json.dumps(_ares, default=str, ensure_ascii=False)
+                            try:
+                                _harness.ledger.record_observation(tool_capability=_na["tool"],
+                                    region=(_na.get("args") or {}).get("region"), attributes_observed=[],
+                                    result_status="valid", content=(_ac or "")[:1500])
+                                _harness.ledger.acquire_count = getattr(_harness.ledger, "acquire_count", 0) + 1
+                            except Exception:
+                                pass
+                            trajectory.append({"step": step, "event_type": "evidence_acquired", "stage": "before_final",
+                                               "tool": _na.get("tool"), "args": _na.get("args"),
+                                               "result": (str(_ac) or "")[:400], "reason": getattr(getattr(_hf, "raw", None), "reason", None)})
+                            pending_harness_feedback = {"decision": "ACQUIRE", "stage": "before_final",
+                                "reason": "The harness acquired a discriminating observation for you: "
+                                          + (str(_ac) or "")[:600] + " -- Re-assess your answer in light of THIS "
+                                          "observation; change it ONLY if this observation contradicts it, otherwise keep it.",
+                                "missing_obligations": []}
+                            continue   # loop back so the agent re-answers with the new evidence
                     if _hf.type in ("REVISE", "BLOCK"):   # ADDITIVE: keep last_obs/last_res (env state) intact
                         _extra_hf = ((getattr(_hf, "raw", None) and getattr(_hf.raw, "extra", None)) or {})
                         if _extra_hf.get("candidate"):       # Layer-2 candidate mode: keep A, ask for revised B
