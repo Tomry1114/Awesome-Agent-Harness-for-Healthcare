@@ -29,10 +29,16 @@ def _cp_pass(r):
 
 
 def _outcome_pass(r):
-    """Native task pass proxy: all reportable Outcome-dimension checkpoints pass (PB/HAB); else r['success']."""
+    """Native task pass proxy. MedCTA: Outcome cp carries detail.gacc_score -> mean GAcc >= 0.5 (matches the
+    canonical aggregator's native_task_success; NOT result.success). PB/HAB: all Outcome checkpoints pass.
+    Else: r['success']."""
     oc = [c for c in r.get("checkpoints", []) if c.get("dimension") == "Outcome"]
     if oc:
-        return all(str(c.get("checkpoint_status")).lower() == "passed" for c in oc)
+        gaccs = [c["detail"]["gacc_score"] for c in oc
+                 if isinstance(c.get("detail"), dict) and isinstance(c["detail"].get("gacc_score"), (int, float))]
+        if gaccs:                                  # continuous-grounding Outcome (MedCTA): mean GAcc >= 0.5
+            return (sum(gaccs) / len(gaccs)) >= 0.5
+        return all(str(c.get("checkpoint_status")).lower() == "passed" for c in oc)   # discrete (PB/HAB)
     return bool(r.get("success"))
 
 

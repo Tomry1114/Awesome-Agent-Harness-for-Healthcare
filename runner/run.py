@@ -201,7 +201,7 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
     _insufficient_seen = {}   # CONTRACT: INSUFFICIENT grounding gets at most ONE revise PER evidence_version
     _answer_attempts = 0   # count EVERY final answer the agent submits (not just the one that lands)
     _repair_mode = os.environ.get("MH_REPAIR", "hard")   # ablation: off|hard|soft|select|full (answer layer)
-    _pending_candidate = None   # Layer-2: a held ORIGINAL answer awaiting its revised candidate for A/B selection
+    _pending_iv = None   # Unified PendingIntervention (answer surface): held root A + pre-intervention evidence baseline, awaiting candidate B
     _reconcile = None   # P0.1: an UNKNOWN commit under restricted read-back recovery (action,res,budget)
     _forced_action = None   # harness-dispatched read-only acquisition, run through the NORMAL tool pipeline
     _deliv_writes_used = 0   # at most ONE reserved over-budget deliverable write (off/enforce budget parity)
@@ -248,33 +248,38 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
             _ahash = hashlib.sha1((action.get("answer", "") or "").encode("utf-8")).hexdigest()[:12]
             trajectory.append({"step": step, "event_type": "answer_attempt", "attempt_index": _answer_attempts,
                                "answer_hash": _ahash, "answer": (action.get("answer", "") or "")[:500], "status": "ok"})
-            if _pending_candidate is not None and _harness is not None:   # this final is the REVISED candidate B
-                from harness.engines.semantic import compare_answer_candidates, adopt_revised
-                _A = _pending_candidate.get("original", ""); _crit = _pending_candidate.get("critique"); _B = action.get("answer", "")
+            if _pending_iv is not None and _harness is not None:   # consume this final as candidate B for the active intervention
+                from harness.engines.semantic import evaluate_candidate   # STRENGTHENED AnswerRetention gate
+                _A = _pending_iv.get("root_answer", ""); _B = action.get("answer", "")
                 _cm = (_harness.contract.meta if (_harness.contract and _harness.contract.meta) else {})
-                _cmp = compare_answer_candidates(_cm.get("goal"), _cm.get("public_context"), _A, _B, _crit,
-                                                 list(_harness.ledger.evidence), judge_fn=getattr(_harness.ctx, "judge_fn", None))
-                _adopt = (_cmp.get("preferred") == "revised") if _repair_mode == "soft" else adopt_revised(_cmp)
-                _chosen = _B if _adopt else _A
-                # bug-2: RE-VERIFY the chosen answer through before_final (deterministic checks) instead of
-                # blindly recording verified=None -- else an adopted B with a new unsupported claim commits
-                # unverified (Verification/Governance silently drop). Bounded: a candidate REVISE here is NOT
-                # re-entered (it just yields a flagged delivery). bug-3: canonical_action reflects the CHOSEN
-                # answer, not B (else thought=A but canonical_action=B -> scorers disagree).
-                _rv = None
+                _base_ids = _pending_iv.get("baseline_ev_ids") or set()
+                # evidence DELTA = validated, non-foreign evidence acquired AFTER the intervention started
+                _new_ev = [e for e in _harness.ledger.evidence if e.get("evidence_id") not in _base_ids
+                           and e.get("status") == "VALIDATED" and e.get("scope_relation") != "foreign"]
                 try:
-                    _rv = _harness.before_final(_chosen, step=step)
+                    _decision, _disp = evaluate_candidate(
+                        _pending_iv, _B, _cm, list(_harness.ledger.evidence), _new_ev,
+                        judge_fn=getattr(_harness.ctx, "judge_fn", None),
+                        reverify_fn=(lambda _ans: _harness.before_final(_ans, step=step)))
                 except Exception as _re:
-                    _harness_runtime_errors.append("candidate re-verify: %r" % _re)
-                _rv_clean = (_rv is not None and _rv.type == "ALLOW")
+                    _harness_runtime_errors.append("evaluate_candidate: %r" % _re)
+                    _decision, _disp = "KEEP_A", "kept_original_gate_error"
+                if _decision == "ADOPT_B":
+                    _chosen = _B; _rv_clean = True   # B already re-verified ALLOW + committed inside evaluate_candidate
+                else:
+                    _chosen = _A   # keep root A; commit it (flagged if not itself clean -> == off baseline)
+                    _rv = None
+                    try: _rv = _harness.before_final(_chosen, step=step)
+                    except Exception as _re: _harness_runtime_errors.append("keepA re-verify: %r" % _re)
+                    _rv_clean = (_rv is not None and _rv.type == "ALLOW")
+                    if not _rv_clean:
+                        try: _harness.record_flagged_final(_chosen, flag=_disp, step=step)
+                        except Exception as _re: _harness_runtime_errors.append("record_flagged_final: %r" % _re)
                 trajectory.append({"step": step, "event_type": "final_answer", "thought": _chosen, "status": "ok",
-                                   "final_disposition": ("revised_commit_adopted" if _adopt else "kept_original"),
-                                   "answer_attempt_index": _answer_attempts, "comparison": _cmp, "reverified": _rv_clean,
+                                   "final_disposition": _disp, "intervention_type": _pending_iv.get("type"),
+                                   "answer_attempt_index": _answer_attempts, "reverified": _rv_clean,
                                    "canonical_action": _canon.canonical_action({"type": "final", "answer": _chosen}, env_type)})
-                if not _rv_clean:   # re-verification did not pass cleanly -> degraded (flagged) delivery
-                    try: _harness.record_flagged_final(_chosen, flag=("repair_adopted" if _adopt else "repair_kept_original"), step=step)
-                    except Exception as _re: _harness_runtime_errors.append("record_flagged_final: %r" % _re)
-                _pending_candidate = None; finished = True; break
+                _pending_iv = None; finished = True; break
             if _harness is not None:                    # final answer is a commit point
                 try:
                     _hf = _harness.before_final(action.get("answer", ""), step=step)
@@ -299,6 +304,10 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
                                 _harness.ledger.acquire_count = getattr(_harness.ledger, "acquire_count", 0) + 1
                             except Exception:
                                 pass
+                            if _pending_iv is None:   # PRE-acquisition baseline -> post-acquire B judged vs the evidence delta
+                                _pending_iv = {"surface": "answer", "type": "ACQUIRE",
+                                               "root_answer": action.get("answer", ""),
+                                               "baseline_ev_ids": {e.get("evidence_id") for e in _harness.ledger.evidence}}
                             _aq = _na.get("args") or {}
                             pending_harness_feedback = {"decision": "ACQUIRE", "stage": "before_final",
                                 "reason": "A targeted observation of %s (%s) was just performed for you; its full "
@@ -319,7 +328,9 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
                                 try: _harness.record_flagged_final(action.get("answer", ""), flag="unverified_grounding", step=step)
                                 except Exception as _re: _harness_runtime_errors.append("record_flagged_final: %r" % _re)
                                 finished = True; break
-                            _pending_candidate = {"original": action.get("answer", ""), "critique": _extra_hf.get("critique")}
+                            _pending_iv = {"surface": "answer", "type": "REVISE",
+                                           "root_answer": action.get("answer", ""), "critique": _extra_hf.get("critique"),
+                                           "baseline_ev_ids": {e.get("evidence_id") for e in _harness.ledger.evidence}}
                             continue
                         _repair_turns += 1
                         _insuff_exceeded = False
@@ -417,6 +428,22 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
                                        "reason": "hook_error", "status": "error"}); _aborted = True; break
             if _hb is not None:
                 trajectory.extend(_hb.events)
+                if _hb.type == "ACQUIRE":   # AMPLIFICATION: acquire a required read-only record BEFORE this
+                    # commit, then defer the commit so the agent re-decides WITH the evidence. Runs via the NORMAL
+                    # tool pipeline (real tool_call, provenance, last_obs update); read-only tools only.
+                    _nab = ((getattr(_hb, "raw", None) and getattr(_hb.raw, "extra", None)) or {}).get("next_action") or {}
+                    if _nab.get("tool") and _nab.get("read_only"):
+                        _forced_action = {"type": "tool_call", "tool": _nab["tool"], "args": _nab.get("args") or {},
+                                          "_harness_acquire": True}
+                        try: _harness.ledger.acquire_count = getattr(_harness.ledger, "acquire_count", 0) + 1
+                        except Exception: pass
+                        pending_harness_feedback = {"decision": "ACQUIRE", "stage": "before_action",
+                            "reason": "A required record (%s) was read for you; its result is in your next "
+                                      "observation. Use it, then proceed with your action."
+                                      % ((_nab.get("args") or {}).get("resourceType")), "missing_obligations": []}
+                        trajectory.append({"step": step, "event_type": "harness_acquire_predispatch",
+                                           "tool": _nab.get("tool"), "args": _nab.get("args"), "status": "ok"})
+                        continue   # the acquisition runs next iteration; the original commit is deferred
                 if _hb.type in ("REVISE", "BLOCK"):     # do NOT execute the tool; ADDITIVE feedback (env obs intact)
                     _repair_turns += 1
                     pending_harness_feedback = _next_feedback(_hb, "before_action")

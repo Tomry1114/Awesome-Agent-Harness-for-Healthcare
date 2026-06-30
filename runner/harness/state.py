@@ -59,6 +59,13 @@ class Ledger:
         self._obsk = 0
         self.advisories = []                # non-enforced (advisory) findings -- for measurement
         self.acquire_count = 0              # read-only evidence acquisitions this task (ACQUIRE cap)
+        # OPERATIONAL NON-DEGRADATION (mutation authorization): semantic feedback never grants write
+        # permission. Under a hold, a state mutation must match a scoped single-use authorization.
+        self.mutation_hold = False          # set when a non-deterministic semantic finding emits feedback
+        self.mutation_hold_origin = None     # {intervention_id, finding_id, capability}
+        self.mutation_authorizations = []    # [MutationAuthorization] (scoped, single-use)
+        self.terminal_locked = False        # graded commit verified -> no further mutation (rule 1)
+        self._auth_seq = 0
         # per-metric OPPORTUNITY counts (denominators): each metric is rate = numerator / its own
         # opportunity set, never / task-count. e.g. commit_proposal, subject_bearing_action, eligible_revise.
         self.opportunities = {}
@@ -70,6 +77,46 @@ class Ledger:
         # CONTRACT(3): legacy note kept below; the validated counter is the one the repair budget keys on.
                                             # revision-identity key so a stuck-revision counter RESETS
                                             # when new evidence lands (the agent made progress)
+
+    def set_mutation_hold(self, intervention_id=None, finding_id=None, capability=None):
+        """A non-deterministic semantic finding emitted feedback -> writes now require explicit authorization."""
+        self.mutation_hold = True
+        self.mutation_hold_origin = {"intervention_id": intervention_id, "finding_id": finding_id,
+                                     "capability": capability}
+
+    def clear_mutation_hold(self):
+        self.mutation_hold = False
+        self.mutation_hold_origin = None
+
+    def mint_authorization(self, source, allowed_semantic_type, allowed_tool=None, target_path=None,
+                           allowed_effect=None, expected_postcondition=None, intervention_id=None):
+        """Mint a scoped, single-use write authorization. source in user_goal|deterministic_gap|
+        evidence_supported_plan. Returns the MutationAuthorization (also stored on the ledger)."""
+        from .authorization import MutationAuthorization, VALID_SOURCES
+        if source not in VALID_SOURCES:
+            raise ValueError("invalid authorization source: %r" % (source,))
+        self._auth_seq += 1
+        auth = MutationAuthorization(
+            authorization_id="auth-%d" % self._auth_seq,
+            intervention_id=intervention_id or (self.mutation_hold_origin or {}).get("intervention_id") or "iv-?",
+            source=source, allowed_semantic_type=allowed_semantic_type, allowed_tool=allowed_tool,
+            target_path=target_path, allowed_effect=allowed_effect,
+            expected_postcondition=expected_postcondition or {},
+            baseline_state_version=self.evidence_version, evidence_version=self.validated_evidence_version)
+        self.mutation_authorizations.append(auth)
+        return auth
+
+    def find_matching_authorization(self, sem, action):
+        """The unconsumed authorization whose EXACT scope this action matches, or None."""
+        from .authorization import exact_scope_match
+        for auth in self.mutation_authorizations:
+            if not auth.consumed and exact_scope_match(auth, sem, action):
+                return auth
+        return None
+
+    def consume_authorization(self, auth):
+        if auth is not None:
+            auth.consumed = True
 
     def bump_opportunity(self, key, step=None, n=1):
         """Count one opportunity. When a step is given, the same (key, step) counts ONCE — so a single

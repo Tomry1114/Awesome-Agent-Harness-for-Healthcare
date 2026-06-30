@@ -268,6 +268,7 @@ class HarnessKernel:
                 decisions.append(d)
         self._record_findings(decisions, "after_action")
         winner = D.combine(decisions, stage="after_action")
+        self._maybe_hold(winner)
         from .risk import at_least, R2
         if at_least(self.ctx.risk, R2):
             # verified is the EXPLICIT tri-state from verify_commit (True/False/None), NOT inferred from
@@ -277,10 +278,22 @@ class HarnessKernel:
             if self.ctx.verification is True and getattr(sem, "effect", None) == "irreversible":
                 from .capabilities.verify_commit import commit_identity
                 self.ledger.completed_commits.add(commit_identity(sem, self.ledger))
+                if getattr(sem, "semantic_type", None) == "submit":   # graded terminal commit verified -> lock
+                    self.ledger.terminal_locked = True
             self._close_verified_repair()    # a gate-passed commit that executed + verified -> repaired
         eff = self._apply_mode(winner, "after_action")
         eff.feedback = _feedback(winner) if eff.type != D.ALLOW else None
         return eff
+
+    def _maybe_hold(self, winner):
+        """OPERATIONAL NON-DEGRADATION: a NON-deterministic semantic finding (REVISE/ACQUIRE, any channel) puts
+        state writes under a mutation_hold -- subsequent mutations then need an explicit scoped authorization.
+        A DETERMINISTIC finding does NOT hold (it mints an authorization instead)."""
+        from .authorization import should_set_mutation_hold
+        if winner is not None and should_set_mutation_hold(getattr(winner, "type", None),
+                                                           getattr(winner, "deterministic", None)):
+            self.ledger.set_mutation_hold(finding_id=getattr(winner, "rule_id", None),
+                                          capability=getattr(winner, "capability", None))
 
     def before_final(self, answer, step=0):
         self.ctx.step = step
@@ -303,6 +316,7 @@ class HarnessKernel:
                 decisions.append(d)
         self._record_findings(decisions, "before_final")
         winner = D.combine(decisions, stage="before_final")
+        self._maybe_hold(winner)
         eff = self._apply_mode(winner, "before_final")
         eff.feedback = _feedback(winner) if eff.type != D.ALLOW else None
         self._track_repair(winner, eff)

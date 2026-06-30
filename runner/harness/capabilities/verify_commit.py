@@ -10,6 +10,7 @@ from ..capability import Capability
 from .. import decision as D
 from ..risk import at_least, R2, R3
 from ..predicates import evaluate as eval_predicate
+from ..authorization import has_verifiable_postcondition, read_only_equivalent, MUTATION_TYPES
 import os
 
 
@@ -30,6 +31,49 @@ class VerifyAndCommit(Capability):
                                 feedback="This tool is not declared in the substrate manifest, so its "
                                          "risk/semantics are unknown and it cannot be auto-verified; "
                                          "escalating (fail-closed).")
+        # OPERATIONAL NON-DEGRADATION -- two guards before the existing commit controls.
+        _is_mutation = bool(ctx.sem and getattr(ctx.sem, "semantic_type", None) in MUTATION_TYPES)
+        # RULE 1: once the graded commit is verified-complete, any further mutation can only corrupt a correct
+        # terminal state. Stop it; the agent should finalize.
+        if _is_mutation and getattr(ctx.ledger, "terminal_locked", False):
+            return self._decide(D.BLOCK, rule_id="post_verified_mutation", reason_code="terminal_locked",
+                                deterministic=True,
+                                reason="the graded commit is already verified-complete; further mutation can only corrupt it",
+                                feedback="The task's commit is already verified complete -- do NOT mutate further; finalize.")
+        # RULE 3: PERMISSION ISOLATION. Semantic feedback never grants write permission. Under a mutation_hold,
+        # a state mutation must match an explicit, scoped, single-use authorization (provenance: user_goal /
+        # deterministic_gap / evidence_supported_plan). The check unit is "does THIS action match an unconsumed
+        # authorization", NOT "was the last finding deterministic".
+        if _is_mutation and getattr(ctx.ledger, "mutation_hold", False):
+            _auth = ctx.ledger.find_matching_authorization(ctx.sem, action)
+            if _auth is None and ctx.contract and ctx.contract.matching_commit_points(ctx.sem):
+                # USER_GOAL pass-through: a mutation COVERED by a declared commit point is the task's ORIGINAL
+                # intended commit (same operation/resource), not a semantic-feedback-induced off-plan write ->
+                # auto-mint a user_goal authorization so normal task flow is not blocked by the hold.
+                _auth = ctx.ledger.mint_authorization(
+                    source="user_goal", allowed_semantic_type=getattr(ctx.sem, "semantic_type", None),
+                    allowed_tool=(action or {}).get("tool"), allowed_effect=getattr(ctx.sem, "effect", None),
+                    expected_postcondition={"covered_commit_point": True})
+            if _auth is None:
+                _ro = read_only_equivalent(ctx.manifest, action)
+                if _ro:                      # adapter DECLARES a read-only equivalent -> force read-back, not a blind block
+                    return self._decide(D.RECONCILE, rule_id="semantic_feedback_no_write_auth",
+                                        reason_code="mutation_requires_authorization", deterministic=True,
+                                        reason="semantic feedback does not authorize a state mutation; read back instead",
+                                        feedback="An UNCERTAIN check does not authorize changing the record. Re-read the "
+                                                 "authoritative state with %r before any write." % (_ro,))
+                return self._decide(D.BLOCK, rule_id="semantic_feedback_no_write_auth",
+                                    reason_code="mutation_requires_authorization", deterministic=True,
+                                    reason="semantic feedback does not authorize a state mutation",
+                                    feedback="A check raised an UNCERTAIN concern; that does NOT authorize changing the "
+                                             "record. Re-read/inspect, or keep your current state.")
+            if not has_verifiable_postcondition(_auth):
+                return self._decide(D.ESCALATE, rule_id="authorized_mutation_no_postcondition",
+                                    reason_code="unverifiable_commit", deterministic=True,
+                                    reason="authorized mutation lacks a verifiable postcondition",
+                                    feedback="This authorized mutation cannot be verified (no postcondition); escalating.")
+            ctx.ledger.consume_authorization(_auth)   # single-use; after_action read-back verifies the effect
+            # authorized + scoped + verifiable -> fall through to the existing commit controls below.
         # PRE-COMMIT CONTROL: an IRREVERSIBLE commit that ALREADY SUCCEEDED must not be re-executed -- a
         # redundant re-submit/re-create risks corrupting the already-landed state (e.g. a second submit that
         # times out). Block it before it runs; the agent should finalize, not re-commit.

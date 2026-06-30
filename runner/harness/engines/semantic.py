@@ -524,3 +524,196 @@ def elicit_discriminator(answer, goal, observations=None, judge_fn=None):
         return str(x).strip() if x not in (None, "", "null") and str(x).strip().lower() != "null" else None
     return {"hypotheses": [str(x) for x in (d.get("hypotheses") or [])][:2], "region": _v("region"),
             "attribute": _v("attribute")}
+
+
+# =====================================================================================================
+# STRENGTHENED ANSWER RETENTION (Epistemic non-degradation). The public-dimension comparator alone CANNOT
+# protect a core clinical conclusion: a more "complete / fluent / critique-resolving" B is NOT evidence
+# that the conclusion is more CORRECT (external channel demonstrably amplified wrong B's that passed both
+# the comparator and before_final). Hard rule: a B may FLIP the core decision ONLY when NEW validated
+# evidence (ACQUIRE/CONSULT) directly supports that specific flip; a no-new-evidence REVISE may only refine
+# (rationale / format / hedging / removing unsupported add-ons) WITHOUT changing the core decision. Oracle-
+# blind throughout; every uncertain branch is fail-SAFE (keep A).
+# =====================================================================================================
+
+_CORE_SLOTS = ("requested_operation", "primary_conclusion", "polarity", "target",
+               "severity_or_priority", "recommended_action")
+
+_SIGNATURE_PROMPT = (
+    "Extract the CORE decision expressed by the ANSWER to the PUBLIC task. Do NOT judge correctness or infer "
+    "any hidden reference; fill ONLY what the answer actually states, null when absent. Reply STRICT JSON: "
+    '{{"requested_operation": "<verb/op or null>", "primary_conclusion": "<main finding/diagnosis/answer>", '
+    '"polarity": "present|absent|positive|negative|yes|no|null", "target": "<subject/site/entity or null>", '
+    '"severity_or_priority": "<routine|urgent|... or null>", "recommended_action": "<action/disposition or '
+    'null>"}}.\n\nPUBLIC GOAL:\n{goal}\n\nANSWER:\n{answer}\n')
+
+_SIGCMP_PROMPT = (
+    "Two DECISION SIGNATURES (A, B) were extracted from two candidate answers to the SAME task. Decide whether "
+    "the CORE decision CHANGED A->B. CORE change = different primary_conclusion, flipped polarity "
+    "(present<->absent), different target/site, different recommended_action/disposition, or a severity change "
+    "that alters management (routine->urgent). NOT core: added rationale, added hedging/uncertainty, reworded "
+    "phrasing, an added differential that keeps the SAME primary, dose-unit clarification with the same intent. "
+    "Be STRICT; if genuinely UNSURE set uncertain=true. Reply STRICT JSON: "
+    '{{"changed": true|false, "changed_slots": ["<slot>"...], "uncertain": true|false, "reason": "<short>"}}.'
+    "\n\nSIGNATURE A:\n{a}\n\nSIGNATURE B:\n{b}\n")
+
+_DELTA_SUPPORT_PROMPT = (
+    "An answer's CORE decision changed from ORIGINAL to REVISED. You are given ONLY the NEWLY ACQUIRED evidence "
+    "(not prior evidence, not outside knowledge). Decide whether THIS new evidence DIRECTLY supports the "
+    "SPECIFIC core change. If the new evidence does not itself justify the change, answer supported=false. "
+    "Cite the evidence ids (e.g. ev-7) that support it. Reply STRICT JSON: "
+    '{{"supported": true|false, "changed_slots": [...], "supporting_evidence_ids": ["<id>"...], '
+    '"confidence": 0.0-1.0, "reason": "<short>"}}.\n\nPUBLIC GOAL:\n{goal}\n\nORIGINAL CORE SIGNATURE:\n{a}\n\n'
+    "REVISED CORE SIGNATURE:\n{b}\n\nNEWLY ACQUIRED EVIDENCE (only):\n{ev}\n")
+
+_PRESERVE_PROMPT = (
+    "ORIGINAL answer A and REVISED answer B for the same task. The revision was asked to address ONLY this "
+    "critique: {critique}. Decide whether B REMOVED or CONTRADICTED substantive content present in A that was "
+    "NOT the subject of that critique (collateral damage). Reply STRICT JSON: "
+    '{{"preserved": true|false, "removed": "<what, short>"}}.\n\nA:\n{a}\n\nB:\n{b}\n')
+
+
+def _json_obj(raw):
+    s = raw if isinstance(raw, str) else str(raw or "")
+    i, j = s.find("{"), s.rfind("}")
+    if i >= 0 and j > i:
+        try:
+            return json.loads(s[i:j + 1])
+        except Exception:
+            return None
+    return None
+
+
+def _format_new_evidence(evidence):
+    out = []
+    for e in (evidence or []):
+        if isinstance(e, dict):
+            out.append("[%s] [%s] %s" % (e.get("evidence_id", "ev-?"), e.get("type", "evidence"),
+                                         str(e.get("value_full") or e.get("value", ""))[:1500]))
+        else:
+            out.append(str(e)[:300])
+    return "\n".join(out)
+
+
+def extract_decision_signature(goal_spec, answer, judge_fn=None):
+    """Oracle-blind: structured CORE decision of an answer (or None on no-judge/parse-fail)."""
+    if not judge_fn:
+        return None
+    goal = goal_spec.get("goal") if isinstance(goal_spec, dict) else goal_spec
+    prompt = _SIGNATURE_PROMPT.format(goal=str(goal or "(none)")[:1500], answer=str(answer or "")[:2000])
+    try:
+        d = _json_obj(judge_fn(prompt))
+    except Exception:
+        return None
+    if not isinstance(d, dict):
+        return None
+    return {k: (str(d.get(k)).strip() if d.get(k) is not None else None) for k in _CORE_SLOTS}
+
+
+def compare_decision_signatures(sig_a, sig_b, judge_fn=None):
+    """Did the CORE decision change A->B? SEPARATE judge from the public comparator (a B-preferring comparator
+    must not get to also rule the flip 'immaterial'). Fail-SAFE: missing sig / no judge / parse-fail / uncertain
+    -> changed=True."""
+    default = {"changed": True, "changed_slots": ["__unknown__"], "uncertain": True, "reason": "sigcmp_unavailable"}
+    if sig_a is None or sig_b is None or not judge_fn:
+        return default
+    if sig_a == sig_b:
+        return {"changed": False, "changed_slots": [], "uncertain": False, "reason": "identical_signature"}
+    prompt = _SIGCMP_PROMPT.format(a=json.dumps(sig_a, ensure_ascii=False), b=json.dumps(sig_b, ensure_ascii=False))
+    try:
+        d = _json_obj(judge_fn(prompt))
+    except Exception:
+        return default
+    if not isinstance(d, dict):
+        return default
+    unc = bool(d.get("uncertain", False))
+    return {"changed": bool(d.get("changed", False)) or unc, "changed_slots": list(d.get("changed_slots") or []),
+            "uncertain": unc, "reason": d.get("reason")}
+
+
+def verify_change_against_delta(goal, sig_a, sig_b, new_evidence, judge_fn=None):
+    """Does ONLY the newly-acquired evidence directly support the specific A->B core change? Fail-SAFE: no judge
+    / no new evidence / parse-fail -> supported=False."""
+    default = {"supported": False, "changed_slots": [], "supporting_evidence_ids": [], "confidence": 0.0,
+               "reason": "delta_support_unavailable"}
+    if not judge_fn or not new_evidence:
+        return default
+    prompt = _DELTA_SUPPORT_PROMPT.format(goal=str(goal or "")[:1200], a=json.dumps(sig_a, ensure_ascii=False),
+                                          b=json.dumps(sig_b, ensure_ascii=False),
+                                          ev=_format_new_evidence(new_evidence)[:5000])
+    try:
+        d = _json_obj(judge_fn(prompt))
+    except Exception:
+        return default
+    if not isinstance(d, dict):
+        return default
+    return {"supported": bool(d.get("supported", False)),
+            "supporting_evidence_ids": [str(x) for x in (d.get("supporting_evidence_ids") or [])],
+            "confidence": float(d.get("confidence", 0.0) or 0.0),
+            "changed_slots": list(d.get("changed_slots") or []), "reason": d.get("reason")}
+
+
+def preserves_non_target_content(a, b, critique, judge_fn=None):
+    """True iff B did not delete/contradict non-target content of A. Non-fatal: no judge / parse-fail -> True
+    (the core-change gate is the primary protection; this is a secondary guard)."""
+    if not judge_fn:
+        return True
+    prompt = _PRESERVE_PROMPT.format(critique=str(critique or "(none)")[:800], a=str(a or "")[:2000],
+                                     b=str(b or "")[:2000])
+    try:
+        d = _json_obj(judge_fn(prompt))
+    except Exception:
+        return True
+    if not isinstance(d, dict):
+        return True
+    return bool(d.get("preserved", True))
+
+
+def evaluate_candidate(intervention, candidate_b, goal_spec, all_evidence, new_evidence,
+                       judge_fn=None, reverify_fn=None, allow_type="ALLOW"):
+    """UNIFIED answer-surface adoption gate for inline/external REVISE and ACQUIRE/CONSULT re-answers.
+    Returns (decision, reason_code) where decision in {"ADOPT_B","KEEP_A"}; reason_code IS the disposition.
+    Ordered, fail-safe gate:
+      1. core-change gate: a core flip needs new validated evidence that DIRECTLY supports it (delta only);
+      2. public-dimension comparator must clearly prefer B;
+      3. B must not introduce a new unsupported claim (covered by adopt_revised's revised_new_hard_violation)
+         and must preserve non-target content;
+      4. B must pass final re-verification (before_final ALLOW), else rollback.
+    Anything uncertain -> KEEP_A."""
+    a = intervention.get("root_answer", "")
+    itype = intervention.get("type", "REVISE")
+    critique = intervention.get("critique")
+    has_new = itype in ("ACQUIRE", "CONSULT") and bool(new_evidence)
+    goal = goal_spec.get("goal") if isinstance(goal_spec, dict) else goal_spec
+    pub = goal_spec.get("public_context") if isinstance(goal_spec, dict) else None
+
+    sig_a = extract_decision_signature(goal_spec, a, judge_fn)
+    sig_b = extract_decision_signature(goal_spec, candidate_b, judge_fn)
+    core = compare_decision_signatures(sig_a, sig_b, judge_fn)
+    core_changed = bool(core.get("changed"))
+    if core_changed:
+        if not has_new:
+            return ("KEEP_A", "kept_original_core_flip_without_new_evidence")
+        support = verify_change_against_delta(goal, sig_a, sig_b, new_evidence, judge_fn)
+        ok = (support.get("supported") and support.get("supporting_evidence_ids")
+              and (support.get("confidence") or 0.0) >= 0.8)
+        if not ok:
+            return ("KEEP_A", "kept_original_core_change_not_supported_by_delta")
+
+    cmp = compare_answer_candidates(goal, pub, a, candidate_b, critique, all_evidence, judge_fn=judge_fn)
+    if cmp.get("preferred") == "uncertain":
+        return ("KEEP_A", "kept_original_comparator_uncertain")
+    if not adopt_revised(cmp):                       # incl. not revised_new_hard_violation (no new unsupported claim)
+        return ("KEEP_A", "kept_original_candidate_not_clearly_better")
+    if not preserves_non_target_content(a, candidate_b, critique, judge_fn):
+        return ("KEEP_A", "kept_original_non_target_mutation")
+
+    if reverify_fn is not None:
+        try:
+            rv = reverify_fn(candidate_b)
+        except Exception:
+            rv = None
+        if not (rv is not None and getattr(rv, "type", None) == allow_type):
+            return ("KEEP_A", "rolled_back_candidate_reverify_failed")
+
+    return ("ADOPT_B", "adopted_evidence_supported_core_change" if core_changed else "adopted_noncore_refinement")

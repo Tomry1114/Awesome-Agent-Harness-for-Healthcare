@@ -20,14 +20,15 @@ from .capabilities.verify_commit import VerifyAndCommit
 from .capabilities.goal_alignment import GoalAlignment
 from .capabilities.evidence_coverage import EvidenceCoverage
 from .capabilities.active_evidence import ActiveEvidence
+from .capabilities.required_context import RequiredContext
 from .engines.policy import load_policy, PolicyError                              # noqa: F401
 
-DEFAULT_CAPABILITIES = ("scope_evidence", "obligation_lifecycle", "goal_alignment", "active_evidence", "evidence_coverage", "verify_commit")
+DEFAULT_CAPABILITIES = ("scope_evidence", "obligation_lifecycle", "goal_alignment", "required_context", "active_evidence", "evidence_coverage", "verify_commit")
 
 
 def _make_capabilities(names):
     reg = {"scope_evidence": ScopeEvidenceBinding, "obligation_lifecycle": ObligationLifecycle,
-           "goal_alignment": GoalAlignment, "active_evidence": ActiveEvidence, "evidence_coverage": EvidenceCoverage, "verify_commit": VerifyAndCommit}
+           "goal_alignment": GoalAlignment, "required_context": RequiredContext, "active_evidence": ActiveEvidence, "evidence_coverage": EvidenceCoverage, "verify_commit": VerifyAndCommit}
     return [reg[n]() for n in names if n in reg]
 
 
