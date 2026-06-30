@@ -64,14 +64,16 @@ def _leaf_count(o):
     return n
 
 
-def _new_content_added(before_root, after_root):
-    """Did the agent write substantive NEW content anywhere in the surface vs baseline? Used to resolve an
-    additive defect BY EFFECT when the judge named a slightly-wrong / GUI-unreachable target path (the agent
-    persists to its own fixed schema slot, not the guessed one) -- so we don't churn forever on an unreachable
-    path the agent can never fill."""
-    if after_root is None:
-        return False
-    return _leaf_count(after_root) > _leaf_count(before_root)
+def _effect_landed(before_root, after_root, effect_paths):
+    """Did the required EFFECT land at one of the finding's declared equivalent paths? (item 3) -- a value
+    became newly present at an effect_path that was empty at baseline. Replaces the old global leaf-count
+    heuristic (too loose: any unrelated write resolved it; appends were missed). Resolution is now SPECIFIC to
+    the substrate's declared persistence path(s), not 'something somewhere changed'."""
+    from .repair_surface import resolve
+    for p in (effect_paths or []):
+        if _present(resolve(after_root, p)) and not _present(resolve(before_root, p)):
+            return True
+    return False
 
 
 def _walk(o):
@@ -98,8 +100,10 @@ def _retained_anywhere(value, after_proj, thresh=0.6):
     return False
 
 
-def validate_repair(finding, before_proj, after_proj, surface=None):
-    """Pure verdict from two projections. surface is accepted for API symmetry but not required."""
+def validate_repair(finding, before_proj, after_proj, surface=None, effect_paths=None):
+    """Pure verdict from two projections. `effect_paths` (item 3) are the substrate-declared equivalent
+    persistence paths for an additive defect; resolution checks the effect landed at one of them, not the
+    judge-guessed target alone."""
     op = finding.operation
     dt = finding.defect_type
     tb = before_proj.get("target")
@@ -115,11 +119,11 @@ def validate_repair(finding, before_proj, after_proj, surface=None):
             return RepairVerdict(False, "target_not_resolved", "claim unchanged / unverified")
     elif op in (RepairOperation.ADD,) or dt in ("missing", "insufficient_content"):
         if not _present(ta):
-            # P1-C: resolve by EFFECT, not by the (possibly mis-guessed / GUI-unreachable) target path -- if
-            # the agent made a substantive new write anywhere in the surface, treat the additive defect as
-            # plausibly addressed instead of churning forever on a slot the agent never populates.
-            if not _new_content_added(before_proj.get("root"), after_proj.get("root")):
-                return RepairVerdict(False, "target_not_resolved", "target still empty")
+            # item 3: resolve by EFFECT at a substrate-DECLARED equivalent path (not a guessed target, not a
+            # global "something changed"). Without a declared equivalence the only effect path is the target
+            # itself -> stays unresolved (and the attempt cap stops the churn), which is the honest behavior.
+            if not _effect_landed(before_proj.get("root"), after_proj.get("root"), effect_paths):
+                return RepairVerdict(False, "target_not_resolved", "required effect not observed")
         elif dt == "insufficient_content" and ta == tb:
             return RepairVerdict(False, "target_not_resolved", "content unchanged")
     else:   # EDIT / REPLACE / conflicting / wrong_operation

@@ -161,6 +161,40 @@ def target_sig(projection):
     return {"target": projection.get("target"), "protected": projection.get("protected")}
 
 
+def _matches_target(finding, rt):
+    """Does a manifest repair_target declaration apply to this finding? (target_path == a writable path, or a
+    field keyword appearing in the finding's target/required_change)."""
+    tp = (finding.target_path or "").lower()
+    rc = (finding.required_change or "").lower()
+    if finding.target_path in (rt.get("writable_paths") or []):
+        return True
+    for kw in ((rt.get("match") or {}).get("field_keywords") or []):
+        if str(kw).lower() in tp or str(kw).lower() in rc:
+            return True
+    return False
+
+
+def effect_paths(finding, meta):
+    """Equivalence class of paths where this finding's EFFECT may legitimately land (item 3). Default: the
+    named target only. A manifest-declared `repair_targets` entry widens it to the substrate's REAL
+    persistence path(s) -- so a finding the judge mis-located (denialsWorklist[0].triageDisposition) still
+    RESOLVES when the agent writes to the schema's actual slot (agentActions.selectedDisposition). This is an
+    environment-interface declaration (like an API schema), NOT per-task gold."""
+    out = [finding.target_path]
+    for rt in ((meta or {}).get("repair_targets") or []):
+        if _matches_target(finding, rt):
+            for wp in (rt.get("writable_paths") or []):
+                if wp not in out:
+                    out.append(wp)
+    return out
+
+
+def effect_fingerprint(root, paths):
+    """Values at all effect paths -- the 'did the agent act on this finding's EFFECT' signal (replaces the
+    target-only sig, which misses a write to an equivalent slot -> the P0-1 skip bug)."""
+    return tuple(str(resolve(root, p)) for p in (paths or []))
+
+
 _SURFACES = (FormRepairSurface, FhirRepairSurface, AnswerRepairSurface)
 
 

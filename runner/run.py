@@ -186,6 +186,10 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
                     _harness.contract.meta["goal_spec"] = _gspec
                 _harness.contract.meta.setdefault("available_tools", task.get("available_tools"))
                 _harness.contract.meta.setdefault("task_id", task.get("task_id"))
+                # item 3: propagate the substrate manifest's repair_targets vocabulary (writable-path
+                # equivalences) so the effect verifier can resolve a finding the judge mis-located.
+                _harness.contract.meta.setdefault("repair_targets",
+                    (getattr(_harness.ctx, "manifest", {}) or {}).get("repair_targets") or [])
         except Exception as _ge:
             _harness_runtime_errors.append("goal_spec: %r" % _ge)
 

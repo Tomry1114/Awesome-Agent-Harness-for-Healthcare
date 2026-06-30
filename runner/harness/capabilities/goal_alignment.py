@@ -14,7 +14,7 @@ import os
 from ..capability import Capability
 from .. import decision as D
 from ..risk import at_least, R2
-from ..repair_surface import surface_for, is_present, target_sig
+from ..repair_surface import surface_for, is_present, target_sig, effect_paths, effect_fingerprint
 from ..repair_delta import validate_repair
 from ..repair import enforceable
 
@@ -56,24 +56,25 @@ class GoalAlignment(Capability):
     def _run(self, ctx, state, candidate, stage):
         surf = surface_for(ctx.env_type)
         led = ctx.ledger
+        meta = (ctx.contract.meta or {}) if ctx.contract else {}
 
-        # 1) DELTA-VALIDATE delivered findings the agent acted on. The 'did the agent act on THIS finding'
-        #    test compares only the TARGET signature (target+protected), NOT the whole state root -- else
-        #    every unrelated state change re-triggers validation every step (the verified churn cause).
+        # 1) DELTA-VALIDATE delivered findings the agent acted on. The 'did the agent act' signal is the
+        #    EFFECT fingerprint (target + every declared equivalent persistence path), NOT just the target --
+        #    else a write to an equivalent slot leaves target_sig unchanged and revalidation is wrongly
+        #    skipped (the P0-1 bug). Still excludes the whole root, so unrelated writes don't churn.
         for fid, rec in list(led.repair_findings.items()):
             if rec.finding.rule_id != "scoped_repair" or rec.status not in ("delivered", "attempted"):
                 continue
-            # P0-B: only revalidate a finding on a surface where its target can localize. A form/EMR finding
-            # re-projected onto a different substrate fails spuriously and BURNS an attempt every step; leave
-            # it pending for its own surface's hook instead.
+            # P0-B: only revalidate where the target can localize on the current surface.
             if not surf.can_localize(state, candidate, rec.finding):
                 continue
             after = surf.project(state, candidate, rec.finding)
-            sig = target_sig(after)
+            eps = effect_paths(rec.finding, meta)
+            sig = (target_sig(after), effect_fingerprint(surf.root(state, candidate), eps))
             if sig == rec.last_projection:
-                continue                                   # this target unchanged -> agent has not acted
+                continue                                   # nothing in this finding's effect region changed
             led.mark_attempted(fid, sig, ctx.step)
-            v = validate_repair(rec.finding, rec.baseline_projection, after)
+            v = validate_repair(rec.finding, rec.baseline_projection, after, surface=surf, effect_paths=eps)
             if v.accepted:
                 led.resolve_finding(fid)
                 continue
@@ -108,7 +109,7 @@ class GoalAlignment(Capability):
                 continue                                   # L1 guard: present-but-claimed-missing
             # one-finding-at-a-time: open/deliver only the FIRST enforce finding; the agent fixes one concrete
             # patch per turn (weak models succeed far more often on a single patch than on a batch).
-            sig = target_sig(proj)
+            sig = (target_sig(proj), effect_fingerprint(surf.root(state, candidate), effect_paths(f, meta)))
             mode, _rec = led.repair_decision(f, sig)
             if mode == "suppress":
                 continue
