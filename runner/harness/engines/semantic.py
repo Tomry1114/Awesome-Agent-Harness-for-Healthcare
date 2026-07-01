@@ -900,3 +900,50 @@ def generate_slot_content(goal, draft, slot, judge_fn=None):
         return None
     title = str(d.get("section_title") or sid.replace("_", " ").title()).strip()
     return {"section_title": title, "content": body}
+
+
+# =====================================================================================================
+# COMMITTED-ORDER EXTRACTION (Phase 4 -- the INCOMPLETE_EFFECT detector's epistemic half).
+# A deliverable can FAIL because the agent DECIDED an executable action ("Order pelvic ultrasound") but
+# never PERFORMED the state mutation that realizes it. This function reads the agent's OWN deliverable and
+# returns only the orders it FIRMLY committed to -- imperative, unconditional. It must NOT return
+# conditional/hypothetical/deferred items ("consider X", "if Y then Z", "may need", "recommend evaluating"),
+# because completing those would be the HARNESS deciding a clinical action the agent did not commit to.
+# The clinical decision (which order, which modality) comes ENTIRELY from the agent's text -- oracle-blind,
+# never from a checkpoint. Fail-safe: [] on no-judge / parse-fail (=> nothing is ever auto-completed).
+# =====================================================================================================
+
+_COMMITTED_ORDERS_PROMPT = (
+    "Below is a clinician-agent's finished DELIVERABLE plan. Extract ONLY the concrete, executable orders the "
+    "agent has FIRMLY and UNCONDITIONALLY COMMITTED to placing NOW -- imperative directives the agent itself "
+    "decided (e.g. 'Order pelvic ultrasound', 'Place referral to cardiology', 'Start metformin 500mg'). Do NOT "
+    "include anything hedged, conditional, deferred, or optional: exclude 'consider', 'if/when X then', 'may "
+    "need', 'could', 'recommend evaluating', 'discuss', or contingency/escalation steps. If nothing is firmly "
+    "committed, return an empty list. Do NOT invent an order the text does not state. For each committed order "
+    "give a short imperative phrase and a coarse category. Reply STRICT JSON: "
+    '{{"orders": [{{"text": "<the agent\'s order phrase, verbatim-ish>", "category": '
+    '"imaging|medication|referral|lab|procedure|other", "conditional": false}}]}}.'
+    "\n\nGOAL:\n{goal}\n\nDELIVERABLE:\n{content}\n")
+
+
+def extract_committed_orders(content, goal, judge_fn=None):
+    """Firm, unconditional executable orders the AGENT committed to in its deliverable. [{text,category}].
+    Fail-safe: [] on no-judge / no-content / parse-fail. Drops any item flagged conditional."""
+    if not judge_fn or not str(content or "").strip():
+        return []
+    try:
+        d = _json_obj(judge_fn(_COMMITTED_ORDERS_PROMPT.format(goal=str(goal or "")[:1200],
+                                                               content=str(content)[:6000])))
+    except Exception:
+        return []
+    if not isinstance(d, dict):
+        return []
+    out = []
+    for o in (d.get("orders") or []):
+        if not isinstance(o, dict):
+            continue
+        txt = str(o.get("text") or "").strip()
+        if not txt or o.get("conditional") is True:
+            continue
+        out.append({"text": txt[:200], "category": str(o.get("category") or "other").strip().lower()})
+    return out
