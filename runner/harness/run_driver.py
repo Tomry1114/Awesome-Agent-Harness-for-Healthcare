@@ -1,33 +1,36 @@
-"""RunDriver (Commit C5b, hardened C5c) -- the real-environment implementation of the RecoveryOrchestrator's
+"""RunDriver (Commit C5b, hardened C5c/C5d) -- the real-environment implementation of the RecoveryOrchestrator's
 driver, over the live harness kernel + ActionExecutor + env. The ONLY glue between the orchestrator's abstract
 primitives and run.py's actual harness/executor/env. No benchmark names.
 
-C5c hardening (reviewer round 5):
-  #3  the prerequisite READ goes through the SAME before_action -> execute -> after_action pipeline as any
-      action (a harness-vetoed read is NOT executed and does NOT resolve the prerequisite).
-  #4  RESOLVED is proven from the LEDGER (a new evidence record for the ACTIVE subject, scope matched, in a
-      resolving state PRESENT|ABSENT) -- NOT guessed from the raw env result. No hard-coded result semantics.
-  #5  after_action exception -> auth UNKNOWN (never VERIFIED); ctx.verification is reset BEFORE after_action so
-      a stale True cannot leak into a VERIFIED verdict; a read whose after_action crashed is NOT resolved.
-  #6  every real env.call_tool made by recovery is reported through on_env_action so it counts against the
-      tool budget and is attributable (origin=recovery).
+C5d hardening (reviewer round 6): ONE strict internal read executor (execute_recovery_read) backs BOTH the
+prerequisite ACQUIRE and the existing-effect INSPECT, so they cannot diverge:
+  P0-1  before_action must be ALLOW: an exception OR any non-ALLOW decision (ACQUIRE/REVISE/RECONCILE/BLOCK/
+        ESCALATE) aborts the read WITHOUT executing it (harness-internal actions are strict, never fail-open).
+  P0-2  after_action must succeed: any exception -> the read yields UNKNOWN (never a raw-result ABSENT).
+  P0-3  RESOLVED requires an EXACT ledger delta from THIS action: a NEW record (since before_idx) whose
+        resource == the requested evidence_unit, subject_id == active subject, scope_relation == "matched",
+        evidence_state in {PRESENT, ABSENT}. The index slice IS the "came from this action" provenance the
+        acquisition_key was meant to give -- a stray PRESENT/ABSENT record can no longer close a prerequisite.
+  P1    can_execute_recovery_action(): a HARD budget gate checked BEFORE every real env.call_tool (read AND
+        create), so recovery cannot exceed the tool budget (not merely be counted after the fact).
 """
 
 _RESOLVING = ("PRESENT", "ABSENT")
 
 
 class RunDriver:
-    def __init__(self, harness, executor, env, task, state_snapshot, on_env_action=None):
+    def __init__(self, harness, executor, env, task, state_snapshot, on_env_action=None, budget_check=None):
         self.h = harness
         self.ex = executor
         self.env = env
         self.task = task
         self.snap = state_snapshot
-        self.on_env = on_env_action   # #6: callback(action, origin) invoked on every real env.call_tool
-        self.step = 0                 # set by run.py before each realize()
-        self.trajectory = []          # set by run.py before each realize()
-        self.episode_id = None        # #9: set by run.py per effect episode (recovery-<n>)
-        self._action_seq = 0          # #9: monotonic per-recovery-action id, unique WITHIN a step
+        self.on_env = on_env_action     # #6: callback(action, origin) on every real env.call_tool
+        self.budget_check = budget_check  # P1: () -> bool, True while recovery tool budget remains
+        self.step = 0                   # set by run.py before each realize()
+        self.trajectory = []            # set by run.py before each realize()
+        self.episode_id = None          # #9: set by run.py per effect episode (recovery-<n>)
+        self._action_seq = 0            # #9: monotonic per-recovery-action id, unique WITHIN a step
 
     # -- authorization --
     def mint(self, scope):
@@ -57,6 +60,15 @@ class RunDriver:
     def mode(self):
         # the harness enforcement mode ("enforce" | "assist" | "observe"); gates whether recovery may write.
         return getattr(self.h, "mode", None)
+
+    # -- P1 HARD budget gate: refuse a recovery env call when no tool budget remains --
+    def can_execute_recovery_action(self):
+        if self.budget_check is None:
+            return True
+        try:
+            return bool(self.budget_check())
+        except Exception:
+            return True
 
     # -- internal helpers ------------------------------------------------------
     def _count_env(self, action):
@@ -100,72 +112,89 @@ class RunDriver:
             nxt = ex.get("next_action")
         return (raw_t, eff_t, nxt)
 
-    # -- #3: the prerequisite READ through the SAME full pipeline; #4: LEDGER-proven resolved --
-    def acquire(self, next_action):
-        if not next_action or not next_action.get("tool"):
-            return False
-        rd = dict(next_action); rd.setdefault("type", "tool_call")
-        active = self.h.ledger.subject_id()
-        before_idx = len(self.h.ledger.evidence)
-        # #3: before_action -- a read the harness vetoes (BLOCK/ESCALATE) is NOT executed and does NOT resolve.
+    # == THE single strict internal read executor (P0-1/P0-2/P0-3) ==============
+    def execute_recovery_read(self, action, expected_subject=None, expected_evidence_unit=None):
+        """Run ONE harness-internal read to a TRUSTWORTHY state. Returns (state, outcome) with state in
+        {"PRESENT","ABSENT","UNKNOWN"}. UNKNOWN on ANY deviation (no budget / before_action not ALLOW /
+        after_action crash / tool error / no exact ledger delta). Never returns ABSENT off a raw result."""
+        rd = dict(action); rd.setdefault("type", "tool_call")
+        active = expected_subject or self.h.ledger.subject_id()
+        unit = expected_evidence_unit or ((rd.get("args") or {}).get("resourceType"))
+        # P1: hard budget gate BEFORE the env call
+        if not self.can_execute_recovery_action():
+            self._runtime_error("recovery_read_budget_exhausted")
+            return ("UNKNOWN", None)
+        # P0-1: before_action MUST be ALLOW; exception or any non-ALLOW aborts WITHOUT executing.
         try:
             hb = self.h.before_action(rd, self.snap(self.env), step=self.step)
         except Exception as _e:
-            hb = None
             self._runtime_error("recovery_read_before_action:%r" % _e)
+            return ("UNKNOWN", None)
         if hb is not None and getattr(hb, "events", None):
             self.trajectory.extend(hb.events)
-        if hb is not None and getattr(hb, "type", "ALLOW") in ("BLOCK", "ESCALATE"):
-            return False
+        if hb is not None and getattr(hb, "type", "ALLOW") != "ALLOW":
+            return ("UNKNOWN", None)
+        before_idx = len(self.h.ledger.evidence)
         outcome = self.ex.execute_and_normalize(rd, self.env)
         self._count_env(rd)                                       # #6
         self._reset_verification()
+        # P0-2: after_action MUST succeed.
         after_ok = True
         try:
             self.ex.run_after_action(self.h, rd, outcome, self.step)   # ScopeEvidenceBinding records EvidenceState
         except Exception as _e:
-            after_ok = False                                      # #5: crashed read did NOT bind -> unresolved
+            after_ok = False
             self._runtime_error("recovery_read_after_action:%r" % _e)
+        ev, _ = self.ex.build_event(rd, outcome, self.step, origin="recovery", audience="harness")
+        self._emit_event(ev)
+        if outcome.err or not after_ok:
+            return ("UNKNOWN", outcome)
+        # P0-3: EXACT ledger delta from THIS action (index slice = provenance).
+        for rec in self.h.ledger.evidence[before_idx:]:
+            if (rec.get("scope_relation") == "matched"
+                    and rec.get("subject_id") == active
+                    and rec.get("evidence_state") in _RESOLVING
+                    and (unit is None or rec.get("resource") == unit)):
+                return (rec.get("evidence_state"), outcome)
+        return ("UNKNOWN", outcome)
+
+    # -- prerequisite ACQUIRE: resolved iff the strict reader confirms PRESENT/ABSENT --
+    def acquire(self, next_action):
+        if not next_action or not next_action.get("tool"):
+            return False
         try:
             self.h.ledger.acquire_count = getattr(self.h.ledger, "acquire_count", 0) + 1
         except Exception:
             pass
-        ev, _ = self.ex.build_event(rd, outcome, self.step, origin="recovery", audience="harness")
-        self._emit_event(ev)
-        if not after_ok:
-            return False
-        # #4: RESOLVED proven from the LEDGER (not the raw result): a NEW record for the ACTIVE subject, scope
-        # matched, in a resolving state. Mirrors RequiredContext._resolved_units so acquire and gate AGREE.
-        for rec in self.h.ledger.evidence[before_idx:]:
-            if (rec.get("scope_relation") == "matched"
-                    and rec.get("subject_id") == active
-                    and rec.get("evidence_state") in _RESOLVING):
-                return True
-        return False
+        state, _ = self.execute_recovery_read(next_action)
+        return state in _RESOLVING
 
-    # -- #7: existing-effect probe as a RECOVERY READ through the SAME executor (counted #6, canonical event,
-    #    after_action binds evidence) instead of a private env.call_tool. Returns {state, texts, matched_ids}. --
+    # -- #7: existing-effect probe via the SAME strict reader; PRESENT still fail-closes on no comparable text --
     def inspect_effect(self, resource_type, subject_ref):
         from .effect_completion import classify_effect_inspection
         rd = {"type": "tool_call", "tool": "fhir_search",
               "args": {"resourceType": resource_type, "subject": subject_ref}}
-        outcome = self.ex.execute_and_normalize(rd, self.env)
-        self._count_env(rd)                                       # #6
-        self._reset_verification()
-        try:
-            self.ex.run_after_action(self.h, rd, outcome, self.step)
-        except Exception as _e:
-            self._runtime_error("recovery_inspect_after_action:%r" % _e)
-        ev, _ = self.ex.build_event(rd, outcome, self.step, origin="recovery", audience="harness")
-        self._emit_event(ev)
-        if outcome.err:                                          # a failed probe is UNKNOWN, never ABSENT
-            return {"state": "UNKNOWN", "texts": [], "matched_ids": [], "reason": "probe_failed"}
-        return classify_effect_inspection(outcome.res)
+        state, outcome = self.execute_recovery_read(rd, expected_subject=subject_ref,
+                                                    expected_evidence_unit=resource_type)
+        if state == "ABSENT":
+            return {"state": "ABSENT", "texts": [], "matched_ids": []}
+        if state == "PRESENT":
+            # trust the ledger's PRESENT, but still extract texts + apply the "present-but-no-comparable-
+            # representation -> UNKNOWN" fail-closed so a create decision has something to compare against.
+            return classify_effect_inspection(outcome.res if outcome is not None else None)
+        return {"state": "UNKNOWN", "texts": [], "matched_ids": []}
 
     # -- authorized CREATE through the same executor (dispatch just before the env call) + finalize the auth --
     def execute(self, action, auth):
-        outcome = self.ex.execute_and_normalize(action, self.env, ledger=self.h.ledger, auth=auth)
         L = self.h.ledger
+        # P1: hard budget gate BEFORE the create's env call.
+        if not self.can_execute_recovery_action():
+            self._runtime_error("recovery_create_budget_exhausted")
+            L.fail_authorization(auth)
+            class _O:
+                def __init__(s): s.res = {"error": "recovery_budget_exhausted"}; s.err = "recovery_budget_exhausted"; s.result_status = "failed"; s.recon = None; s.created_id = None
+            return _O()
+        outcome = self.ex.execute_and_normalize(action, self.env, ledger=L, auth=auth)
         if outcome.err == "authorization_not_dispatchable":
             # env was NOT called (auth not in a dispatchable state) -> never landed -> FAILED.
             L.fail_authorization(auth)

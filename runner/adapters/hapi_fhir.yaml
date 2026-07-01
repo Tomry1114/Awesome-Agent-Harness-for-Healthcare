@@ -80,7 +80,7 @@ manifest:
     - match: {tool_pattern: _search}
       semantic_type: read
       effect: none
-      produces_evidence: {source_class: record, modality: record}
+      produces_evidence: {source_class: record, modality: record, resource_from_args: [resourceType]}
     - match: {tool_pattern: _read}
       semantic_type: read
       effect: none

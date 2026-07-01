@@ -232,7 +232,7 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
     _recovery_orch = None   # C5b: RecoveryOrchestrator (lazy, per-task; episode registry persists across the task)
     for step in range(0 if _harness_infra_error else (max_steps + max_repair_turns + 2)):
         _env_budget_spent = (_env_actions + _recovery_env_actions[0]) >= max_steps   # CONTRACT(2)+#6: agent + recovery tool budget; still allow a final-only turn
-        _bw = deliv.budget_warning(env, _env_actions, max_steps, trajectory)
+        _bw = deliv.budget_warning(env, _env_actions + _recovery_env_actions[0], max_steps, trajectory)   # +#6 recovery calls
         if _bw is not None: last_res, last_obs = _bw
         if _last_tool_ev is not None:          # the previous tool observation is about to be consumed
             _last_tool_ev["delivery_record"]["consumed_by_agent"] = True
@@ -628,7 +628,9 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
                     from harness.recovery_orchestrator import RecoveryOrchestrator, EffectCompletionKey
                     from harness.run_driver import RunDriver
                     if _recovery_orch is None:
-                        _recovery_orch = RecoveryOrchestrator(RunDriver(_harness, _executor, env, task, _state_snapshot, on_env_action=_on_recovery_env))
+                        _recovery_orch = RecoveryOrchestrator(RunDriver(_harness, _executor, env, task, _state_snapshot,
+                            on_env_action=_on_recovery_env,
+                            budget_check=lambda: (_env_actions + _recovery_env_actions[0]) < max_steps))   # P1: recovery cannot exceed tool budget
                     _recovery_orch.d.step = step; _recovery_orch.d.trajectory = trajectory
                     _root_content = _root_agent_content.get(_ec_path, action["args"].get("content"))   # PROVENANCE: root only
                     _cm = (_harness.contract.meta if (_harness.contract and _harness.contract.meta) else {})
@@ -636,11 +638,33 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
                     _refs = context_refs(task)
                     _art_hash = hashlib.sha1((_root_content or "").encode("utf-8")).hexdigest()[:12]
                     if _committed and _refs.get("subject"):
+                        from harness.recovery_orchestrator import (VERIFIED as _RV, ALREADY_REALIZED as _RA,
+                            RECONCILING as _RC, EpisodeResult as _ER)
                         for _oi, _u in enumerate(_committed[:2]):
                             _recovery_orch.d.episode_id = "recovery-s%d-%d" % (step, _oi)   # #9
                             _otext = _u.get("text"); _ocat = _u.get("category") or "other"
                             _rt3 = resource_type_for_category(_ocat)
-                            _insp = _recovery_orch.d.inspect_effect(_rt3, _refs["subject"])   # #7: probe through the executor (counted, canonical event, fail-closed)
+                            # P1 REGISTRY-FIRST: build the per-order key, THEN decide -- a settled key is never re-probed.
+                            _key = EffectCompletionKey(_refs["subject"], _art_hash, (_otext or "")[:120].strip().lower(), _rt3)
+                            _prior = _recovery_orch.episodes.get(_key)
+                            if _prior is not None and _prior.state in (_RV, _RA):
+                                trajectory.append({"step": step, "event_type": "effect_completion", "surface": "state",
+                                    "order_text": _otext, "resource_type": _rt3, "reason": "already_realized_registry",
+                                    "created_id": _prior.created_id, "episode_state": _prior.state, "status": "ok"}); continue
+                            _insp = _recovery_orch.d.inspect_effect(_rt3, _refs["subject"])   # #7: probe through the executor
+                            if _prior is not None and _prior.state == _RC:
+                                # a prior ambiguous create (UNKNOWN/undispatched) -> reconcile: if the effect is now
+                                # present+realized, UPGRADE the episode to VERIFIED (NEVER re-create); else leave it.
+                                if _insp["state"] == PRESENT and is_realized(_otext, _insp["texts"]):
+                                    _recovery_orch.episodes[_key] = _ER(_RV, created_id=_prior.created_id,
+                                        auth_status="VERIFIED", reason="reconciled_present")
+                                    trajectory.append({"step": step, "event_type": "effect_completion", "surface": "state",
+                                        "order_text": _otext, "resource_type": _rt3, "reason": "reconciled_present",
+                                        "created_id": _prior.created_id, "episode_state": _RV, "status": "ok"})
+                                else:
+                                    trajectory.append({"step": step, "event_type": "effect_completion_blocked", "surface": "state",
+                                        "order_text": _otext, "resource_type": _rt3, "reason": "still_reconciling", "status": "ok"})
+                                continue
                             if _insp["state"] == UNKNOWN:
                                 trajectory.append({"step": step, "event_type": "effect_completion_blocked", "surface": "state",
                                     "order_text": _otext, "resource_type": _rt3, "reason": "existing_effect_unknown", "status": "ok"}); continue
@@ -650,14 +674,19 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
                             _rtb, _resource = build_order_resource({"text": _otext, "category": _ocat}, _refs)
                             if not _resource:
                                 continue
+                            # HYGIENE: tag every recovery-created resource so a paired-run cleanup can DELETE it by tag
+                            # (?_tag=https://medical-harness/recovery|harness-recovery-created), so ON does not leave a
+                            # ServiceRequest that would falsely PASS the next OFF arm if pristine is not restored.
+                            _resource.setdefault("meta", {}).setdefault("tag", []).append(
+                                {"system": "https://medical-harness/recovery", "code": "harness-recovery-created",
+                                 "display": "harness_recovery:%s" % str(task.get("id") or task.get("task_id") or "task")})
                             _mact = {"type": "tool_call", "tool": "fhir_create", "args": {"resource": _resource}}
                             _fsem = canonicalize(_mact, getattr(_harness, "manifest", None) or {})
                             _scope = {"allowed_semantic_type": _fsem.semantic_type, "allowed_tool": "fhir_create",
                                       "allowed_effect": _fsem.effect, "target_path": action_target_path(_fsem, _mact),
                                       "expected_postcondition": {"resource": _rtb, "status": "active", "verify": "server_readback"}}
-                            _key = EffectCompletionKey(_refs["subject"], _art_hash, (_otext or "")[:120].strip().lower(), _rtb)
                             # the orchestrator drives ACQUIRE-prereq (governance via RequiredContext, through the
-                            # SAME executor -> binds evidence) + re-evaluate + authorized create + verify.
+                            # SAME executor -> binds evidence) + re-evaluate + authorized create + verify. SAME _rt3 key.
                             _res = _recovery_orch.realize(_mact, _scope, key=_key)
                             _harness.ledger.clear_mutation_hold()
                             trajectory.append({"step": step, "event_type": "effect_completion", "surface": "state",
