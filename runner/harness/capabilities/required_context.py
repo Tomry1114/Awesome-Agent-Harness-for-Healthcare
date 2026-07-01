@@ -25,11 +25,14 @@ class RequiredContext(Capability):
     name = "required_context"
 
     def _resolved_units(self, led):
-        """Resource evidence_units the ledger has already CHECKED for the active subject (PRESENT or ABSENT).
-        A foreign-subject read does NOT resolve. This is what stops re-ACQUIRE of a confirmed-empty unit."""
+        """Resource evidence_units the ledger has CHECKED for the ACTIVE subject (PRESENT or ABSENT). C3.1
+        STRICT: the read must be scope_relation == "matched" AND its subject_id must equal the active subject
+        -- a not-foreign-but-unresolved-subject empty read must NOT close a required-patient obligation."""
+        active = led.subject_id()
         out = set()
         for e in getattr(led, "evidence", []):
-            if e.get("resource") and e.get("scope_relation") != "foreign" and is_resolved(e.get("evidence_state")):
+            if (e.get("resource") and is_resolved(e.get("evidence_state"))
+                    and e.get("scope_relation") == "matched" and e.get("subject_id") == active):
                 out.add(e.get("resource"))
         return out
 

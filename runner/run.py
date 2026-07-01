@@ -467,8 +467,16 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
         _pending_auth = None   # C3: the mutation authorization the executor will dispatch for THIS action
         if (_harness is not None and _hb is not None and _hb.type == "ALLOW"
                 and getattr(_harness.ledger, "pending_authorization", None) is not None):
-            _pending_auth = _harness.ledger.pending_authorization
-            _harness.ledger.reserve_authorization(_pending_auth)   # AVAILABLE -> RESERVED (combined winner is ALLOW)
+            _cand_auth = _harness.ledger.pending_authorization
+            if _harness.ledger.reserve_authorization(_cand_auth):   # AVAILABLE -> RESERVED (combined winner is ALLOW)
+                _pending_auth = _cand_auth
+            else:   # C3.1 fail-closed: a matched auth that is NOT AVAILABLE cannot be reserved -> do NOT dispatch/execute
+                trajectory.append({"step": step, "event_type": "authorization_reserve_failed",
+                                   "authorization_id": getattr(_cand_auth, "authorization_id", None),
+                                   "auth_status": getattr(_cand_auth, "status", None), "status": "ok"})
+                pending_harness_feedback = {"decision": "BLOCK", "stage": "authorization",
+                                            "reason": "authorization could not be reserved (not AVAILABLE)", "missing_obligations": []}
+                continue
         if (_pending_artifact is not None and _harness is not None and action.get("tool") == "write_file"
                 and (action.get("args") or {}).get("content")
                 and (action.get("args") or {}).get("path") == _pending_artifact.get("path")):
@@ -532,11 +540,6 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
         _snap_before = _outcome.snap_before; _snap_after = _outcome.snap_after
         _result_status = _outcome.result_status
         _env_actions += 1   # the environment call HAPPENED (count before any post-action escalate / circuit-break)
-        if _pending_auth is not None and _harness is not None:   # C3: a DISPATCHED mutation is VERIFIED (read-back confirmed) or UNKNOWN (ambiguous) -- never re-usable
-            if _recon is not None and _recon.get("confirmed") is True:
-                _harness.ledger.verify_authorization(_pending_auth)
-            else:
-                _harness.ledger.unknown_authorization(_pending_auth)
         if _reconcile is not None:                   # a read executed under recovery -> try to resolve the pending commit
             try:
                 _rr = env.reconcile_write(_reconcile["action"]["tool"], _reconcile["action"].get("args", {}), _reconcile["res"])
@@ -564,6 +567,20 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
                 if _harness_requested_mode == "enforce":
                     trajectory.append({"step": step, "event_type": "harness_escalation", "stage": "after_action",
                                        "reason": "hook_error", "status": "error"}); _aborted = True; break
+        if _pending_auth is not None and _harness is not None:   # C3.1: finalize the DISPATCHED auth AFTER after_action + commit verification (never VERIFIED on a read-back alone)
+            _ver = getattr(_harness.ctx, "verification", None)
+            _aeff = (_hpost.type if _hpost is not None else "ALLOW")
+            _cf = _recon.get("confirmed") if _recon is not None else None
+            if _result_status == "failed" and _cf is False:
+                _harness.ledger.fail_authorization(_pending_auth)             # explicit failure + read-back: NOT landed
+            elif _result_status == "unknown" or _aeff == "RECONCILE" or _cf is None:
+                _harness.ledger.unknown_authorization(_pending_auth)         # ambiguous -> reconcile only, never reuse
+            elif _cf is True and _ver is True and _aeff == "ALLOW":
+                _harness.ledger.verify_authorization(_pending_auth)          # landed AND commit verified AND no post-action veto
+            elif _ver is False:
+                _harness.ledger.fail_authorization(_pending_auth)            # commit verification says the effect is wrong
+            else:
+                _harness.ledger.unknown_authorization(_pending_auth)
         _ev, obs = _executor.build_event(action, _outcome, step)   # Commit B: single event builder
         trajectory.append(_ev)
         if _hpost is not None:

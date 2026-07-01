@@ -52,12 +52,12 @@ check("04 authorization_allows_only_exact_target_path", t1=="BLOCK" and t2 is No
 L=Ledger(); L.set_mutation_hold(); authorize_deterministic_gap(L, scope(tp="form/phone"))
 act={"tool":"update_field","args":{"target_path":"form/phone"}}
 first,_ = ba(Sem("update"), L, act)    # verify_commit AUTHORIZES (records pending_authorization); does NOT consume (C2)
-L.consume_authorization(L.pending_authorization)   # the executor SPENDS it (reserve->dispatch); single-use is enforced downstream (C3)
+a5=L.pending_authorization; L.reserve_authorization(a5); L.dispatch_authorization(a5)   # the executor SPENDS it via strict reserve->dispatch (C3.1)
 second,_ = ba(Sem("update"), L, act)   # auth now DISPATCHED (spent) -> single-use -> BLOCK
 check("05 authorization_is_single_use", first is None and second=="BLOCK")
 # 6 failure doesn't expand scope: after consume, no new auth minted -> next mutation blocked
 L=Ledger(); L.set_mutation_hold(); authorize_deterministic_gap(L, scope(tp="form/phone"))
-ba(Sem("update"), L, act); L.consume_authorization(L.pending_authorization)   # authorize + executor spends it (simulate the mutation, which then 'fails')
+ba(Sem("update"), L, act); a6=L.pending_authorization; L.reserve_authorization(a6); L.dispatch_authorization(a6)   # authorize + executor spends it via reserve->dispatch
 # failure path mints nothing; a broader retry on a different field stays blocked
 t,_ = ba(Sem("update"), L, {"tool":"update_field","args":{"target_path":"form/other"}})
 check("06 mutation_failure_does_not_expand_repair_scope", t=="BLOCK")

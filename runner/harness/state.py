@@ -108,56 +108,58 @@ class Ledger:
         return auth
 
     def find_matching_authorization(self, sem, action):
-        """The AVAILABLE authorization whose EXACT scope this action matches, or None (matchable == AVAILABLE)."""
+        """The AVAILABLE authorization whose EXACT scope this action matches AND whose evidence_version still
+        equals the current validated version, or None. The version guard (C3.1) makes a stale authorization --
+        one minted before new evidence landed -- no longer match, forcing a fresh re-evaluation."""
         from .authorization import exact_scope_match, AUTH_AVAILABLE
         for auth in self.mutation_authorizations:
-            if auth.status == AUTH_AVAILABLE and exact_scope_match(auth, sem, action):
+            if (auth.status == AUTH_AVAILABLE
+                    and auth.evidence_version == self.validated_evidence_version
+                    and exact_scope_match(auth, sem, action)):
                 return auth
         return None
 
-    # -- authorization lifecycle transitions (Commit C1) --
-    def reserve_authorization(self, auth):
-        """AVAILABLE -> RESERVED: claim it for ONE pending action (combined-ALLOW not yet confirmed)."""
-        from .authorization import AUTH_AVAILABLE, AUTH_RESERVED
-        if auth is not None and auth.status == AUTH_AVAILABLE:
-            auth.status = AUTH_RESERVED
+    # -- authorization lifecycle transitions (Commit C1; C3.1 = STRICT pre-state, return bool) --
+    # Legal edges ONLY: reserve AVAILABLE->RESERVED; release RESERVED->AVAILABLE; dispatch RESERVED->DISPATCHED;
+    # verify/unknown/fail DISPATCHED->terminal; cancel AVAILABLE|RESERVED->CANCELLED. Any illegal edge -> False
+    # (no state change) so a mis-sequenced caller cannot fabricate a VERIFIED/DISPATCHED out of thin air.
+    def _transition(self, auth, allowed_from, to):
+        if auth is not None and auth.status in allowed_from:
+            auth.status = to
             return True
         return False
 
-    def dispatch_authorization(self, auth):
-        """RESERVED -> DISPATCHED: set IMMEDIATELY before the env call. Spent from here (may have landed)."""
-        from .authorization import AUTH_DISPATCHED
-        if auth is not None:
-            auth.status = AUTH_DISPATCHED
-
-    def verify_authorization(self, auth):
-        from .authorization import AUTH_VERIFIED
-        if auth is not None:
-            auth.status = AUTH_VERIFIED
-
-    def unknown_authorization(self, auth):
-        from .authorization import AUTH_UNKNOWN
-        if auth is not None:
-            auth.status = AUTH_UNKNOWN
-
-    def fail_authorization(self, auth):
-        from .authorization import AUTH_FAILED
-        if auth is not None:
-            auth.status = AUTH_FAILED
+    def reserve_authorization(self, auth):
+        from .authorization import AUTH_AVAILABLE, AUTH_RESERVED
+        return self._transition(auth, (AUTH_AVAILABLE,), AUTH_RESERVED)
 
     def release_authorization(self, auth):
-        """RESERVED -> AVAILABLE: the combined decision was NOT ALLOW; return the reservation for retry."""
         from .authorization import AUTH_RESERVED, AUTH_AVAILABLE
-        if auth is not None and auth.status == AUTH_RESERVED:
-            auth.status = AUTH_AVAILABLE
+        return self._transition(auth, (AUTH_RESERVED,), AUTH_AVAILABLE)
+
+    def dispatch_authorization(self, auth):
+        from .authorization import AUTH_RESERVED, AUTH_DISPATCHED
+        return self._transition(auth, (AUTH_RESERVED,), AUTH_DISPATCHED)
+
+    def verify_authorization(self, auth):
+        from .authorization import AUTH_DISPATCHED, AUTH_VERIFIED
+        return self._transition(auth, (AUTH_DISPATCHED,), AUTH_VERIFIED)
+
+    def unknown_authorization(self, auth):
+        from .authorization import AUTH_DISPATCHED, AUTH_UNKNOWN
+        return self._transition(auth, (AUTH_DISPATCHED,), AUTH_UNKNOWN)
+
+    def fail_authorization(self, auth):
+        from .authorization import AUTH_DISPATCHED, AUTH_FAILED
+        return self._transition(auth, (AUTH_DISPATCHED,), AUTH_FAILED)
 
     def cancel_authorization(self, auth):
-        from .authorization import AUTH_CANCELLED
-        if auth is not None:
-            auth.status = AUTH_CANCELLED
+        from .authorization import AUTH_AVAILABLE, AUTH_RESERVED, AUTH_CANCELLED
+        return self._transition(auth, (AUTH_AVAILABLE, AUTH_RESERVED), AUTH_CANCELLED)
 
     def consume_authorization(self, auth):
-        """Back-compat single-use consume == mark DISPATCHED (spent, not reusable). C2 replaces the callers."""
+        """LEGACY compat (the effect_completion inline block until C5): force-spend to DISPATCHED regardless of
+        pre-state. NOT part of the strict machine -- new code uses reserve()->dispatch()."""
         from .authorization import AUTH_DISPATCHED
         if auth is not None:
             auth.status = AUTH_DISPATCHED

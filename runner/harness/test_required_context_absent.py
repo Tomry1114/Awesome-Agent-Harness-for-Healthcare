@@ -40,16 +40,16 @@ ck("acquire_uses_patient_param", bool(na) and na.get("args", {}).get("patient") 
    and "subject" not in na.get("args", {}))
 
 # 2) ABSENT evidence for the unit (confirmed no allergies) -> obligation RESOLVED -> NO re-ACQUIRE
-absent_ev = [{"resource": "AllergyIntolerance", "evidence_state": "ABSENT", "scope_relation": "matched"}]
+absent_ev = [{"resource": "AllergyIntolerance", "evidence_state": "ABSENT", "scope_relation": "matched", "subject_id": "MRN2970753705"}]
 d2 = rc._missing_obligation_acquire(Ctx(Led(absent_ev)), REQ)
 ck("absent_resolves_no_reacquire", d2 is None)
 
 # 3) PRESENT evidence -> also resolved -> no ACQUIRE
-present_ev = [{"resource": "AllergyIntolerance", "evidence_state": "PRESENT", "scope_relation": "matched"}]
+present_ev = [{"resource": "AllergyIntolerance", "evidence_state": "PRESENT", "scope_relation": "matched", "subject_id": "MRN2970753705"}]
 ck("present_resolves", rc._missing_obligation_acquire(Ctx(Led(present_ev)), REQ) is None)
 
 # 4) FAILED evidence -> NOT resolved -> still ACQUIRE (the live-bug case: a failed read must not resolve)
-failed_ev = [{"resource": "AllergyIntolerance", "evidence_state": "FAILED", "scope_relation": "matched"}]
+failed_ev = [{"resource": "AllergyIntolerance", "evidence_state": "FAILED", "scope_relation": "matched", "subject_id": "MRN2970753705"}]
 ck("failed_not_resolved_reacquire", rc._missing_obligation_acquire(Ctx(Led(failed_ev)), REQ) is not None)
 
 # 5) foreign-subject ABSENT does NOT resolve

@@ -60,7 +60,7 @@ ck("unknown", auth2.status == AUTH_UNKNOWN and not auth2.matchable)
 
 auth3 = led.mint_authorization(source="deterministic_gap", allowed_semantic_type="create", allowed_tool="fhir_create",
                                allowed_effect="irreversible", target_path="Y", expected_postcondition={"y": 1})
-led.reserve_authorization(auth3); led.fail_authorization(auth3)
+led.reserve_authorization(auth3); led.dispatch_authorization(auth3); led.fail_authorization(auth3)
 ck("failed", auth3.status == AUTH_FAILED)
 
 # consume_authorization back-compat == DISPATCHED (spent)

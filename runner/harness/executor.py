@@ -41,7 +41,10 @@ class ActionExecutor:
     def execute_and_normalize(self, action, env, ledger=None, auth=None):
         state_before = self._state_hash(env); snap_before = self._state_snapshot(env)
         if ledger is not None and auth is not None:
-            ledger.dispatch_authorization(auth)   # C3: DISPATCHED set IMMEDIATELY before the env call -- from here the mutation may have landed even on a transport error, so this auth can never re-authorize another mutation
+            if not ledger.dispatch_authorization(auth):   # C3.1: dispatch REQUIRES status==RESERVED. If not, REFUSE to execute (fail-closed) -- never run a mutation whose authorization is not in a dispatchable state
+                return ActionOutcome({"error": "authorization_not_dispatchable"}, "authorization_not_dispatchable",
+                                     False, "failed", None, state_before, state_before, snap_before, snap_before)
+            # DISPATCHED from here: the mutation may have landed even on a transport error, so this auth can never re-authorize another mutation
         try:
             res = env.call_tool(action["tool"], action.get("args", {}))
         except Exception as _e:
