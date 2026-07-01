@@ -1,59 +1,59 @@
-"""RequiredContext (Selective Capability Amplification -- the MISSING_CONTEXT -> ACQUIRE primitive).
+"""RequiredContext (Commit A) -- MISSING_CONTEXT -> ACQUIRE, driven by the ADAPTER-COMPILED evidence affordance.
 
-Before a COMMIT (create/update/submit), the harness checks the GoalContract: the commit point's requires-closure
-down to leaf evidence obligations, minus what the EvidenceLedger has VALIDATED. A missing required-context unit
-with a read affordance -> ACQUIRE that record read-only, so the agent decides WITH the evidence it must have.
-Oracle-blind + substrate-agnostic: reads only contract obligations + ledger evidence; the resource->read mapping
-comes from the obligation's own `satisfied_by`, never a benchmark name. PB is the first adapter; the same
-primitive serves any stateful substrate that declares evidence obligations.
+Before a COMMIT / deliverable write, the harness checks the task's evidence obligations against the ledger's
+RESOLVED evidence (an obligation is resolved once its resource has been CHECKED for the active subject --
+PRESENT *or* ABSENT; a confirmed empty allergy list resolves the allergy-check just as a positive one does).
+An unresolved obligation is acquired through `compile_evidence_request` so the query uses the adapter's exact
+tool + parameter (e.g. AllergyIntolerance?patient=Patient/<id>, never a hard-coded `subject`). Oracle-blind +
+substrate-agnostic: reads only contract obligations + ledger evidence + the adapter manifest.
 """
 import os
 from ..capability import Capability
 from .. import decision as D
-from ..gap import detect_missing_context, missing_context_proposal, MISSING_CONTEXT
+from ..gap import MISSING_CONTEXT
+from ..evidence_state import is_resolved
+from ..adapter_compiler import compile_evidence_request
 
 
 def _enabled():
     return os.environ.get("MH_REPAIR", "hard") in ("soft", "select", "full")
 
 
-def _tool_names(tools):
-    out = []
-    for t in (tools or []):
-        out.append(t if isinstance(t, str) else (t.get("name") if isinstance(t, dict) else None))
-    return [x for x in out if x]
-
-
-# read affordances a stateful substrate may expose (adapter-declared verbs; core does not invent substitutes)
-_READ_TOOLS = ("fhir_search", "fhir_read", "read_record", "get_record")   # search (by resourceType) before read (needs an id)
-
-
 class RequiredContext(Capability):
     # LAYER: AMPLIFICATION (read-only context acquisition) -- never decides the answer; raises outcome by
-    # guaranteeing the decision-relevant record is gathered before an irreversible clinical commit.
+    # guaranteeing the decision-relevant record is CHECKED before an irreversible clinical commit.
     name = "required_context"
 
+    def _resolved_units(self, led):
+        """Resource evidence_units the ledger has already CHECKED for the active subject (PRESENT or ABSENT).
+        A foreign-subject read does NOT resolve. This is what stops re-ACQUIRE of a confirmed-empty unit."""
+        out = set()
+        for e in getattr(led, "evidence", []):
+            if e.get("resource") and e.get("scope_relation") != "foreign" and is_resolved(e.get("evidence_state")):
+                out.add(e.get("resource"))
+        return out
+
     def _missing_obligation_acquire(self, ctx, required):
-        """required = [(oid,resource)]. Return an ACQUIRE decision for the first unsatisfied one, or None."""
+        """required = [(oid, resource)]. ACQUIRE the first UNRESOLVED one via the adapter-compiled affordance."""
         led = ctx.ledger
-        if getattr(led, "acquire_count", 0) >= 2:
+        if getattr(led, "acquire_count", 0) >= 2:      # bounded acquisition budget
             return None
-        meta = (ctx.contract.meta or {})
-        read_tool = next((t for t in _READ_TOOLS if t in _tool_names(meta.get("available_tools"))), None)
-        if not read_tool:
+        resolved = self._resolved_units(led)
+        active = led.subject_id()
+        if not active:
             return None
-        validated = self._validated_resources(led)
-        missing = [(oid, res) for (oid, res) in required if res and res not in validated]
-        prop = missing_context_proposal(
-            [oid for (oid, _r) in missing],
-            affordance_for=lambda oid: self._affordance(oid, dict(missing).get(oid), read_tool))
-        if not prop:
-            return None
-        na = dict(prop.affordance); na["read_only"] = True
-        return self._decide(D.ACQUIRE, rule_id="required_context", reason_code="missing_required_context",
-                            reason="acquire required context %r (%s) before committing"
-                                   % (prop.missing_unit, na.get("args", {}).get("resourceType")),
-                            extra={"next_action": na, "gap": {"type": MISSING_CONTEXT, "unit": prop.missing_unit}})
+        for (oid, res) in required:
+            if not res or res in resolved:
+                continue
+            req = compile_evidence_request(ctx.manifest, res, active, obligation_id=oid)
+            if not req or not (req.affordance or {}).get("tool"):
+                continue                               # adapter declares no affordance -> not acquirable here
+            na = dict(req.affordance); na["read_only"] = True
+            return self._decide(D.ACQUIRE, rule_id="required_context", reason_code="missing_required_context",
+                                reason="acquire required context %s (%s) before committing" % (oid, res),
+                                extra={"next_action": na, "gap": {"type": MISSING_CONTEXT, "unit": oid},
+                                       "evidence_unit": res, "target_entity": active})
+        return None
 
     def _all_evidence_obligations(self, c):
         out = []
@@ -64,16 +64,13 @@ class RequiredContext(Capability):
         return out
 
     def before_final(self, answer, ctx):
-        # DISABLED: deliverable acquisition is driven by the INTENT-SCOPED before_action hook on the deliverable
-        # write (which the forced-deliverable path also traverses). A before_final _all_evidence_obligations
-        # trigger over-fires (ignores relevance), lands AFTER the artifact is written (too late to shape it), and
-        # cannot be content-scoped -- so it is not used here.
+        # DISABLED (see history): before_final over-fires (not intent-scoped, lands after the artifact is
+        # written). Deliverable acquisition is driven by the intent-scoped before_action hook below.
         return None
 
     def before_action(self, action, ctx):
-        # EARLY trigger: before a COMMIT or a DELIVERABLE WRITE (so the deliverable is produced WITH the required
-        # context, and read-before-action ordering is satisfied). Checks ALL task-level evidence obligations,
-        # not a single commit point's requires -- the deliverable may be a FHIR create OR a written plan.
+        # EARLY trigger: before a COMMIT or a DELIVERABLE WRITE, acquire the required context the deliverable's
+        # own clinical actions depend on, so it is produced WITH that context.
         if not _enabled():
             return None
         sem = ctx.sem
@@ -84,51 +81,11 @@ class RequiredContext(Capability):
         obligations = self._all_evidence_obligations(ctx.contract)
         if not obligations:
             return None
-        # P2 INTENT-SCOPE: for a content-bearing deliverable write, restrict required context to the obligations
-        # the deliverable's own clinical actions depend on (don't acquire allergies/meds for a non-medication
-        # plan). Oracle-blind: reads the agent's proposed content + public goal.
+        # INTENT-SCOPE: for a content-bearing deliverable write, restrict to the obligations the deliverable's
+        # own clinical actions depend on. Oracle-blind: reads the agent's proposed content + public goal.
         content = ((action or {}).get("args") or {}).get("content")
         if content:
             from ..engines.semantic import select_relevant_obligations
             obligations = select_relevant_obligations((ctx.contract.meta or {}).get("goal"), content,
                                                       obligations, getattr(ctx, "judge_fn", None))
         return self._missing_obligation_acquire(ctx, obligations)
-
-    # -- helpers (pure; over contract obligations + ledger evidence) --
-    def _required_evidence_obligations(self, c, sem):
-        cp = c.commit_point_for(sem) or {}
-        top = list(cp.get("requires") or [])
-        if not top:
-            return []
-        idx = {}
-        for o in list(getattr(c, "evidence_obligations", []) or []) + list(getattr(c, "workflow_obligations", []) or []):
-            if o.get("id"):
-                idx[o["id"]] = o
-        seen, leaves, queue = set(), [], list(top)
-        while queue:
-            oid = queue.pop(0)
-            if oid in seen:
-                continue
-            seen.add(oid)
-            o = idx.get(oid)
-            if not o:
-                continue
-            res = (o.get("satisfied_by") or {}).get("resource")
-            if res:
-                leaves.append((oid, res))
-            for r in (o.get("requires") or []):
-                queue.append(r)
-        return leaves
-
-    def _validated_resources(self, led):
-        out = set()
-        for e in getattr(led, "evidence", []):
-            if e.get("status") == "VALIDATED" and e.get("scope_relation") != "foreign" and e.get("resource"):
-                out.add(e.get("resource"))
-        return out
-
-    def _affordance(self, oid, resource, read_tool):
-        if not resource:
-            return None
-        return {"capability": "acquire_record", "tool": read_tool,
-                "args": {"resourceType": resource}, "risk": "R0"}

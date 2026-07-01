@@ -46,7 +46,7 @@ def resource_type_for_category(category):
 
 def context_refs(task):
     """Resolve subject/practitioner/authoredOn from the PUBLIC task context only. Returns dict or {} if the
-    subject cannot be resolved (=> no completion). PhysicianBench: FHIR Patient.id == MRN == context.patient_ref."""
+    subject cannot be resolved (=> no completion). this record substrate: the FHIR Patient.id equals the MRN equals context.patient_ref."""
     ctx = (task or {}).get("context") or {}
     ref = ctx.get("patient_ref")
     if not ref:

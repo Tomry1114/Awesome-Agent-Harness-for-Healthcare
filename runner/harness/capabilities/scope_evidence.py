@@ -91,6 +91,14 @@ class ScopeEvidenceBinding(Capability):
                      and (binding != "required" or sem.target_entity is not None))
             rel = ("matched" if (subj is not None and active is not None and _same_subject(subj, active))
                    else ("foreign" if (subj is not None and active is not None) else "unknown"))
+            # EvidenceState (Commit A): classify via the adapter's declared result-semantics for this resource,
+            # so a confirmed-EMPTY read is ABSENT (obligation CHECKED, not decision-changing) rather than a
+            # non-resolving ATTEMPTED. A failed/uncertain read is FAILED/UNKNOWN -> still unresolved.
+            from ..evidence_state import classify_evidence_state
+            from ..adapter_compiler import result_semantics_for
+            _es = None
+            if sem.resource:
+                _es = classify_evidence_state(result, result_semantics_for(ctx.manifest, sem.resource))
             ctx.ledger.add_evidence(type=(sem.resource or sem.capability), value=_summarize(result),
                                     subject_id=subj, source_event="step-%d" % ctx.step,
                                     source_type=sem.source_class,
@@ -98,6 +106,7 @@ class ScopeEvidenceBinding(Capability):
                                            "value_full": _full(result),
                                            "source_class": sem.source_class,
                                            "status": ("VALIDATED" if valid else "ATTEMPTED"),
+                                           "evidence_state": _es,
                                            "scope_relation": rel})
         return None
 

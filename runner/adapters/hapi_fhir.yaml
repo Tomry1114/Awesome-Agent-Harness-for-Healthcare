@@ -7,6 +7,40 @@ substrate: structured_record
 clinical_modules: [medication_safety]
 
 manifest:
+  # EVIDENCE AFFORDANCES (Commit A): per evidence_unit, the EXACT read tool + subject parameter + id shape +
+  # result semantics. Core compiles an abstract EvidenceRequest through these -- it never guesses `patient` vs
+  # `subject` from the resource name. Fixes the live `AllergyIntolerance?subject=` -> HTTP 400 bug.
+  evidence_affordances:
+    - evidence_unit: AllergyIntolerance
+      tool: fhir_search
+      subject_arg: patient            # AllergyIntolerance rejects `subject`; HAPI needs `patient`
+      subject_ref_style: typed_ref    # patient=Patient/<id>
+      static_args: {resourceType: AllergyIntolerance}
+      result_semantics: {collection_paths: [entries], count_paths: [total], absence_when_empty: true}
+    - evidence_unit: MedicationRequest
+      tool: fhir_search
+      subject_arg: patient
+      subject_ref_style: typed_ref
+      static_args: {resourceType: MedicationRequest}
+      result_semantics: {collection_paths: [entries], count_paths: [total], absence_when_empty: true}
+    - evidence_unit: ServiceRequest
+      tool: fhir_search
+      subject_arg: subject            # ServiceRequest uses `subject` (matches the eval's own query)
+      subject_ref_style: typed_ref
+      static_args: {resourceType: ServiceRequest}
+      result_semantics: {collection_paths: [entries], count_paths: [total], absence_when_empty: true}
+    - evidence_unit: Observation
+      tool: fhir_search
+      subject_arg: subject
+      subject_ref_style: typed_ref
+      static_args: {resourceType: Observation}
+      result_semantics: {collection_paths: [entries], count_paths: [total], absence_when_empty: true}
+    - evidence_unit: Condition
+      tool: fhir_search
+      subject_arg: subject
+      subject_ref_style: typed_ref
+      static_args: {resourceType: Condition}
+      result_semantics: {collection_paths: [entries], count_paths: [total], absence_when_empty: true}
   # repair_targets (item 3): the proposed FHIR payload paths (harness root {candidate, state}). Standard
   # FHIR resource structure -- adapter schema, not gold.
   repair_targets:

@@ -4,8 +4,8 @@ A commitment (a clinical plan, an answer, a form/action) decomposes into typed S
 slot granularity instead of rewriting the whole artifact: find the AFFECTED slot, generate ONLY its patch,
 deterministically merge, and promote per-slot. This avoids the "one local fix drowned by a whole-text
 comparator -> uncertain -> keep A" failure. Substrate-agnostic: slot_types are declared by adapters/policy
-(PB: diagnosis/medication/workup/follow_up; MedCTA: primary_conclusion/polarity/region/severity; HAB:
-field/disposition/submit_state). No benchmark names here.
+(e.g. diagnosis/medication/workup/follow_up for a plan; primary_conclusion/polarity/region for an
+answer; field/disposition/submit_state for a form). No benchmark names here.
 """
 from dataclasses import dataclass, field
 
