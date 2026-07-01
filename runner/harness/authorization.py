@@ -12,6 +12,20 @@ from dataclasses import dataclass, field
 VALID_SOURCES = ("user_goal", "deterministic_gap", "evidence_supported_plan")
 MUTATION_TYPES = ("create", "update", "submit")
 
+# Authorization lifecycle (Commit C1). Matchable ONLY while AVAILABLE. RESERVED = claimed for one
+# pending action (combined ALLOW not yet confirmed). DISPATCHED = set IMMEDIATELY before the env
+# call; from then the mutation may have landed even on a transport error, so it can NEVER
+# re-authorize another mutation. VERIFIED = read-back confirmed. UNKNOWN = read-back ambiguous
+# (reconcile only, never reuse). FAILED = definitely not executed. CANCELLED = reservation released.
+AUTH_AVAILABLE = "AVAILABLE"
+AUTH_RESERVED = "RESERVED"
+AUTH_DISPATCHED = "DISPATCHED"
+AUTH_VERIFIED = "VERIFIED"
+AUTH_FAILED = "FAILED"
+AUTH_UNKNOWN = "UNKNOWN"
+AUTH_CANCELLED = "CANCELLED"
+AUTH_STATES = (AUTH_AVAILABLE, AUTH_RESERVED, AUTH_DISPATCHED, AUTH_VERIFIED, AUTH_FAILED, AUTH_UNKNOWN, AUTH_CANCELLED)
+
 
 @dataclass
 class MutationAuthorization:
@@ -26,7 +40,16 @@ class MutationAuthorization:
     baseline_state_version: int = 0
     evidence_version: int = 0
     max_uses: int = 1
-    consumed: bool = False
+    status: str = AUTH_AVAILABLE       # AVAILABLE|RESERVED|DISPATCHED|VERIFIED|FAILED|UNKNOWN|CANCELLED
+
+    @property
+    def matchable(self):
+        return self.status == AUTH_AVAILABLE
+
+    @property
+    def consumed(self):
+        """Back-compat: 'consumed' == no longer matchable (anything past AVAILABLE)."""
+        return self.status != AUTH_AVAILABLE
 
 
 def action_target_path(sem, action):
@@ -44,8 +67,8 @@ def action_target_path(sem, action):
 def exact_scope_match(auth, sem, action):
     """True ONLY on an EXACT scope match (never a superset). A mismatch on semantic_type / tool / effect /
     target_path -> no match -> the mutation is unauthorized."""
-    if auth is None or auth.consumed:
-        return False
+    if auth is None:
+        return False   # pure scope match; matchability (status == AVAILABLE) is checked by the caller
     if getattr(sem, "semantic_type", None) != auth.allowed_semantic_type:
         return False
     if auth.allowed_tool is not None and (action or {}).get("tool") != auth.allowed_tool:

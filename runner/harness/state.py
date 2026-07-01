@@ -107,16 +107,59 @@ class Ledger:
         return auth
 
     def find_matching_authorization(self, sem, action):
-        """The unconsumed authorization whose EXACT scope this action matches, or None."""
-        from .authorization import exact_scope_match
+        """The AVAILABLE authorization whose EXACT scope this action matches, or None (matchable == AVAILABLE)."""
+        from .authorization import exact_scope_match, AUTH_AVAILABLE
         for auth in self.mutation_authorizations:
-            if not auth.consumed and exact_scope_match(auth, sem, action):
+            if auth.status == AUTH_AVAILABLE and exact_scope_match(auth, sem, action):
                 return auth
         return None
 
-    def consume_authorization(self, auth):
+    # -- authorization lifecycle transitions (Commit C1) --
+    def reserve_authorization(self, auth):
+        """AVAILABLE -> RESERVED: claim it for ONE pending action (combined-ALLOW not yet confirmed)."""
+        from .authorization import AUTH_AVAILABLE, AUTH_RESERVED
+        if auth is not None and auth.status == AUTH_AVAILABLE:
+            auth.status = AUTH_RESERVED
+            return True
+        return False
+
+    def dispatch_authorization(self, auth):
+        """RESERVED -> DISPATCHED: set IMMEDIATELY before the env call. Spent from here (may have landed)."""
+        from .authorization import AUTH_DISPATCHED
         if auth is not None:
-            auth.consumed = True
+            auth.status = AUTH_DISPATCHED
+
+    def verify_authorization(self, auth):
+        from .authorization import AUTH_VERIFIED
+        if auth is not None:
+            auth.status = AUTH_VERIFIED
+
+    def unknown_authorization(self, auth):
+        from .authorization import AUTH_UNKNOWN
+        if auth is not None:
+            auth.status = AUTH_UNKNOWN
+
+    def fail_authorization(self, auth):
+        from .authorization import AUTH_FAILED
+        if auth is not None:
+            auth.status = AUTH_FAILED
+
+    def release_authorization(self, auth):
+        """RESERVED -> AVAILABLE: the combined decision was NOT ALLOW; return the reservation for retry."""
+        from .authorization import AUTH_RESERVED, AUTH_AVAILABLE
+        if auth is not None and auth.status == AUTH_RESERVED:
+            auth.status = AUTH_AVAILABLE
+
+    def cancel_authorization(self, auth):
+        from .authorization import AUTH_CANCELLED
+        if auth is not None:
+            auth.status = AUTH_CANCELLED
+
+    def consume_authorization(self, auth):
+        """Back-compat single-use consume == mark DISPATCHED (spent, not reusable). C2 replaces the callers."""
+        from .authorization import AUTH_DISPATCHED
+        if auth is not None:
+            auth.status = AUTH_DISPATCHED
 
     def bump_opportunity(self, key, step=None, n=1):
         """Count one opportunity. When a step is given, the same (key, step) counts ONCE — so a single
