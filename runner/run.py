@@ -205,6 +205,7 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
     _pending_artifact = None   # artifact surface: held root deliverable content A + evidence baseline, awaiting candidate B
     _reconcile = None   # P0.1: an UNKNOWN commit under restricted read-back recovery (action,res,budget)
     _forced_action = None   # harness-dispatched read-only acquisition, run through the NORMAL tool pipeline
+    _plan_patched = set()   # Phase 3: deliverable paths already goal-completeness-patched (fire once each)
     _deliv_writes_used = 0   # at most ONE reserved over-budget deliverable write (off/enforce budget parity)
     deliv = DeliverableScaffold(task)  # PB deliverable scaffolding (Codex #1: extracted from the generic runner; no-op for non-PB)
     _fail_sig = None; _fail_n = 0; _aborted = False  # circuit breaker: abort on repeated identical failing call
@@ -486,6 +487,32 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
                                "content_sha": hashlib.sha1((_chosen_content or "").encode("utf-8")).hexdigest()[:12],
                                "status": "ok"})
             _pending_artifact = None
+        # PLAN COMPLETENESS (Phase 3): before the DELIVERABLE commit lands, fill any slot the PUBLIC GOAL
+        # requires but the draft omits -- localized, append-only, slot-level-promoted. Oracle-blind (goal +
+        # draft only). Gated on the manifest-declared commit (not scratch writes) + a per-path fire-once guard.
+        if (_harness is not None and os.environ.get("MH_REPAIR", "hard") in ("soft", "select", "full")
+                and os.environ.get("MH_PLAN_COMPLETENESS", "1") != "0"
+                and action.get("tool") == "write_file" and (action.get("args") or {}).get("content")):
+            _pc_sem = getattr(_harness.ctx, "sem", None)
+            _pc_path = (action.get("args") or {}).get("path")
+            if (_pc_sem is not None and _pc_sem.is_commit() and _pc_path not in _plan_patched):
+                _plan_patched.add(_pc_path)
+                try:
+                    from harness.plan_completeness import compute_completeness_patch
+                    _cm = (_harness.contract.meta if (_harness.contract and _harness.contract.meta) else {})
+                    _pc = compute_completeness_patch(action["args"]["content"], _cm.get("goal"),
+                                                     getattr(_harness.ctx, "judge_fn", None))
+                except Exception as _pce:
+                    _harness_runtime_errors.append("plan_completeness: %r" % _pce); _pc = None
+                if _pc and _pc.get("applied"):
+                    action["args"]["content"] = _pc["merged_content"]
+                if _pc is not None:
+                    trajectory.append({"step": step, "event_type": "plan_completeness_patch", "path": _pc_path,
+                                       "applied": bool(_pc.get("applied")), "reason": _pc.get("reason"),
+                                       "required": _pc.get("required"), "missing": _pc.get("missing"),
+                                       "filled": _pc.get("filled"), "surface": "artifact",
+                                       "content_sha": hashlib.sha1((action["args"].get("content") or "").encode("utf-8")).hexdigest()[:12],
+                                       "status": "ok"})
         _state_before = _state_hash(env); _snap_before = _state_snapshot(env)
         try:
             res = env.call_tool(action["tool"], action.get("args", {}))

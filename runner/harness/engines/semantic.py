@@ -791,3 +791,112 @@ def build_evidence_delta_pack(plan, new_evidence, goal, judge_fn=None):
              "if it conflicts with a medication/dose/diagnosis, fix exactly that." % (aff or "(none)", pres or "(all)"))
     return {"new_evidence": d.get("new_evidence") or [], "affected_sections": aff,
             "preserve_sections": pres, "instruction": instr}
+
+
+# =====================================================================================================
+# PLAN COMPLETENESS (Phase 3 -- the COMPLETE recovery for a goal-required-but-missing commitment slot).
+# A deliverable can FAIL not because a claim is wrong but because a slot the PUBLIC GOAL requires is simply
+# ABSENT (no follow-up section, no workup, no monitoring plan). This is the F->T path least dependent on a
+# chance-positive record: it needs only the goal's own structure + the draft. Oracle-blind (reads ONLY the
+# public goal + the agent's draft; never gold/checkpoint). Localized: fills ONLY the missing slot, never
+# rewrites or edits existing content. All three functions FAIL-SAFE toward "do nothing" so the module can
+# never fabricate a requirement, drop a present slot, or over-fire.
+# =====================================================================================================
+
+_REQ_SLOTS_PROMPT = (
+    "You are decomposing a clinical task's DELIVERABLE structure. From the GOAL below, list ONLY the sections a "
+    "COMPLETE deliverable is EXPLICITLY required to contain -- i.e. components the goal itself asks for (or that "
+    "a structure the goal names by title requires). Do NOT invent optional extras, and do NOT list a section "
+    "the goal does not clearly require. If the goal is generic and mandates no specific sections, return an empty "
+    "list. Do NOT write any section's content. Reply STRICT JSON: "
+    '{{"required_slots": [{{"slot_id": "<lower_snake_case>", "description": "<short: what this section must cover>"}}]}}.'
+    "\n\nGOAL:\n{goal}\n")
+
+
+def extract_required_slots(goal, judge_fn=None):
+    """Required commitment slots implied by the PUBLIC goal. [{'slot_id','description'}]. Fail-safe: [] on
+    no-judge / parse-fail / empty (=> no completeness gap => never fabricates a requirement)."""
+    if not judge_fn or not str(goal or "").strip():
+        return []
+    try:
+        d = _json_obj(judge_fn(_REQ_SLOTS_PROMPT.format(goal=str(goal)[:2500])))
+    except Exception:
+        return []
+    if not isinstance(d, dict):
+        return []
+    out = []
+    for s in (d.get("required_slots") or []):
+        if not isinstance(s, dict):
+            continue
+        sid = str(s.get("slot_id") or "").strip().lower().replace(" ", "_")
+        if sid:
+            out.append({"slot_id": sid, "description": str(s.get("description") or sid)[:300]})
+    # de-dup by slot_id, order preserved
+    seen, uniq = set(), []
+    for s in out:
+        if s["slot_id"] not in seen:
+            seen.add(s["slot_id"]); uniq.append(s)
+    return uniq
+
+
+_PRESENT_SLOTS_PROMPT = (
+    "A REQUIRED-section checklist and an agent's DRAFT deliverable are below. For EACH required section decide "
+    "whether the draft ADDRESSES it with substantive content (present) or leaves it ABSENT/empty (absent). Judge "
+    "only presence of substantive content, NOT correctness. Reply STRICT JSON: "
+    '{{"present": ["<slot_id>"...], "absent": ["<slot_id>"...]}}.'
+    "\n\nREQUIRED SECTIONS:\n{listing}\n\nDRAFT:\n{content}\n")
+
+
+def parse_present_slots(content, required_slots, judge_fn=None):
+    """Which required slots the draft already ADDRESSES. Returns [dict slot] present (slot_id + required_by_goal).
+    Fail-safe: treat ALL required as PRESENT on no-judge / no-content / parse-fail (=> missing set empty =>
+    never over-fires)."""
+    req = [s for s in (required_slots or []) if s.get("slot_id")]
+    if not req:
+        return []
+    all_present = [{"slot_id": s["slot_id"], "value": "<present>", "required_by_goal": True} for s in req]
+    if not judge_fn or not str(content or "").strip():
+        return all_present
+    listing = "\n".join("%s -> %s" % (s["slot_id"], s.get("description", "")) for s in req)
+    try:
+        d = _json_obj(judge_fn(_PRESENT_SLOTS_PROMPT.format(listing=listing, content=str(content)[:6000])))
+    except Exception:
+        return all_present
+    if not isinstance(d, dict) or "present" not in d:
+        return all_present
+    pset = set(str(x).strip().lower().replace(" ", "_") for x in (d.get("present") or []))
+    return [{"slot_id": s["slot_id"], "value": "<present>", "required_by_goal": True}
+            for s in req if s["slot_id"] in pset]
+
+
+_SLOT_GEN_PROMPT = (
+    "You are a clinical documentation specialist COMPLETING a deliverable. The draft is MISSING one required "
+    "section. Produce ONLY that section, consistent with the GOAL and the draft's EXISTING plan. Ground it in "
+    "facts already established in the draft; do NOT invent patient specifics (labs, doses, diagnoses) not present "
+    "in the draft, and do NOT restate or modify any other section. If you cannot produce a defensible section "
+    "from the available material, return an empty content string. Reply STRICT JSON: "
+    '{{"section_title": "<short heading>", "content": "<the section body only>"}}.'
+    "\n\nGOAL:\n{goal}\n\nMISSING SECTION:\n{slot_id} -- {desc}\n\nEXISTING DRAFT:\n{content}\n")
+
+
+def generate_slot_content(goal, draft, slot, judge_fn=None):
+    """Structured specialist: content for ONE missing required slot, grounded in goal + draft. Returns
+    {'section_title','content'} or None (no judge / parse-fail / empty body -- never a fabricated section)."""
+    if not judge_fn:
+        return None
+    sid = str((slot or {}).get("slot_id") or "").strip()
+    desc = str((slot or {}).get("description") or sid)
+    if not sid:
+        return None
+    try:
+        d = _json_obj(judge_fn(_SLOT_GEN_PROMPT.format(goal=str(goal or "")[:1500], slot_id=sid,
+                                                       desc=desc[:300], content=str(draft or "")[:5000])))
+    except Exception:
+        return None
+    if not isinstance(d, dict):
+        return None
+    body = str(d.get("content") or "").strip()
+    if not body:
+        return None
+    title = str(d.get("section_title") or sid.replace("_", " ").title()).strip()
+    return {"section_title": title, "content": body}
