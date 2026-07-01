@@ -479,9 +479,12 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
                 _harness_runtime_errors.append("evaluate_artifact: %r" % _ae); _adec, _adisp = "KEEP_A", "kept_original_gate_error"
             if _adec != "ADOPT_B":
                 action["args"]["content"] = _Aart    # retain root plan A (B not evidence-justified)
+            _chosen_content = action["args"].get("content", "")
             trajectory.append({"step": step, "event_type": "artifact_promotion", "path": _pending_artifact.get("path"),
                                "decision": _adec, "final_disposition": _adisp, "surface": "artifact",
-                               "n_new_evidence": len(_newev), "status": "ok"})
+                               "n_new_evidence": len(_newev),
+                               "content_sha": hashlib.sha1((_chosen_content or "").encode("utf-8")).hexdigest()[:12],
+                               "status": "ok"})
             _pending_artifact = None
         _state_before = _state_hash(env); _snap_before = _state_snapshot(env)
         try:
@@ -610,6 +613,26 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
         else:
             _fail_sig = None; _fail_n = 0
         last_obs = obs; last_res = res
+        if action.get("_harness_acquire") and _pending_artifact is not None and _harness is not None:
+            # structured EvidenceDeltaPack: help the (weak) agent CONSUME the record it just read -> which plan
+            # sections to revise vs preserve, before it re-writes the deliverable. Generic; not an answer.
+            try:
+                from harness.engines.semantic import build_evidence_delta_pack
+                _pbase = _pending_artifact.get("baseline_ev_ids") or set()
+                _pnew = [e for e in _harness.ledger.evidence if e.get("evidence_id") not in _pbase
+                         and e.get("status") == "VALIDATED" and e.get("scope_relation") != "foreign"]
+                _pack = build_evidence_delta_pack(_pending_artifact.get("root_payload", ""), _pnew,
+                                                  (_harness.contract.meta or {}).get("goal") if _harness.contract else None,
+                                                  judge_fn=getattr(_harness.ctx, "judge_fn", None))
+                if _pack:
+                    pending_harness_feedback = {"decision": "ACQUIRE", "stage": "evidence_delta_pack",
+                                                "evidence_delta_pack": _pack, "missing_obligations": [],
+                                                "reason": _pack.get("instruction")}
+                    trajectory.append({"step": step, "event_type": "evidence_delta_pack",
+                                       "affected_sections": _pack.get("affected_sections"),
+                                       "preserve_sections": _pack.get("preserve_sections"), "status": "ok"})
+            except Exception as _pe:
+                _harness_runtime_errors.append("evidence_delta_pack: %r" % _pe)
     if not finished and not _aborted:  # #8 ran out of steps without a final answer (circuit-breaker abort logs its own event)
         trajectory.append({"step": max_steps, "event_type": "agent_error", "error": "max_steps_exceeded", "status": "error"})
     # deliverable enforcement (final): guarantee ONE write attempt if the required file is still missing

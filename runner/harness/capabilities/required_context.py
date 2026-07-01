@@ -64,12 +64,11 @@ class RequiredContext(Capability):
         return out
 
     def before_final(self, answer, ctx):
-        # PRIMARY trigger: the final answer is ALWAYS a commit. Before committing the deliverable, every declared
-        # task-level evidence obligation (required context) must be gathered -- regardless of HOW the deliverable
-        # is produced (FHIR create OR a written plan). Missing + readable -> ACQUIRE it read-only.
-        if not _enabled() or not ctx.contract:
-            return None
-        return self._missing_obligation_acquire(ctx, self._all_evidence_obligations(ctx.contract))
+        # DISABLED: deliverable acquisition is driven by the INTENT-SCOPED before_action hook on the deliverable
+        # write (which the forced-deliverable path also traverses). A before_final _all_evidence_obligations
+        # trigger over-fires (ignores relevance), lands AFTER the artifact is written (too late to shape it), and
+        # cannot be content-scoped -- so it is not used here.
+        return None
 
     def before_action(self, action, ctx):
         # EARLY trigger: before a COMMIT or a DELIVERABLE WRITE (so the deliverable is produced WITH the required

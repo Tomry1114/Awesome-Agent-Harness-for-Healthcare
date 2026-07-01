@@ -754,3 +754,40 @@ def select_relevant_obligations(goal, content, obligations, judge_fn=None):
     keep = set(str(x) for x in (d.get("relevant") or []))
     sel = [(oid, res) for (oid, res) in obs if oid in keep]
     return sel       # may be empty -> the deliverable's actions depend on no required record
+
+
+# =====================================================================================================
+# EVIDENCE-DELTA PACK. A weak agent that just READ a record often fails to CONSUME it. Instead of "use it",
+# hand back a STRUCTURED pack: which plan sections the new evidence affects (revise) vs is unaffected
+# (preserve verbatim). This helps the agent incorporate evidence it truly read -- NOT a correct answer.
+# =====================================================================================================
+
+_DELTA_PACK_PROMPT = (
+    "An agent read a clinical record while drafting a DELIVERABLE plan. Produce a STRUCTURED pack telling the "
+    "agent EXACTLY how to incorporate the record: which plan sections the new evidence AFFECTS (must be revised) "
+    "and which are UNAFFECTED (must be preserved verbatim). Do NOT write the plan or give the correct answer; "
+    "only map evidence -> sections. If the new record bears on NO section, return empty affected_sections. Reply "
+    "STRICT JSON: {{\"new_evidence\": [{{\"type\": \"<resource>\", \"finding\": \"<short>\", \"relevant_to\": "
+    "[\"<section>\"...]}}], \"affected_sections\": [\"<section>\"...], \"preserve_sections\": [\"<section>\"...]}}."
+    "\n\nPUBLIC GOAL:\n{goal}\n\nDRAFT PLAN:\n{plan}\n\nNEW RECORD(S):\n{ev}\n")
+
+
+def build_evidence_delta_pack(plan, new_evidence, goal, judge_fn=None):
+    """Structured 'how to consume the new record' pack, or None (no judge / no new evidence / parse-fail)."""
+    if not judge_fn or not new_evidence:
+        return None
+    prompt = _DELTA_PACK_PROMPT.format(goal=str(goal or "")[:1000], plan=str(plan or "")[:3500],
+                                       ev=_format_new_evidence(new_evidence)[:4000])
+    try:
+        d = _json_obj(judge_fn(prompt))
+    except Exception:
+        return None
+    if not isinstance(d, dict):
+        return None
+    aff = [str(x) for x in (d.get("affected_sections") or [])]
+    pres = [str(x) for x in (d.get("preserve_sections") or [])]
+    instr = ("A required record was read for you. Based ONLY on it, revise these plan sections: %s. PRESERVE "
+             "these sections unchanged: %s. Do NOT change any recommendation the new evidence does not bear on; "
+             "if it conflicts with a medication/dose/diagnosis, fix exactly that." % (aff or "(none)", pres or "(all)"))
+    return {"new_evidence": d.get("new_evidence") or [], "affected_sections": aff,
+            "preserve_sections": pres, "instruction": instr}
