@@ -25,7 +25,7 @@ def _tool_names(tools):
 
 
 # read affordances a stateful substrate may expose (adapter-declared verbs; core does not invent substitutes)
-_READ_TOOLS = ("fhir_read", "fhir_search", "read_record", "get_record")
+_READ_TOOLS = ("fhir_search", "fhir_read", "read_record", "get_record")   # search (by resourceType) before read (needs an id)
 
 
 class RequiredContext(Capability):
