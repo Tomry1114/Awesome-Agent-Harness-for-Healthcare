@@ -36,6 +36,18 @@ class RequiredContext(Capability):
                 out.add(e.get("resource"))
         return out
 
+    def _tool_available(self, ctx, tool):
+        """Admission: the adapter-compiled tool MUST exist in the task's available tools. Unknown tool list ->
+        do not over-block (return True). Prevents RequiredContext emitting an ACQUIRE the env cannot run."""
+        meta = (ctx.contract.meta if getattr(ctx, "contract", None) is not None else None) or {}
+        tools = meta.get("available_tools")
+        if not tools:
+            return True
+        names = set()
+        for t in tools:
+            names.add(t if isinstance(t, str) else (t.get("name") if isinstance(t, dict) else None))
+        return tool in names
+
     def _missing_obligation_acquire(self, ctx, required):
         """required = [(oid, resource)]. ACQUIRE the first UNRESOLVED one via the adapter-compiled affordance."""
         led = ctx.ledger
@@ -51,6 +63,8 @@ class RequiredContext(Capability):
             req = compile_evidence_request(ctx.manifest, res, active, obligation_id=oid)
             if not req or not (req.affordance or {}).get("tool"):
                 continue                               # adapter declares no affordance -> not acquirable here
+            if not self._tool_available(ctx, (req.affordance or {}).get("tool")):
+                continue                               # C3.1 fix 6: adapter tool absent from available_tools -> a dead ACQUIRE; skip (never emit an unexecutable acquisition)
             na = dict(req.affordance); na["read_only"] = True
             return self._decide(D.ACQUIRE, rule_id="required_context", reason_code="missing_required_context",
                                 reason="acquire required context %s (%s) before committing" % (oid, res),

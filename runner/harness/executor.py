@@ -97,7 +97,7 @@ class ActionExecutor:
                                     result_status=outcome.result_status)
 
     # ---- stage 3: the canonical tool_call event (verbatim) -------------------------------------------
-    def build_event(self, action, outcome, step):
+    def build_event(self, action, outcome, step, origin="agent", audience="agent"):
         res, err = outcome.res, outcome.err
         src_full = json.dumps(res, ensure_ascii=False)
         obs = src_full[:int(os.environ.get("MH_OBS_MAX_LEN", "10000"))]
@@ -108,7 +108,9 @@ class ActionExecutor:
               "canonical_result": self._canon.canonical_result(res),
               "agent_visible_text": obs,  # EXACT string fed into the agent context (Observability truth)
               "canonical_observation": self._canon.canonical_observation(res, self.env_type),
-              "delivery_record": {"produced": bool(res), "rendered_to_agent": True, "consumed_by_agent": False,
+              "origin": origin,        # agent | recovery  (C4: who initiated this action)
+              "audience": audience,    # agent | harness | both  (C4: who the observation is delivered to)
+              "delivery_record": {"produced": bool(res), "rendered_to_agent": (audience in ("agent", "both")), "consumed_by_agent": False,
                                   "source_hash": __import__("hashlib").sha256(src_full.encode("utf-8", "replace")).hexdigest()[:12],
                                   "rendered_hash": __import__("hashlib").sha256(obs.encode("utf-8", "replace")).hexdigest()[:12],
                                   "truncated": len(src_full) > len(obs),
