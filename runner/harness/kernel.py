@@ -222,6 +222,7 @@ class HarnessKernel:
                 decisions.append(d)
         self._record_findings(decisions, "before_action")
         winner = D.combine(decisions, stage="before_action")
+        self.ctx.last_raw_decision = winner   # C5: expose the RAW winner (pre-mode) so recovery can require raw ALLOW too
         eff = self._apply_mode(winner, "before_action")
         eff.feedback = _feedback(winner) if eff.type != D.ALLOW else None
         self._track_repair(winner, eff)

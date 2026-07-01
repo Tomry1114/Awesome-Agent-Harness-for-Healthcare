@@ -38,7 +38,7 @@ class Capability:
 
 class HarnessContext:
     """What every capability + the kernel share for one task."""
-    __slots__ = ("ledger", "contract", "policy", "mode", "step", "env_type", "risk_of", "observation",
+    __slots__ = ("ledger", "contract", "policy", "mode", "step", "env_type", "risk_of", "observation", "last_raw_decision",
                  "judge_fn", "judge_model", "semantic_remaining", "manifest", "sem", "risk",
                  "result_ok", "result_status", "verification", "last_observation", "observed_subject", "displayed_subject",
                  "action_key", "evidence_version_before", "current_state", "final_is_commit")
@@ -53,6 +53,7 @@ class HarnessContext:
         self.env_type = env_type
         self.risk_of = risk_of      # legacy; the kernel now sets ctx.sem + ctx.risk per action
         self.observation = None     # canonical_observation of the most recent action (after_action only)
+        self.last_raw_decision = None  # C5: the RAW combined before_action winner (pre-mode); recovery reads raw+effective
         self.manifest = manifest or {}   # substrate manifest (adapter layer); tool->semantic mapping
         self.sem = None             # SemanticAction of the current action (set by the kernel)
         self.risk = None            # risk tier of the current action (set by the kernel)

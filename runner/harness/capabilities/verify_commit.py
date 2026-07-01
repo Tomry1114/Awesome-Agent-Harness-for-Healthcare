@@ -47,7 +47,7 @@ class VerifyAndCommit(Capability):
         # authorization", NOT "was the last finding deterministic".
         if _is_mutation and getattr(ctx.ledger, "mutation_hold", False):
             _auth = ctx.ledger.find_matching_authorization(ctx.sem, action)
-            if _auth is None and ctx.contract and ctx.contract.matching_commit_points(ctx.sem):
+            if _auth is None and not (action or {}).get("_recovery") and ctx.contract and ctx.contract.matching_commit_points(ctx.sem):   # C5: recovery mutations get NO user_goal pass-through -- they must match their own deterministic_gap auth
                 # USER_GOAL pass-through: a mutation COVERED by a declared commit point is the task's ORIGINAL
                 # intended commit (same operation/resource), not a semantic-feedback-induced off-plan write ->
                 # auto-mint a user_goal authorization so normal task flow is not blocked by the hold.
