@@ -64,6 +64,7 @@ class Ledger:
         self.mutation_hold = False          # set when a non-deterministic semantic finding emits feedback
         self.mutation_hold_origin = None     # {intervention_id, finding_id, capability}
         self.mutation_authorizations = []    # [MutationAuthorization] (scoped, single-use)
+        self.pending_authorization = None   # C2: the auth verify_commit MATCHED this action (reserve-eligible); the executor reserves/dispatches it -- capabilities never mutate auth state
         self.terminal_locked = False        # graded commit verified -> no further mutation (rule 1)
         self._auth_seq = 0
         # per-metric OPPORTUNITY counts (denominators): each metric is rate = numerator / its own

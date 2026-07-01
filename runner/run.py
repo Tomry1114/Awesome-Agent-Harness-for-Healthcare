@@ -464,6 +464,11 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
                     trajectory.append({"step": step, "event_type": "harness_escalation",
                                        "feedback": _hb.feedback, "status": "error"})
                     _aborted = True; break
+        _pending_auth = None   # C3: the mutation authorization the executor will dispatch for THIS action
+        if (_harness is not None and _hb is not None and _hb.type == "ALLOW"
+                and getattr(_harness.ledger, "pending_authorization", None) is not None):
+            _pending_auth = _harness.ledger.pending_authorization
+            _harness.ledger.reserve_authorization(_pending_auth)   # AVAILABLE -> RESERVED (combined winner is ALLOW)
         if (_pending_artifact is not None and _harness is not None and action.get("tool") == "write_file"
                 and (action.get("args") or {}).get("content")
                 and (action.get("args") or {}).get("path") == _pending_artifact.get("path")):
@@ -521,12 +526,17 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
                                        "filled": _pc.get("filled"), "surface": "artifact",
                                        "content_sha": hashlib.sha1((action["args"].get("content") or "").encode("utf-8")).hexdigest()[:12],
                                        "status": "ok"})
-        _outcome = _executor.execute_and_normalize(action, env)   # Commit B: single per-action pipeline
+        _outcome = _executor.execute_and_normalize(action, env, ledger=(_harness.ledger if _harness is not None else None), auth=_pending_auth)   # Commit B/C3
         res = _outcome.res; _err = _outcome.err; _recon = _outcome.recon
         _state_before = _outcome.state_before; _state_after = _outcome.state_after
         _snap_before = _outcome.snap_before; _snap_after = _outcome.snap_after
         _result_status = _outcome.result_status
         _env_actions += 1   # the environment call HAPPENED (count before any post-action escalate / circuit-break)
+        if _pending_auth is not None and _harness is not None:   # C3: a DISPATCHED mutation is VERIFIED (read-back confirmed) or UNKNOWN (ambiguous) -- never re-usable
+            if _recon is not None and _recon.get("confirmed") is True:
+                _harness.ledger.verify_authorization(_pending_auth)
+            else:
+                _harness.ledger.unknown_authorization(_pending_auth)
         if _reconcile is not None:                   # a read executed under recovery -> try to resolve the pending commit
             try:
                 _rr = env.reconcile_write(_reconcile["action"]["tool"], _reconcile["action"].get("args", {}), _reconcile["res"])

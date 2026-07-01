@@ -19,6 +19,7 @@ class VerifyAndCommit(Capability):
     name = "verify_commit"
 
     def before_action(self, action, ctx):
+        ctx.ledger.pending_authorization = None   # C2: fresh each action; set below only if this action MATCHES an auth
         # FAIL-CLOSED: a tool action that no manifest rule (or default_action) maps is UNKNOWN to the
         # adapter. It must NOT default-allow as R0/none -> escalate so an unmapped/high-risk tool is
         # caught instead of slipping through. (The final answer is always mapped, so it is excluded.)
@@ -72,7 +73,7 @@ class VerifyAndCommit(Capability):
                                     reason_code="unverifiable_commit", deterministic=True,
                                     reason="authorized mutation lacks a verifiable postcondition",
                                     feedback="This authorized mutation cannot be verified (no postcondition); escalating.")
-            ctx.ledger.consume_authorization(_auth)   # single-use; after_action read-back verifies the effect
+            ctx.ledger.pending_authorization = _auth   # C2: RECORD the match; do NOT consume -- the executor reserves it iff the combined winner is ALLOW, then dispatches immediately before the env call
             # authorized + scoped + verifiable -> fall through to the existing commit controls below.
         # PRE-COMMIT CONTROL: an IRREVERSIBLE commit that ALREADY SUCCEEDED must not be re-executed -- a
         # redundant re-submit/re-create risks corrupting the already-landed state (e.g. a second submit that

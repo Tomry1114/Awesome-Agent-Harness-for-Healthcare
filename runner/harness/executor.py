@@ -38,8 +38,10 @@ class ActionExecutor:
         self._state_snapshot = state_snapshot  # callable(env) -> structured snapshot | None
 
     # ---- stage 1: execute + normalize + active read-back (verbatim from run.py) ----------------------
-    def execute_and_normalize(self, action, env):
+    def execute_and_normalize(self, action, env, ledger=None, auth=None):
         state_before = self._state_hash(env); snap_before = self._state_snapshot(env)
+        if ledger is not None and auth is not None:
+            ledger.dispatch_authorization(auth)   # C3: DISPATCHED set IMMEDIATELY before the env call -- from here the mutation may have landed even on a transport error, so this auth can never re-authorize another mutation
         try:
             res = env.call_tool(action["tool"], action.get("args", {}))
         except Exception as _e:
