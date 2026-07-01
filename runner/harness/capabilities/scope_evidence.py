@@ -99,13 +99,19 @@ class ScopeEvidenceBinding(Capability):
             _es = None
             if sem.resource:
                 _es = classify_evidence_state(result, result_semantics_for(ctx.manifest, sem.resource))
+            # P1: a CHECKED-but-EMPTY read (ABSENT) RESOLVES the obligation but is NOT positive validated
+            # evidence -- status CHECKED_ABSENT so it does not bump validated_evidence_version / feed a positive
+            # evidence delta. Only a PRESENT (non-empty) matched read is VALIDATED.
+            _status = ("VALIDATED" if valid else "ATTEMPTED")
+            if _es == "ABSENT":
+                _status = "CHECKED_ABSENT"
             ctx.ledger.add_evidence(type=(sem.resource or sem.capability), value=_summarize(result),
                                     subject_id=subj, source_event="step-%d" % ctx.step,
                                     source_type=sem.source_class,
                                     extra={"modality": sem.modality, "resource": sem.resource,
                                            "value_full": _full(result),
                                            "source_class": sem.source_class,
-                                           "status": ("VALIDATED" if valid else "ATTEMPTED"),
+                                           "status": _status,
                                            "evidence_state": _es,
                                            "scope_relation": rel})
         return None

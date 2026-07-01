@@ -1,31 +1,24 @@
-"""RecoveryOrchestrator (Commit C4) -- the episode state machine that safely realizes ONE agent-committed
-effect through the SINGLE action pipeline, handling ACQUIRE prerequisites as a LOOP (never recursion).
+"""RecoveryOrchestrator (Commit C4, hardened C4.1) -- the episode state machine that safely realizes ONE
+agent-committed effect through the SINGLE action pipeline, handling ACQUIRE prerequisites as a LOOP.
 
-It does NOT execute the environment itself and holds no substrate knowledge. It drives an injected `driver`
-(the run.py adapter in C5; a stub in tests) whose primitive operations are the ONLY way it touches the world:
+Driven by an injected `driver` (the run.py adapter in C5b; a stub in tests):
+  driver.mint(scope) -> auth ; driver.auth_id(auth) -> str ; driver.set_hold()
+  driver.evaluate(bound_action) -> (raw_type, effective_type[, next_action])   [full before_action]
+  driver.acquire(next_action) -> bool (True == prerequisite RESOLVED PRESENT/ABSENT, binds evidence to ledger)
+  driver.cancel(auth) ; driver.reserve(auth) -> bool ; driver.execute(bound_action, auth) -> ActionOutcome
+  driver.auth_status(auth) -> terminal status string
 
-  driver.mint(scope)                 -> a fresh deterministic_gap authorization at the CURRENT evidence version
-  driver.set_hold()                  -> put writes under a mutation_hold (so verify_commit requires the auth)
-  driver.evaluate(action)            -> (raw_decision_type, effective_decision_type[, next_action])  [before_action]
-  driver.acquire(next_action)        -> run the prerequisite READ through the SAME executor (binds evidence to
-                                        the ledger, re-runs ScopeEvidenceBinding); returns an EvidenceState-ish
-                                        resolution flag (True == resolved PRESENT/ABSENT, False == unresolved)
-  driver.cancel(auth)                -> cancel a now-stale authorization (AVAILABLE|RESERVED -> CANCELLED)
-  driver.reserve(auth)              -> AVAILABLE -> RESERVED (bool)
-  driver.execute(action, auth)       -> dispatch+execute+after_action+finalize; returns the ActionOutcome
-  driver.auth_status(auth)           -> the authorization's terminal status after execute
-
-Integrity guarantees enforced HERE (not left to the driver):
-  - ACQUIRE loop: a prerequisite is fetched, the STALE authorization is CANCELLED, and the mutation is
-    RE-EVALUATED from scratch (a resolved obligation is NOT auto-approval -- point 11).
-  - raw AND effective must both be ALLOW before any mutation (point 10): observe/assist (effective ALLOW from a
-    raw BLOCK) never mutates.
-  - bounded prerequisite rounds + bounded create retries; UNKNOWN is reconcile-only (never re-created).
+C4.1 hardening:
+  - EXHAUSTIVE post-execute switch: ONLY FAILED retries; DISPATCHED/UNKNOWN -> RECONCILING (may have landed,
+    never re-create); any other/None status -> BLOCKED_TERMINAL (never silently retried).
+  - EXACT authorization: the auth id is BOUND into the action, so before_action审 and executor dispatch see the
+    SAME authorization (driver + verify_commit enforce exact-id match).
+  - EPISODE REGISTRY keyed by EffectCompletionKey: a VERIFIED/RECONCILING/BLOCKED key is NOT re-run (create once).
+  - raw AND effective must both be ALLOW (point 10); bounded prerequisite rounds + bounded create retries.
 No benchmark names.
 """
 from dataclasses import dataclass, field
 
-# episode states
 NOT_STARTED = "NOT_STARTED"
 WAITING_PREREQUISITE = "WAITING_PREREQUISITE"
 READY = "READY"
@@ -35,13 +28,10 @@ VERIFIED = "VERIFIED"
 ALREADY_REALIZED = "ALREADY_REALIZED"
 RETRYABLE_FAILURE = "RETRYABLE_FAILURE"
 BLOCKED_TERMINAL = "BLOCKED_TERMINAL"
-_TERMINAL = (VERIFIED, ALREADY_REALIZED, BLOCKED_TERMINAL, RECONCILING)
 
 
 @dataclass(frozen=True)
 class EffectCompletionKey:
-    """Identity of ONE committed effect -- so several orders in one deliverable complete / block / retry
-    INDEPENDENTLY (point 12). Substrate-agnostic."""
     subject: str
     artifact_hash: str
     commitment_signature: str
@@ -67,61 +57,83 @@ class RecoveryOrchestrator:
         self.d = driver
         self.max_prereq = max_prereq
         self.max_create_retry = max_create_retry
+        self.episodes = {}                      # EffectCompletionKey -> EpisodeResult (C4.1 registry)
 
     def realize(self, mutation_action, scope, key=None):
-        """Drive ONE effect-completion episode to a terminal state. Returns EpisodeResult."""
+        """Drive ONE effect-completion episode to a terminal state, deduped by `key`."""
+        if key is not None:
+            rec = self.episodes.get(key)
+            if rec is not None:
+                if rec.state in (VERIFIED, ALREADY_REALIZED):
+                    return EpisodeResult(ALREADY_REALIZED, created_id=rec.created_id, auth_status=rec.auth_status,
+                                         reason="already_realized_this_episode", events=rec.events)
+                if rec.state in (RECONCILING, BLOCKED_TERMINAL):
+                    return rec                  # reconcile-only / terminal -> never re-run
+                # RETRYABLE_FAILURE -> fall through and retry
+        result = self._run(mutation_action, scope)
+        if key is not None:
+            self.episodes[key] = result
+        return result
+
+    def _run(self, mutation_action, scope):
         ev = []
         prereq_rounds = 0
         create_attempts = 0
         while True:
             auth = self.d.mint(scope)                       # fresh, AVAILABLE, at the CURRENT evidence version
-            self.d.set_hold()                               # writes now require the authorization
-            raw, eff, nxt = _norm(self.d.evaluate(mutation_action))
+            bound = dict(mutation_action)                   # C4.1: BIND the auth id so审 == dispatch is the SAME auth
+            bound["_mutation_authorization_id"] = self.d.auth_id(auth)
+            bound["_recovery"] = "COMPLETE_EFFECT"
+            self.d.set_hold()
+            raw, eff, nxt = _norm(self.d.evaluate(bound))
             ev.append({"step": "evaluate", "raw": raw, "effective": eff})
 
             if eff == "ACQUIRE":
-                self.d.cancel(auth)                         # the just-minted auth is stale once evidence changes
+                self.d.cancel(auth)                         # stale once evidence changes
                 if prereq_rounds >= self.max_prereq:
                     return EpisodeResult(BLOCKED_TERMINAL, auth_status="CANCELLED",
                                          reason="max_prerequisite_rounds", prereq_rounds=prereq_rounds, events=ev)
                 prereq_rounds += 1
-                resolved = self.d.acquire(nxt)              # READ through the same executor -> binds evidence
-                ev.append({"step": "acquire", "resolved": bool(resolved), "next": nxt})
+                resolved = self.d.acquire(nxt)
+                ev.append({"step": "acquire", "resolved": bool(resolved)})
                 if not resolved:
                     return EpisodeResult(BLOCKED_TERMINAL, reason="prerequisite_unresolved",
                                          prereq_rounds=prereq_rounds, events=ev)
-                continue                                    # RE-EVALUATE the mutation from scratch (point 11)
+                continue                                    # RE-EVALUATE from scratch (point 11)
 
-            # point 10: recovery mutation requires BOTH raw and effective ALLOW (observe/assist never mutate)
-            if not (raw == "ALLOW" and eff == "ALLOW"):
+            if not (raw == "ALLOW" and eff == "ALLOW"):     # point 10: raw AND effective ALLOW
                 self.d.cancel(auth)
                 return EpisodeResult(BLOCKED_TERMINAL, reason="not_allowed:raw=%s,eff=%s" % (raw, eff),
                                      prereq_rounds=prereq_rounds, events=ev)
 
-            if not self.d.reserve(auth):                    # AVAILABLE -> RESERVED
+            if not self.d.reserve(auth):
                 return EpisodeResult(BLOCKED_TERMINAL, reason="reserve_failed",
                                      prereq_rounds=prereq_rounds, events=ev)
-            outcome = self.d.execute(mutation_action, auth)  # dispatch(RESERVED->DISPATCHED)+execute+after+finalize
+            outcome = self.d.execute(bound, auth)
             st = self.d.auth_status(auth)
             created = getattr(outcome, "created_id", None) if outcome is not None else None
             ev.append({"step": "execute", "auth_status": st, "created_id": created})
 
+            # C4.1 EXHAUSTIVE switch -- only an explicit FAILED may retry-create
             if st == "VERIFIED":
                 return EpisodeResult(VERIFIED, created_id=created, auth_status=st,
                                      reason="landed_and_verified", prereq_rounds=prereq_rounds, events=ev)
-            if st == "UNKNOWN":                             # may have landed -> reconcile only, NEVER re-create
-                return EpisodeResult(RECONCILING, auth_status=st, reason="ambiguous_outcome_reconcile_only",
+            if st in ("UNKNOWN", "DISPATCHED"):             # may have landed -> reconcile only, NEVER re-create
+                return EpisodeResult(RECONCILING, auth_status=st,
+                                     reason="ambiguous_or_undispatched_terminal_reconcile_only",
+                                     prereq_rounds=prereq_rounds, events=ev)
+            if st != "FAILED":                              # AVAILABLE/RESERVED/CANCELLED/None -> a driver bug; NEVER retry
+                return EpisodeResult(BLOCKED_TERMINAL, auth_status=st,
+                                     reason="invalid_auth_terminal_state:%s" % st,
                                      prereq_rounds=prereq_rounds, events=ev)
             # FAILED (definitely not landed) -> bounded retry
             create_attempts += 1
             if create_attempts > self.max_create_retry:
                 return EpisodeResult(RETRYABLE_FAILURE, auth_status=st, reason="create_failed_retries_exhausted",
                                      prereq_rounds=prereq_rounds, events=ev)
-            # loop: re-mint + re-evaluate + re-execute (bounded)
 
 
 def _norm(evald):
-    """Accept (raw, eff) or (raw, eff, next_action)."""
     if isinstance(evald, (list, tuple)):
         if len(evald) >= 3:
             return evald[0], evald[1], evald[2]

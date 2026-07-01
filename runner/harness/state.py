@@ -107,6 +107,13 @@ class Ledger:
         self.mutation_authorizations.append(auth)
         return auth
 
+    def find_authorization_by_id(self, auth_id):
+        """The authorization with this exact id (any status), or None. Used for EXACT-id recovery matching."""
+        for auth in self.mutation_authorizations:
+            if auth.authorization_id == auth_id:
+                return auth
+        return None
+
     def find_matching_authorization(self, sem, action):
         """The AVAILABLE authorization whose EXACT scope this action matches AND whose evidence_version still
         equals the current validated version, or None. The version guard (C3.1) makes a stale authorization --

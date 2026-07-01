@@ -49,28 +49,39 @@ class RequiredContext(Capability):
         return tool in names
 
     def _missing_obligation_acquire(self, ctx, required):
-        """required = [(oid, resource)]. ACQUIRE the first UNRESOLVED one via the adapter-compiled affordance."""
+        """required = [(oid, resource)]. Resolve/ACQUIRE required context before a commit. C4.1 FAIL-CLOSED: an
+        UNRESOLVED required obligation that CANNOT be acquired (no affordance / tool unavailable / budget spent)
+        ESCALATEs -- it must NEVER return None, which other capabilities would read as ALLOW ("cannot get the
+        required evidence" is not "the evidence is not needed")."""
         led = ctx.ledger
-        if getattr(led, "acquire_count", 0) >= 2:      # bounded acquisition budget
-            return None
         resolved = self._resolved_units(led)
         active = led.subject_id()
+        unresolved = [(oid, res) for (oid, res) in required if res and res not in resolved]
+        if not unresolved:
+            return None                                # all required context CHECKED -> no opinion (allow)
         if not active:
-            return None
-        for (oid, res) in required:
-            if not res or res in resolved:
-                continue
+            return self._decide(D.ESCALATE, rule_id="required_context", reason_code="required_context_no_subject",
+                                deterministic=True, reason="required context is needed but there is no active subject to bind the query to",
+                                feedback="Required patient context is missing and no subject is resolved to gather it; escalating instead of committing.")
+        if getattr(led, "acquire_count", 0) >= 2:      # bounded acquisition budget, still unresolved -> fail-closed
+            return self._decide(D.ESCALATE, rule_id="required_context", reason_code="required_context_budget_exhausted",
+                                deterministic=True, reason="required context still unresolved after the acquisition budget",
+                                feedback="Required patient context could not be gathered within budget; escalating rather than committing without it.")
+        for (oid, res) in unresolved:
             req = compile_evidence_request(ctx.manifest, res, active, obligation_id=oid)
             if not req or not (req.affordance or {}).get("tool"):
-                continue                               # adapter declares no affordance -> not acquirable here
+                continue
             if not self._tool_available(ctx, (req.affordance or {}).get("tool")):
-                continue                               # C3.1 fix 6: adapter tool absent from available_tools -> a dead ACQUIRE; skip (never emit an unexecutable acquisition)
+                continue
             na = dict(req.affordance); na["read_only"] = True
             return self._decide(D.ACQUIRE, rule_id="required_context", reason_code="missing_required_context",
                                 reason="acquire required context %s (%s) before committing" % (oid, res),
                                 extra={"next_action": na, "gap": {"type": MISSING_CONTEXT, "unit": oid},
                                        "evidence_unit": res, "target_entity": active})
-        return None
+        # unresolved required obligations exist but NONE is acquirable -> FAIL-CLOSED (never silently allow)
+        return self._decide(D.ESCALATE, rule_id="required_context", reason_code="required_context_unavailable",
+                            deterministic=True, reason="a required evidence obligation is unresolved and no executable affordance exists to acquire it",
+                            feedback="Required patient context cannot be gathered (no available tool for it); escalating instead of committing without it.")
 
     def _all_evidence_obligations(self, c):
         out = []

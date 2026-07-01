@@ -46,7 +46,15 @@ class VerifyAndCommit(Capability):
         # deterministic_gap / evidence_supported_plan). The check unit is "does THIS action match an unconsumed
         # authorization", NOT "was the last finding deterministic".
         if _is_mutation and getattr(ctx.ledger, "mutation_hold", False):
-            _auth = ctx.ledger.find_matching_authorization(ctx.sem, action)
+            _req_id = (action or {}).get("_mutation_authorization_id")
+            if _req_id:   # C4.1 EXACT-id: a recovery mutation must match the SPECIFIC authorization it was bound to
+                from ..authorization import exact_scope_match, AUTH_AVAILABLE
+                _byid = ctx.ledger.find_authorization_by_id(_req_id)
+                _auth = _byid if (_byid is not None and _byid.status == AUTH_AVAILABLE
+                                  and _byid.evidence_version == ctx.ledger.validated_evidence_version
+                                  and exact_scope_match(_byid, ctx.sem, action)) else None
+            else:
+                _auth = ctx.ledger.find_matching_authorization(ctx.sem, action)
             if _auth is None and not (action or {}).get("_recovery") and ctx.contract and ctx.contract.matching_commit_points(ctx.sem):   # C5: recovery mutations get NO user_goal pass-through -- they must match their own deterministic_gap auth
                 # USER_GOAL pass-through: a mutation COVERED by a declared commit point is the task's ORIGINAL
                 # intended commit (same operation/resource), not a semantic-feedback-induced off-plan write ->
