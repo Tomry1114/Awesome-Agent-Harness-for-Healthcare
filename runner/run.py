@@ -641,7 +641,7 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
         # content only), governance-first via EvidenceState, existing-effect fail-closed, and the fhir_create
         # routes through before_action/after_action so the MutationAuthorization is a real execution boundary.
         if (_harness is not None and os.environ.get("MH_COMPLETE_EFFECT", "0") == "1" and not _err
-                and _reconcile is None and (_recon is None or _recon.get("confirmed") is not False)
+                and _reconcile is None and (_recon is not None and _recon.get("confirmed") is True)   # #8 STRICT: only run when the deliverable write is POSITIVELY read-back-confirmed
                 and action.get("tool") == "write_file" and (action.get("args") or {}).get("content")):
             _ec_sem = getattr(_harness.ctx, "sem", None)
             _ec_path = (action.get("args") or {}).get("path")
@@ -703,7 +703,7 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
                                 _gdec = _harness.before_action(_forced, _state_snapshot(env), step=step)
                                 if _gdec is not None:
                                     trajectory.extend(_gdec.events)
-                                if _gdec is not None and _gdec.type in ("BLOCK", "ESCALATE"):   # HARD veto (verify_commit refuses an unauthorized mutation) -> NO create; ACQUIRE/REVISE are advisory
+                                if _gdec is not None and _gdec.type != "ALLOW":   # FAIL-CLOSED: only an explicit ALLOW authorizes the mutation. ACQUIRE/REVISE/RECONCILE/BLOCK/ESCALATE all => NO create (a prerequisite ACQUIRE means required evidence is NOT yet bound -> defer, do not mutate).
                                     _harness.ledger.clear_mutation_hold()
                                     trajectory.append({"step": step, "event_type": "effect_completion_blocked",
                                         "surface": "state", "order_text": _otext, "resource_type": _rtb,

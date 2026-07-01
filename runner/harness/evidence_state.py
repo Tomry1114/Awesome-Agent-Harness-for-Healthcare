@@ -24,22 +24,28 @@ def classify_evidence_state(result, semantics=None):
     error -> FAILED; a collection present & empty -> ABSENT; non-empty -> PRESENT; otherwise UNKNOWN."""
     if not isinstance(result, dict):
         return UNKNOWN if result is not None else FAILED
-    if result.get("error"):
+    # (1) EXPLICIT FAILURE ENVELOPES FIRST -- a failed/partial read must NEVER fall through to an empty
+    # collection and be misread as ABSENT ("checked, none found"). That would re-open fail-open governance.
+    _st = str(result.get("status", "")).strip().lower()
+    if result.get("error") or result.get("success") is False or result.get("ok") is False \
+            or _st in ("failed", "failure", "error"):
         return FAILED
+    # (2) UNCERTAIN (timeout / partial / incomplete / pending / unknown) -> UNKNOWN, again BEFORE any collection.
+    if result.get("timeout") or result.get("partial") or result.get("incomplete") \
+            or _st in ("unknown", "timeout", "partial", "pending", "incomplete"):
+        return UNKNOWN
     sem = semantics or {}
-    # explicit count
+    # (3) explicit count
     for cp in (sem.get("count_paths") or []):
         v = result.get(cp)
         if isinstance(v, (int, float)):
             return PRESENT if v > 0 else (ABSENT if sem.get("absence_when_empty", True) else UNKNOWN)
-    # collection paths
+    # (4) collection paths -- only reached once the read is known NOT failed/uncertain, so empty == real ABSENT
     cols = sem.get("collection_paths") or [k for k in ("entries", "results", "items", "data") if k in result]
     for cp in cols:
         v = result.get(cp)
         if isinstance(v, list):
             return PRESENT if len(v) > 0 else (ABSENT if sem.get("absence_when_empty", True) else UNKNOWN)
-    if result.get("timeout") or result.get("status") == "unknown":
-        return UNKNOWN
     # a written/created/updated payload is PRESENT progress
     if any(result.get(k) for k in ("written", "created", "updated", "value", "output", "observation")):
         return PRESENT

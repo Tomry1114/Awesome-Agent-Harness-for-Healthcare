@@ -107,6 +107,10 @@ def inspect_existing_effect(env, resource_type, subject_ref):
             for c in (code.get("coding") or []):
                 if c.get("display"):
                     texts.append(c["display"])
+    # #7 FAIL-CLOSED: PRESENT but no COMPARABLE representation (resources exist yet none expose a code.text /
+    # coding.display we can match on) -> we cannot tell realized-vs-not -> UNKNOWN, so the caller does NOT create.
+    if st == PRESENT and not texts:
+        return {"state": UNKNOWN, "texts": [], "matched_ids": ids, "reason": "present_no_comparable_representation"}
     return {"state": st, "texts": texts, "matched_ids": ids}
 
 
