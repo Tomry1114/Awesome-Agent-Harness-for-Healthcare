@@ -83,15 +83,10 @@ def resolve_read_evidence(env, resource_type, subject_ref):
     return {"state": classify_evidence_state(out, _FHIR_SEM), "resource": out, "subject_bound": True}
 
 
-def inspect_existing_effect(env, resource_type, subject_ref):
-    """Fail-CLOSED existing-effect probe. Returns {state, texts, matched_ids}. state:
-      PRESENT  -> orders of this type already exist for the subject
-      ABSENT   -> query resolved, confirmed NONE
-      UNKNOWN  -> probe failed/ambiguous -> caller must NOT create (a failed probe is never ABSENT)."""
-    try:
-        out = env.call_tool("fhir_search", {"resourceType": resource_type, "subject": subject_ref})
-    except Exception:
-        return {"state": UNKNOWN, "texts": [], "matched_ids": []}
+def classify_effect_inspection(out):
+    """PURE existing-effect classifier over a raw search result (no I/O). Returns {state, texts, matched_ids}.
+    Kept separate from the env call so the probe can be driven through the unified ActionExecutor (a recovery
+    INSPECT_EFFECT read) instead of a private env.call_tool -- see RunDriver.inspect_effect."""
     st = classify_evidence_state(out, _FHIR_SEM)
     if not is_resolved(st):                       # FAILED / UNKNOWN -> unknown (never ABSENT)
         return {"state": UNKNOWN, "texts": [], "matched_ids": []}
@@ -112,6 +107,16 @@ def inspect_existing_effect(env, resource_type, subject_ref):
     if st == PRESENT and not texts:
         return {"state": UNKNOWN, "texts": [], "matched_ids": ids, "reason": "present_no_comparable_representation"}
     return {"state": st, "texts": texts, "matched_ids": ids}
+
+
+def inspect_existing_effect(env, resource_type, subject_ref):
+    """Fail-CLOSED existing-effect probe (legacy direct path; prefer RunDriver.inspect_effect which routes the
+    same read through the executor). Returns {state, texts, matched_ids}."""
+    try:
+        out = env.call_tool("fhir_search", {"resourceType": resource_type, "subject": subject_ref})
+    except Exception:
+        return {"state": UNKNOWN, "texts": [], "matched_ids": []}
+    return classify_effect_inspection(out)
 
 
 def build_order_resource(order, refs):

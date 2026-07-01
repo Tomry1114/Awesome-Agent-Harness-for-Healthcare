@@ -11,9 +11,9 @@ class Outcome:
     def __init__(s, cid=None): s.created_id = cid
 
 class StubDriver:
-    def __init__(s, evals, acquire_results=None, auth_status_seq=None, created="sr-1"):
+    def __init__(s, evals, acquire_results=None, auth_status_seq=None, created="sr-1", mode="enforce"):
         s.evals = list(evals); s.acquire_results = list(acquire_results or []); s.auth_status_seq = list(auth_status_seq or [])
-        s.created = created
+        s.created = created; s._mode = mode
         s.minted = 0; s.cancelled = 0; s.reserved = 0; s.executed = 0; s.acquired = 0
         s.bound_ids = []
     def mint(s, scope): s.minted += 1; return {"id": "auth-%d" % s.minted, "status": "AVAILABLE"}
@@ -27,6 +27,7 @@ class StubDriver:
         auth["status"] = "RESERVED"; s.reserved += 1; return True
     def execute(s, action, auth): s.executed += 1; auth["status"] = "DISPATCHED"; return Outcome(s.created)
     def auth_status(s, auth): return s.auth_status_seq.pop(0) if s.auth_status_seq else "VERIFIED"
+    def mode(s): return s._mode
 
 ACT = {"tool": "fhir_create", "args": {}}
 SCOPE = {"target_path": "ServiceRequest/Patient/1"}
@@ -92,6 +93,13 @@ k2 = EffectCompletionKey("P/1", "hashB", "cbc", "ServiceRequest")
 b1 = orch.realize(ACT, SCOPE, key=k2)
 b2 = orch.realize(ACT, SCOPE, key=k2)   # no more evals; registry must short-circuit
 ck("blocked_key_not_rerun", b1.state == BLOCKED_TERMINAL and b2.state == BLOCKED_TERMINAL and orch.d.executed == 0)
+
+# 12) #2 ENFORCE-MODE GATE: only enforce may create; observe/assist reserve nothing, create nothing.
+for _m, _should in (("observe", 0), ("assist", 0), ("enforce", 1)):
+    d = StubDriver(evals=[("ALLOW", "ALLOW")], auth_status_seq=["VERIFIED"], mode=_m)
+    r = RecoveryOrchestrator(d).realize(ACT, SCOPE)
+    ck("mode_%s_create_%d" % (_m, _should), d.executed == _should and d.reserved == _should
+       and (r.state == VERIFIED if _should else (r.state == BLOCKED_TERMINAL and "mode_not_enforce" in (r.reason or ""))))
 
 n = sum(1 for _, c in R if c)
 print("\n%d/%d recovery_orchestrator(v2) tests passed" % (n, len(R)))

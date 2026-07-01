@@ -49,24 +49,40 @@ class RequiredContext(Capability):
         return tool in names
 
     def _missing_obligation_acquire(self, ctx, required):
-        """required = [(oid, resource)]. Resolve/ACQUIRE required context before a commit. C4.1 FAIL-CLOSED: an
-        UNRESOLVED required obligation that CANNOT be acquired (no affordance / tool unavailable / budget spent)
-        ESCALATEs -- it must NEVER return None, which other capabilities would read as ALLOW ("cannot get the
-        required evidence" is not "the evidence is not needed")."""
+        """required = [(oid, resource)]. Resolve/ACQUIRE required context before a commit.
+
+        FAIL-CLOSED is SCOPED to IRREVERSIBLE state mutations (fhir_create/submit): an unresolved required
+        obligation that CANNOT be acquired (no affordance / tool unavailable / budget spent) ESCALATEs rather
+        than committing an irreversible patient change without the decision-relevant record.
+
+        A REVERSIBLE deliverable write (a scratchpad note the agent can still revise) stays BEST-EFFORT: ACQUIRE
+        the context WHEN it is gatherable, but if it is genuinely ungatherable, fall through to None (allow) --
+        aborting the whole run over ungatherable context for a reversible artifact is worse than producing it.
+        When acquirable, ACQUIRE fires for BOTH kinds (so the deliverable is still produced WITH the context)."""
         led = ctx.ledger
         resolved = self._resolved_units(led)
         active = led.subject_id()
         unresolved = [(oid, res) for (oid, res) in required if res and res not in resolved]
         if not unresolved:
             return None                                # all required context CHECKED -> no opinion (allow)
+        _sem = getattr(ctx, "sem", None)
+        irreversible = bool(_sem and getattr(_sem, "effect", None) == "irreversible")
+
+        def _fail_closed(reason_code, reason, feedback):
+            # irreversible -> ESCALATE (never commit without required context); reversible -> None (best-effort)
+            if irreversible:
+                return self._decide(D.ESCALATE, rule_id="required_context", reason_code=reason_code,
+                                    deterministic=True, reason=reason, feedback=feedback)
+            return None
+
         if not active:
-            return self._decide(D.ESCALATE, rule_id="required_context", reason_code="required_context_no_subject",
-                                deterministic=True, reason="required context is needed but there is no active subject to bind the query to",
-                                feedback="Required patient context is missing and no subject is resolved to gather it; escalating instead of committing.")
-        if getattr(led, "acquire_count", 0) >= 2:      # bounded acquisition budget, still unresolved -> fail-closed
-            return self._decide(D.ESCALATE, rule_id="required_context", reason_code="required_context_budget_exhausted",
-                                deterministic=True, reason="required context still unresolved after the acquisition budget",
-                                feedback="Required patient context could not be gathered within budget; escalating rather than committing without it.")
+            return _fail_closed("required_context_no_subject",
+                                "required context is needed but there is no active subject to bind the query to",
+                                "Required patient context is missing and no subject is resolved to gather it; escalating instead of committing.")
+        if getattr(led, "acquire_count", 0) >= 2:      # bounded acquisition budget, still unresolved
+            return _fail_closed("required_context_budget_exhausted",
+                                "required context still unresolved after the acquisition budget",
+                                "Required patient context could not be gathered within budget; escalating rather than committing without it.")
         for (oid, res) in unresolved:
             req = compile_evidence_request(ctx.manifest, res, active, obligation_id=oid)
             if not req or not (req.affordance or {}).get("tool"):
@@ -78,10 +94,10 @@ class RequiredContext(Capability):
                                 reason="acquire required context %s (%s) before committing" % (oid, res),
                                 extra={"next_action": na, "gap": {"type": MISSING_CONTEXT, "unit": oid},
                                        "evidence_unit": res, "target_entity": active})
-        # unresolved required obligations exist but NONE is acquirable -> FAIL-CLOSED (never silently allow)
-        return self._decide(D.ESCALATE, rule_id="required_context", reason_code="required_context_unavailable",
-                            deterministic=True, reason="a required evidence obligation is unresolved and no executable affordance exists to acquire it",
-                            feedback="Required patient context cannot be gathered (no available tool for it); escalating instead of committing without it.")
+        # unresolved required obligations exist but NONE is acquirable
+        return _fail_closed("required_context_unavailable",
+                            "a required evidence obligation is unresolved and no executable affordance exists to acquire it",
+                            "Required patient context cannot be gathered (no available tool for it); escalating instead of committing without it.")
 
     def _all_evidence_obligations(self, c):
         out = []
@@ -90,6 +106,32 @@ class RequiredContext(Capability):
             if o.get("id") and res:
                 out.append((o["id"], res))
         return out
+
+    def _scoped_evidence_obligations(self, ctx):
+        """Only the EVIDENCE obligations the MATCHED commit-point actually requires (transitively through
+        workflow obligations) -- NOT every declared obligation. A ServiceRequest create matches only the
+        generic irreversible-write invariant (requires []), so it does not demand medication-safety evidence;
+        a MedicationRequest create matches medication_safety and DOES. Mirrors obligation_lifecycle's commit
+        resolution so amplification and enforcement AGREE on what THIS specific commit requires."""
+        c = ctx.contract
+        cp = c.commit_point_for(ctx.sem) if (c and ctx.sem) else None
+        if not cp:
+            return []
+        ev_map = {o["id"]: (o.get("satisfied_by") or {}).get("resource")
+                  for o in (getattr(c, "evidence_obligations", []) or []) if o.get("id")}
+        wf_map = {o["id"]: list(o.get("requires") or [])
+                  for o in (getattr(c, "workflow_obligations", []) or []) if o.get("id")}
+        seen, stack, leaves = set(), list(cp.get("requires") or []), []
+        while stack:                                   # flatten required ids -> evidence-obligation leaves
+            rid = stack.pop()
+            if rid in seen:
+                continue
+            seen.add(rid)
+            if rid in ev_map:
+                leaves.append(rid)
+            elif rid in wf_map:
+                stack.extend(wf_map[rid])
+        return [(rid, ev_map[rid]) for rid in leaves if ev_map.get(rid)]
 
     def before_final(self, answer, ctx):
         # DISABLED (see history): before_final over-fires (not intent-scoped, lands after the artifact is
@@ -106,7 +148,9 @@ class RequiredContext(Capability):
                                   or (hasattr(sem, "is_commit") and sem.is_commit())))
         if not is_commit or not ctx.contract:
             return None
-        obligations = self._all_evidence_obligations(ctx.contract)
+        # SCOPE to what THIS commit-point requires (not every declared obligation) -- so an unrelated create
+        # (e.g. a ServiceRequest imaging order) is not blocked demanding medication-safety evidence.
+        obligations = self._scoped_evidence_obligations(ctx)
         if not obligations:
             return None
         # INTENT-SCOPE: for a content-bearing deliverable write, restrict to the obligations the deliverable's

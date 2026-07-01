@@ -56,6 +56,23 @@ ck("failed_not_resolved_reacquire", rc._missing_obligation_acquire(Ctx(Led(faile
 foreign_ev = [{"resource": "AllergyIntolerance", "evidence_state": "ABSENT", "scope_relation": "foreign"}]
 ck("foreign_absent_not_resolved", rc._missing_obligation_acquire(Ctx(Led(foreign_ev)), REQ) is not None)
 
+# 6) P0-1 SCOPING: an UNACQUIRABLE required obligation (no affordance in the manifest for it).
+#    - reversible deliverable write  -> best-effort  -> None (do NOT abort the run)
+#    - irreversible state mutation    -> fail-closed  -> ESCALATE (never commit without the required record)
+class Sem:
+    def __init__(self, effect): self.effect = effect
+class CtxS(Ctx):
+    def __init__(self, led, effect): Ctx.__init__(self, led); self.sem = Sem(effect)
+UNACQ = [("mystery_obl", "MysteryResourceNotInManifest")]
+d_rev = rc._missing_obligation_acquire(CtxS(Led([]), "reversible"), UNACQ)
+ck("unacquirable_reversible_allows", d_rev is None)
+d_irr = rc._missing_obligation_acquire(CtxS(Led([]), "irreversible"), UNACQ)
+ck("unacquirable_irreversible_escalates", d_irr is not None and d_irr.type == "ESCALATE"
+   and (getattr(d_irr, "reason_code", None) == "required_context_unavailable"))
+# ACQUIRE still fires for BOTH kinds when the obligation IS acquirable (context still gathered for the write)
+d_rev_acq = rc._missing_obligation_acquire(CtxS(Led([]), "reversible"), REQ)
+ck("acquirable_reversible_still_acquires", d_rev_acq is not None and d_rev_acq.type == "ACQUIRE")
+
 n = sum(1 for _, c in R if c)
 print("\n%d/%d required_context ABSENT/dedup tests passed" % (n, len(R)))
 assert n == len(R), "FAILURES"

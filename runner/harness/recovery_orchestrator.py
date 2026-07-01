@@ -106,6 +106,15 @@ class RecoveryOrchestrator:
                 return EpisodeResult(BLOCKED_TERMINAL, reason="not_allowed:raw=%s,eff=%s" % (raw, eff),
                                      prereq_rounds=prereq_rounds, events=ev)
 
+            # #2: EXPERIMENT INVARIANT -- a recovery mutation writes state ONLY in enforce mode. observe = record
+            # only, assist = feedback only; neither may create a resource. This is independent of raw/effective
+            # ALLOW (a raw-ALLOW in observe still must NOT write).
+            _mode = self.d.mode() if hasattr(self.d, "mode") else "enforce"
+            if _mode != "enforce":
+                self.d.cancel(auth)
+                return EpisodeResult(BLOCKED_TERMINAL, reason="mode_not_enforce:%s" % _mode,
+                                     prereq_rounds=prereq_rounds, events=ev)
+
             if not self.d.reserve(auth):
                 return EpisodeResult(BLOCKED_TERMINAL, reason="reserve_failed",
                                      prereq_rounds=prereq_rounds, events=ev)

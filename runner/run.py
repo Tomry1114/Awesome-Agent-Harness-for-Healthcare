@@ -198,6 +198,9 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
     max_repair_turns = int(os.environ.get("MH_MAX_REPAIR_TURNS", "4"))   # CONTRACT(2): cap on REVISE/BLOCK turns
     _repair_turns = 0
     _env_actions = 0   # CONTRACT(2): EXECUTED environment actions; repair turns do NOT count against this
+    _recovery_env_actions = [0]   # #6: env.call_tool made by RECOVERY (mutable holder for the RunDriver callback)
+    def _on_recovery_env(_action, _origin):   # #6: recovery env calls count against the tool budget (fair vs OFF) + attributable
+        _recovery_env_actions[0] += 1
     _insufficient_seen = {}   # CONTRACT: INSUFFICIENT grounding gets at most ONE revise PER evidence_version
     _answer_attempts = 0   # count EVERY final answer the agent submits (not just the one that lands)
     _repair_mode = os.environ.get("MH_REPAIR", "hard")   # ablation: off|hard|soft|select|full (answer layer)
@@ -206,7 +209,7 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
     _reconcile = None   # P0.1: an UNKNOWN commit under restricted read-back recovery (action,res,budget)
     _forced_action = None   # harness-dispatched read-only acquisition, run through the NORMAL tool pipeline
     _plan_patched = set()   # Phase 3: deliverable paths already goal-completeness-patched (fire once each)
-    _effect_done = set()   # Phase 4b: deliverable paths whose committed-order completion already ran
+    # Phase 4b/#8: per-order dedup is owned by the RecoveryOrchestrator EffectCompletionKey registry (not a path gate)
     _root_agent_content = {}   # Phase 4b PROVENANCE SEAL: path -> ORIGINAL agent content, captured BEFORE any harness patch
     _deliv_writes_used = 0   # at most ONE reserved over-budget deliverable write (off/enforce budget parity)
     deliv = DeliverableScaffold(task)  # PB deliverable scaffolding (Codex #1: extracted from the generic runner; no-op for non-PB)
@@ -228,7 +231,7 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
     _executor = ActionExecutor(_canon, env_type, _state_hash, _state_snapshot)
     _recovery_orch = None   # C5b: RecoveryOrchestrator (lazy, per-task; episode registry persists across the task)
     for step in range(0 if _harness_infra_error else (max_steps + max_repair_turns + 2)):
-        _env_budget_spent = _env_actions >= max_steps   # CONTRACT(2): tool budget used; still allow a final-only turn
+        _env_budget_spent = (_env_actions + _recovery_env_actions[0]) >= max_steps   # CONTRACT(2)+#6: agent + recovery tool budget; still allow a final-only turn
         _bw = deliv.budget_warning(env, _env_actions, max_steps, trajectory)
         if _bw is not None: last_res, last_obs = _bw
         if _last_tool_ev is not None:          # the previous tool observation is about to be consumed
@@ -613,10 +616,9 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
                 and action.get("tool") == "write_file" and (action.get("args") or {}).get("content")):
             _ec_sem = getattr(_harness.ctx, "sem", None)
             _ec_path = (action.get("args") or {}).get("path")
-            if (_ec_sem is not None and _ec_sem.is_commit() and _ec_path not in _effect_done):
-                _effect_done.add(_ec_path)
+            if (_ec_sem is not None and _ec_sem.is_commit()):   # #8: dedup owned by EffectCompletionKey registry, NOT a path gate
                 try:
-                    from harness.effect_completion import (context_refs, inspect_existing_effect,
+                    from harness.effect_completion import (context_refs,
                         build_order_resource, resource_type_for_category)
                     from harness.evidence_state import PRESENT, UNKNOWN
                     from harness.engines.semantic import extract_committed_orders
@@ -626,7 +628,7 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
                     from harness.recovery_orchestrator import RecoveryOrchestrator, EffectCompletionKey
                     from harness.run_driver import RunDriver
                     if _recovery_orch is None:
-                        _recovery_orch = RecoveryOrchestrator(RunDriver(_harness, _executor, env, task, _state_snapshot))
+                        _recovery_orch = RecoveryOrchestrator(RunDriver(_harness, _executor, env, task, _state_snapshot, on_env_action=_on_recovery_env))
                     _recovery_orch.d.step = step; _recovery_orch.d.trajectory = trajectory
                     _root_content = _root_agent_content.get(_ec_path, action["args"].get("content"))   # PROVENANCE: root only
                     _cm = (_harness.contract.meta if (_harness.contract and _harness.contract.meta) else {})
@@ -634,10 +636,11 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
                     _refs = context_refs(task)
                     _art_hash = hashlib.sha1((_root_content or "").encode("utf-8")).hexdigest()[:12]
                     if _committed and _refs.get("subject"):
-                        for _u in _committed[:2]:
+                        for _oi, _u in enumerate(_committed[:2]):
+                            _recovery_orch.d.episode_id = "recovery-s%d-%d" % (step, _oi)   # #9
                             _otext = _u.get("text"); _ocat = _u.get("category") or "other"
                             _rt3 = resource_type_for_category(_ocat)
-                            _insp = inspect_existing_effect(env, _rt3, _refs["subject"])   # fail-closed existing-effect probe
+                            _insp = _recovery_orch.d.inspect_effect(_rt3, _refs["subject"])   # #7: probe through the executor (counted, canonical event, fail-closed)
                             if _insp["state"] == UNKNOWN:
                                 trajectory.append({"step": step, "event_type": "effect_completion_blocked", "surface": "state",
                                     "order_text": _otext, "resource_type": _rt3, "reason": "existing_effect_unknown", "status": "ok"}); continue
@@ -928,6 +931,7 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
                                  "status": "degraded" if (_h_status == "degraded" or _harness_runtime_errors) else "active",
                                  "runtime_errors": _harness_runtime_errors,
                                  "audit": _h_audit,
+                                 "recovery_env_actions": _recovery_env_actions[0],
                                  "metrics": _hgov.summarize(_harness.ledger, _h_events, mode=_harness.mode)}
         except Exception as _he:
             _harness_runtime_errors.append("audit/summarize: %r" % _he)
