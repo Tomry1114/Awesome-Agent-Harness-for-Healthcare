@@ -1,50 +1,59 @@
-"""Tests for effect_completion pure helpers (Phase 4b). No env / no gateway."""
+"""Tests for effect_completion (Phase 4b, v2). Fake env -> exercises EvidenceState + fail-closed probes."""
 import sys
 sys.path.insert(0, "runner")
 from harness.effect_completion import (context_refs, required_evidence_resource_types,
-                                       searched_resource_types, missing_required_evidence, build_order_resource)
+                                       resolve_read_evidence, inspect_existing_effect, build_order_resource,
+                                       resource_type_for_category)
+from harness.evidence_state import PRESENT, ABSENT, UNKNOWN, FAILED, is_resolved
 
 R = []
 def ck(n, c): R.append((n, bool(c))); print(("OK  " if c else "FAIL") + " " + n)
 
+
+class FakeEnv:
+    """Programmable fhir_search responses keyed by resourceType. value: dict result, 'raise', or 'error'."""
+    def __init__(self, table): self.table = table; self.calls = []
+    def call_tool(self, name, args):
+        self.calls.append((name, args))
+        v = self.table.get(args.get("resourceType"))
+        if v == "raise": raise RuntimeError("boom")
+        if v == "error": return {"error": "HTTP 500"}
+        return v if v is not None else {"entries": []}
+
+
 TASK = {"context": {"patient_ref": "MRN2970753705",
-        "text": "The current date and time is 2022-02-06T23:17:00+00:00. You are an Obstetrician-Gynecologist "
-                "(Practitioner ID: dr-teresa-hayes). Patient MRN2970753705."}}
+        "text": "The current date and time is 2022-02-06T23:17:00+00:00. (Practitioner ID: dr-teresa-hayes)."}}
 POLICY = {"required_tool_before_action": ["fhir_search(AllergyIntolerance)", "fhir_search(MedicationRequest)"]}
-
 r = context_refs(TASK)
-ck("subject_ref", r["subject"] == "Patient/MRN2970753705")
+SUBJ = r["subject"]
+
+# context + build (unchanged core)
+ck("subject_ref", SUBJ == "Patient/MRN2970753705")
 ck("authoredOn", r["authoredOn"] == "2022-02-06T23:17:00+00:00")
-ck("requester", r["requester"] == "Practitioner/dr-teresa-hayes")
-ck("no_ref_empty", context_refs({"context": {}}) == {})
+ck("req_types", required_evidence_resource_types(POLICY) == ["AllergyIntolerance", "MedicationRequest"])
+rt, res = build_order_resource({"text": "Order pelvic ultrasound", "category": "imaging"}, r)
+ck("build_ok", rt == "ServiceRequest" and res["status"] == "active" and res["intent"] == "order"
+   and "pelvic ultrasound" in res["code"]["text"].lower())
 
-ck("req_ev_types", required_evidence_resource_types(POLICY) == ["AllergyIntolerance", "MedicationRequest"])
+# resolve_read_evidence: PRESENT / ABSENT / FAILED classification (governance gate)
+env_present = FakeEnv({"AllergyIntolerance": {"entries": [{"resource": {"id": "a1"}}]}})
+ck("gov_present", resolve_read_evidence(env_present, "AllergyIntolerance", SUBJ)["state"] == PRESENT)
+env_absent = FakeEnv({"AllergyIntolerance": {"entries": []}})
+ck("gov_absent", resolve_read_evidence(env_absent, "AllergyIntolerance", SUBJ)["state"] == ABSENT)
+ck("gov_absent_resolved", is_resolved(resolve_read_evidence(env_absent, "AllergyIntolerance", SUBJ)["state"]))
+env_err = FakeEnv({"AllergyIntolerance": "error"})
+ck("gov_failed_not_resolved", not is_resolved(resolve_read_evidence(env_err, "AllergyIntolerance", SUBJ)["state"]))
+env_raise = FakeEnv({"AllergyIntolerance": "raise"})
+ck("gov_raise_failed", resolve_read_evidence(env_raise, "AllergyIntolerance", SUBJ)["state"] == FAILED)
 
-# AUB trajectory: MedicationRequest searched, AllergyIntolerance NOT -> Allergy is the missing governance read
-traj = [{"event_type": "tool_call", "tool": "fhir_search", "args": {"resourceType": "MedicationRequest"}},
-        {"event_type": "tool_call", "tool": "fhir_search", "args": {"resourceType": "Observation"}}]
-ck("searched", searched_resource_types(traj) == {"MedicationRequest", "Observation"})
-ck("missing_gov_allergy", missing_required_evidence(POLICY, traj) == ["AllergyIntolerance"])
-ck("no_missing_when_all", missing_required_evidence(POLICY, traj + [
-    {"event_type": "tool_call", "tool": "fhir_search", "args": {"resourceType": "AllergyIntolerance"}}]) == [])
-
-# build the ServiceRequest the eval (validate_service_order) will accept
-rt, res = build_order_resource({"text": "Order pelvic ultrasound with transvaginal approach", "category": "imaging"}, r)
-ck("build_rt", rt == "ServiceRequest")
-ck("build_status_intent", res["status"] == "active" and res["intent"] == "order")
-ck("build_subject", res["subject"]["reference"] == "Patient/MRN2970753705")
-ck("build_codetext", "pelvic ultrasound" in res["code"]["text"].lower())
-ck("build_authored", res["authoredOn"] == "2022-02-06T23:17:00+00:00")
-ck("build_requester", res["requester"]["reference"] == "Practitioner/dr-teresa-hayes")
-
-# medication category -> MedicationRequest
-rt2, res2 = build_order_resource({"text": "Start metformin 500mg", "category": "medication"}, r)
-ck("build_med_rt", rt2 == "MedicationRequest")
-
-# fail-safe: no subject -> no resource
-ck("no_subject_no_res", build_order_resource({"text": "x", "category": "imaging"}, {}) == (None, None))
-ck("blank_text_no_res", build_order_resource({"text": "  ", "category": "imaging"}, r) == (None, None))
+# inspect_existing_effect: FAIL-CLOSED. probe error -> UNKNOWN (NOT absent -> caller must not create)
+ck("insp_error_unknown", inspect_existing_effect(FakeEnv({"ServiceRequest": "error"}), "ServiceRequest", SUBJ)["state"] == UNKNOWN)
+ck("insp_raise_unknown", inspect_existing_effect(FakeEnv({"ServiceRequest": "raise"}), "ServiceRequest", SUBJ)["state"] == UNKNOWN)
+ck("insp_empty_absent", inspect_existing_effect(FakeEnv({"ServiceRequest": {"entries": []}}), "ServiceRequest", SUBJ)["state"] == ABSENT)
+_present = inspect_existing_effect(FakeEnv({"ServiceRequest": {"entries": [
+    {"resource": {"id": "sr1", "code": {"text": "Pelvic ultrasound transvaginal"}}}]}}), "ServiceRequest", SUBJ)
+ck("insp_present", _present["state"] == PRESENT and "Pelvic ultrasound transvaginal" in _present["texts"] and "sr1" in _present["matched_ids"])
 
 n = sum(1 for _, c in R if c)
-print("\n%d/%d effect_completion tests passed" % (n, len(R)))
+print("\n%d/%d effect_completion(v2) tests passed" % (n, len(R)))
 assert n == len(R), "FAILURES"

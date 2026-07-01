@@ -1,24 +1,34 @@
 """Effect completion (Phase 4b) -- the AUTHORIZED half of INCOMPLETE_EFFECT -> COMPLETE.
 
-Given a committed-but-unrealized order (from effect_reconciliation), REALIZE exactly what the AGENT decided:
-build the state mutation from the AGENT'S order text and place it, under a scoped deterministic_gap
-authorization, after ensuring the policy's required read-evidence is gathered (read-only). The harness never
-chooses a clinical action -- modality/order come verbatim-ish from the agent's deliverable.
+Given a committed-but-unrealized order (from effect_reconciliation over ROOT AGENT content only), REALIZE
+exactly what the AGENT decided: build the state mutation from the AGENT'S order text and place it, under a
+scoped deterministic_gap authorization that the OperationalGuard actually validates, after ensuring the
+policy's required read-evidence is RESOLVED (read-only). The harness never chooses a clinical action.
 
-Integrity guardrails:
-  - decision provenance = agent (order text from the deliverable, never a checkpoint).
-  - governance-first: `missing_required_evidence` finds policy-required reads the agent skipped; the caller
-    ACQUIREs them READ-ONLY before any write, so a completed order is never "without required evidence".
-  - authorization: every completion is minted as a single-use `deterministic_gap` MutationAuthorization.
-  - verification: the caller reconciles (server read-back) that the resource persisted.
-  - fail-safe: any missing input / unparseable ref -> no mutation.
+Integrity guardrails (all fail-CLOSED):
+  - provenance: the caller extracts committed orders from ROOT agent content, never harness-added spans, so a
+    COMPLETE-text patch can never be mistaken for an agent decision.
+  - governance-first + EvidenceState: `resolve_read_evidence` classifies each policy-required read as
+    PRESENT/ABSENT/UNKNOWN/FAILED; only PRESENT|ABSENT (obligation actually checked, subject-bound) permits a
+    mutation -- UNKNOWN/FAILED BLOCK it.
+  - existing-effect fail-closed: `inspect_existing_effect` returns PRESENT/ABSENT/UNKNOWN; a failed probe is
+    UNKNOWN (NOT ABSENT), so a probe error can NEVER trigger a spurious create.
+  - authorization is an EXECUTION boundary: the caller routes the fhir_create through the normal
+    before_action/after_action pipeline; verify_commit must find the exact-scope authorization or the mutation
+    is refused.
+  - verification: server read-back confirms persistence.
 
-Substrate note: the FHIR resource shapes below are the hapi_fhir ADAPTER's concern; kept here with a clear
-mapping until the adapter manifest carries them. No benchmark names, no checkpoint knowledge.
+Substrate note: the FHIR shapes below are the hapi_fhir ADAPTER's concern (an EffectAdapter would own
+inspect/compile/verify). Kept here with a clear mapping until the adapter manifest carries them. No benchmark
+names, no checkpoint knowledge.
 """
 import re
+from .evidence_state import classify_evidence_state, PRESENT, ABSENT, UNKNOWN, FAILED, is_resolved
 
-# category -> (resourceType, date_field) for the created order. imaging/procedure/lab/referral -> ServiceRequest.
+# adapter result-semantics for a FHIR search Bundle-as-flat-list
+_FHIR_SEM = {"collection_paths": ["entries"], "absence_when_empty": True}
+
+# category -> (resourceType, date_field). imaging/procedure/lab/referral -> ServiceRequest.
 _CATEGORY_RESOURCE = {
     "imaging": ("ServiceRequest", "authoredOn"),
     "procedure": ("ServiceRequest", "authoredOn"),
@@ -62,22 +72,42 @@ def required_evidence_resource_types(policy):
     return out
 
 
-def searched_resource_types(trajectory):
-    """resourceTypes already read in the trajectory (harness event schema: event_type=tool_call, args.resourceType)."""
-    seen = set()
-    for e in (trajectory or []):
-        if e.get("event_type") == "tool_call" and e.get("tool") in ("fhir_search", "fhir_read"):
-            rt = ((e.get("args") or {}).get("resourceType"))
-            if rt:
-                seen.add(rt)
-    return seen
+def resolve_read_evidence(env, resource_type, subject_ref):
+    """Subject-bound governance read. Returns {state, resource, subject_bound}. state PRESENT/ABSENT = the
+    obligation was actually CHECKED for this subject (resolved); UNKNOWN/FAILED = caller MUST BLOCK the
+    downstream mutation. Read-only. The query is subject-bound by construction (subject=subject_ref)."""
+    try:
+        out = env.call_tool("fhir_search", {"resourceType": resource_type, "subject": subject_ref})
+    except Exception as ex:
+        return {"state": FAILED, "resource": {"error": repr(ex)}, "subject_bound": True}
+    return {"state": classify_evidence_state(out, _FHIR_SEM), "resource": out, "subject_bound": True}
 
 
-def missing_required_evidence(policy, trajectory):
-    """Policy-required read resourceTypes the agent did NOT gather -> the harness must ACQUIRE these read-only
-    before completing any order (else the completion would be 'without required evidence')."""
-    have = searched_resource_types(trajectory)
-    return [rt for rt in required_evidence_resource_types(policy) if rt not in have]
+def inspect_existing_effect(env, resource_type, subject_ref):
+    """Fail-CLOSED existing-effect probe. Returns {state, texts, matched_ids}. state:
+      PRESENT  -> orders of this type already exist for the subject
+      ABSENT   -> query resolved, confirmed NONE
+      UNKNOWN  -> probe failed/ambiguous -> caller must NOT create (a failed probe is never ABSENT)."""
+    try:
+        out = env.call_tool("fhir_search", {"resourceType": resource_type, "subject": subject_ref})
+    except Exception:
+        return {"state": UNKNOWN, "texts": [], "matched_ids": []}
+    st = classify_evidence_state(out, _FHIR_SEM)
+    if not is_resolved(st):                       # FAILED / UNKNOWN -> unknown (never ABSENT)
+        return {"state": UNKNOWN, "texts": [], "matched_ids": []}
+    texts, ids = [], []
+    if isinstance(out, dict):
+        for item in (out.get("entries") or []):
+            r = item.get("resource", item) if isinstance(item, dict) else {}
+            if isinstance(r, dict) and r.get("id"):
+                ids.append(r["id"])
+            code = (r or {}).get("code") or {} if isinstance(r, dict) else {}
+            if code.get("text"):
+                texts.append(code["text"])
+            for c in (code.get("coding") or []):
+                if c.get("display"):
+                    texts.append(c["display"])
+    return {"state": st, "texts": texts, "matched_ids": ids}
 
 
 def build_order_resource(order, refs):
@@ -97,23 +127,3 @@ def build_order_resource(order, refs):
     if refs.get("requester"):
         res["requester"] = {"reference": refs["requester"]}
     return (rt, res)
-
-
-def existing_order_texts(env, resource_type, subject_ref):
-    """code.text of orders already present in state for the subject (so we never double-create). Read-only.
-    Best-effort: any error -> [] (treated as 'none present' by the conservative reconciler upstream, which is
-    fine because a duplicate is prevented by is_realized keyword match on whatever WAS found)."""
-    try:
-        out = env.call_tool("fhir_search", {"resourceType": resource_type, "subject": subject_ref})
-    except Exception:
-        return []
-    texts = []
-    for item in (out or {}).get("entries", []) if isinstance(out, dict) else []:
-        r = item.get("resource", item) if isinstance(item, dict) else {}
-        code = (r or {}).get("code") or {}
-        if code.get("text"):
-            texts.append(code["text"])
-        for c in (code.get("coding") or []):
-            if c.get("display"):
-                texts.append(c["display"])
-    return texts

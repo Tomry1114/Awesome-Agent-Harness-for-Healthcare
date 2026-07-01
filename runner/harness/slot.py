@@ -18,6 +18,7 @@ class CommitmentSlot:
     value: str = None
     evidence_ids: list = field(default_factory=list)
     required_by_goal: bool = False
+    origin: str = "agent"          # agent | harness_complete | acquired_evidence | consultant (provenance)
 
 
 @dataclass

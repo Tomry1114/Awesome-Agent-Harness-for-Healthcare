@@ -207,6 +207,7 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
     _forced_action = None   # harness-dispatched read-only acquisition, run through the NORMAL tool pipeline
     _plan_patched = set()   # Phase 3: deliverable paths already goal-completeness-patched (fire once each)
     _effect_done = set()   # Phase 4b: deliverable paths whose committed-order completion already ran
+    _root_agent_content = {}   # Phase 4b PROVENANCE SEAL: path -> ORIGINAL agent content, captured BEFORE any harness patch
     _deliv_writes_used = 0   # at most ONE reserved over-budget deliverable write (off/enforce budget parity)
     deliv = DeliverableScaffold(task)  # PB deliverable scaffolding (Codex #1: extracted from the generic runner; no-op for non-PB)
     _fail_sig = None; _fail_n = 0; _aborted = False  # circuit breaker: abort on repeated identical failing call
@@ -488,6 +489,10 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
                                "content_sha": hashlib.sha1((_chosen_content or "").encode("utf-8")).hexdigest()[:12],
                                "status": "ok"})
             _pending_artifact = None
+        if (action.get("tool") == "write_file" and (action.get("args") or {}).get("content") is not None):
+            _rp = (action.get("args") or {}).get("path")
+            if _rp not in _root_agent_content:   # first write of this path = the agent's own content
+                _root_agent_content[_rp] = action["args"]["content"]
         # PLAN COMPLETENESS (Phase 3): before the DELIVERABLE commit lands, fill any slot the PUBLIC GOAL
         # requires but the draft omits -- localized, append-only, slot-level-promoted. Oracle-blind (goal +
         # draft only). Gated on the manifest-declared commit (not scratch writes) + a per-path fire-once guard.
@@ -611,66 +616,6 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
                                       if ("HTTP " + c) in _es),
                                      "exception" if any(k in _es for k in ("Error", "Exception", "Traceback")) else "tool_error")
         trajectory.append(_ev)
-        # EFFECT COMPLETION (Phase 4b): realize an order the AGENT committed to in its deliverable but never
-        # executed. Decision provenance = agent (order text from the note); governance-first (ACQUIRE the
-        # policy-required reads the agent skipped, READ-ONLY); each write is a single-use deterministic_gap
-        # authorization; verified by server read-back. Gated MH_COMPLETE_EFFECT + fire-once per deliverable.
-        if (_harness is not None and os.environ.get("MH_COMPLETE_EFFECT", "0") == "1" and not _err
-                and action.get("tool") == "write_file" and (action.get("args") or {}).get("content")):
-            _ec_sem = getattr(_harness.ctx, "sem", None)
-            _ec_path = (action.get("args") or {}).get("path")
-            if (_ec_sem is not None and _ec_sem.is_commit() and _ec_path not in _effect_done):
-                _effect_done.add(_ec_path)
-                try:
-                    from harness.effect_completion import (context_refs, missing_required_evidence,
-                                                           existing_order_texts, build_order_resource,
-                                                           resource_type_for_category)
-                    from harness.engines.semantic import extract_committed_orders
-                    from harness.effect_reconciliation import unrealized_commitments
-                    _cm = (_harness.contract.meta if (_harness.contract and _harness.contract.meta) else {})
-                    _committed = extract_committed_orders(action["args"]["content"], _cm.get("goal"),
-                                                          getattr(_harness.ctx, "judge_fn", None))
-                    _refs = context_refs(task)
-                    if _committed and _refs.get("subject"):
-                        _pol = (task.get("policy") or {})
-                        for _rt in missing_required_evidence(_pol, trajectory):   # governance-first read-only ACQUIRE
-                            try:
-                                _gres = env.call_tool("fhir_search", {"resourceType": _rt, "subject": _refs["subject"]})
-                                trajectory.append({"step": step, "event_type": "tool_call", "tool": "fhir_search",
-                                                   "args": {"resourceType": _rt, "subject": _refs["subject"]},
-                                                   "result": _gres, "status": "ok", "harness_governance_acquire": True})
-                            except Exception as _ge:
-                                _harness_runtime_errors.append("gov_acquire: %r" % _ge)
-                        _existing = []
-                        for _cat in {(o.get("category") or "other") for o in _committed}:
-                            _existing += existing_order_texts(env, resource_type_for_category(_cat), _refs["subject"])
-                        _unreal = unrealized_commitments(_committed, _existing)
-                        for _u in _unreal[:2]:
-                            _rt3, _resource = build_order_resource({"text": _u.text, "category": _u.category}, _refs)
-                            if not _resource:
-                                continue
-                            _auth = _harness.ledger.mint_authorization(source="deterministic_gap",
-                                allowed_semantic_type="create", allowed_tool="fhir_create", target_path=_rt3,
-                                expected_postcondition={"resource": _rt3, "status": "active"})
-                            try:
-                                _cres = env.call_tool("fhir_create", {"resource": _resource})
-                            except Exception as _ce:
-                                _cres = {"error": repr(_ce)}
-                            _conf = None
-                            try:
-                                _conf = env.reconcile_write("fhir_create", {"resource": _resource}, _cres).get("confirmed")
-                            except Exception:
-                                pass
-                            _harness.ledger.consume_authorization(_auth)
-                            _cid = (_cres.get("id") if isinstance(_cres, dict) else None)
-                            _cerr = (_cres.get("error") if isinstance(_cres, dict) else None)
-                            trajectory.append({"step": step, "event_type": "effect_completion", "surface": "state",
-                                "order_text": _u.text, "category": _u.category, "resource_type": _rt3,
-                                "authorization_id": _auth.authorization_id, "source": "deterministic_gap",
-                                "created_id": _cid, "confirmed": _conf, "error": _cerr,
-                                "status": ("ok" if not _cerr else "failed")})
-                except Exception as _ece:
-                    _harness_runtime_errors.append("effect_completion: %r" % _ece)
         if _hpost is not None:
             trajectory.extend(_hpost.events)
             if _hpost.type == "RECONCILE":         # UNKNOWN commit -> RECOVER (read back), do NOT terminate
@@ -690,6 +635,108 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
                     _htxt = "\n[HARNESS] " + json.dumps(_hpost.feedback, ensure_ascii=False)
                     obs = (_htxt[:_max] if len(_htxt) >= _max else obs[:_max - len(_htxt)] + _htxt)
                 pending_harness_feedback = _next_feedback(_hpost, "after_action")
+        # EFFECT COMPLETION (Phase 4b, GUARDED): realize an order the AGENT committed to in its ROOT deliverable
+        # but never executed. Fail-CLOSED throughout. Runs ONLY after the deliverable write is CONFIRMED
+        # (after_action processed, no RECONCILE/ESCALATE, read-back not failed). Provenance-sealed (ROOT agent
+        # content only), governance-first via EvidenceState, existing-effect fail-closed, and the fhir_create
+        # routes through before_action/after_action so the MutationAuthorization is a real execution boundary.
+        if (_harness is not None and os.environ.get("MH_COMPLETE_EFFECT", "0") == "1" and not _err
+                and _reconcile is None and (_recon is None or _recon.get("confirmed") is not False)
+                and action.get("tool") == "write_file" and (action.get("args") or {}).get("content")):
+            _ec_sem = getattr(_harness.ctx, "sem", None)
+            _ec_path = (action.get("args") or {}).get("path")
+            if (_ec_sem is not None and _ec_sem.is_commit() and _ec_path not in _effect_done):
+                _effect_done.add(_ec_path)
+                try:
+                    from harness.effect_completion import (context_refs, required_evidence_resource_types,
+                        resolve_read_evidence, inspect_existing_effect, build_order_resource,
+                        resource_type_for_category)
+                    from harness.evidence_state import is_resolved, PRESENT, ABSENT, UNKNOWN
+                    from harness.engines.semantic import extract_committed_orders
+                    from harness.effect_reconciliation import is_realized
+                    from harness.semantics import canonicalize
+                    from harness.authorization import action_target_path
+                    _root_content = _root_agent_content.get(_ec_path, action["args"].get("content"))   # PROVENANCE
+                    _cm = (_harness.contract.meta if (_harness.contract and _harness.contract.meta) else {})
+                    _committed = extract_committed_orders(_root_content, _cm.get("goal"),
+                                                          getattr(_harness.ctx, "judge_fn", None))
+                    _refs = context_refs(task); _pol = (task.get("policy") or {})
+                    if _committed and _refs.get("subject"):
+                        _gov_block = None
+                        for _grt in required_evidence_resource_types(_pol):   # governance-first, subject-bound
+                            _rr = resolve_read_evidence(env, _grt, _refs["subject"])
+                            trajectory.append({"step": step, "event_type": "tool_call", "tool": "fhir_search",
+                                "args": {"resourceType": _grt, "subject": _refs["subject"]}, "result": _rr.get("resource"),
+                                "status": "ok", "harness_governance_acquire": True, "evidence_state": _rr.get("state")})
+                            if not is_resolved(_rr.get("state")):
+                                _gov_block = "%s:%s" % (_grt, _rr.get("state")); break
+                        if _gov_block is not None:
+                            trajectory.append({"step": step, "event_type": "effect_completion_blocked",
+                                "surface": "state", "reason": "governance_evidence_unresolved", "detail": _gov_block,
+                                "status": "ok"})
+                        else:
+                            for _u in _committed[:2]:
+                                _otext = _u.get("text"); _ocat = _u.get("category") or "other"
+                                _rt3 = resource_type_for_category(_ocat)
+                                _insp = inspect_existing_effect(env, _rt3, _refs["subject"])
+                                if _insp["state"] == UNKNOWN:                 # fail-closed: unknown -> NO create
+                                    trajectory.append({"step": step, "event_type": "effect_completion_blocked",
+                                        "surface": "state", "order_text": _otext, "resource_type": _rt3,
+                                        "reason": "existing_effect_unknown", "status": "ok"}); continue
+                                if _insp["state"] == PRESENT and is_realized(_otext, _insp["texts"]):
+                                    trajectory.append({"step": step, "event_type": "effect_completion",
+                                        "surface": "state", "order_text": _otext, "resource_type": _rt3,
+                                        "reason": "already_realized", "created_id": None, "status": "ok"}); continue
+                                _rtb, _resource = build_order_resource({"text": _otext, "category": _ocat}, _refs)
+                                if not _resource:
+                                    continue
+                                _forced = {"type": "tool_call", "tool": "fhir_create",
+                                           "args": {"resource": _resource}, "_recovery": "COMPLETE_EFFECT"}
+                                _fsem = canonicalize(_forced, getattr(_harness, "manifest", None) or {})
+                                _auth = _harness.ledger.mint_authorization(source="deterministic_gap",
+                                    allowed_semantic_type=_fsem.semantic_type, allowed_tool="fhir_create",
+                                    allowed_effect=_fsem.effect, target_path=action_target_path(_fsem, _forced),
+                                    expected_postcondition={"resource": _rtb, "status": "active", "verify": "server_readback"})
+                                _forced["_mutation_authorization_id"] = _auth.authorization_id
+                                _harness.ledger.set_mutation_hold(intervention_id=_auth.intervention_id,
+                                                                  capability="effect_completion")
+                                _gdec = _harness.before_action(_forced, _state_snapshot(env), step=step)
+                                if _gdec is not None:
+                                    trajectory.extend(_gdec.events)
+                                if _gdec is not None and _gdec.type in ("BLOCK", "ESCALATE"):   # HARD veto (verify_commit refuses an unauthorized mutation) -> NO create; ACQUIRE/REVISE are advisory
+                                    _harness.ledger.clear_mutation_hold()
+                                    trajectory.append({"step": step, "event_type": "effect_completion_blocked",
+                                        "surface": "state", "order_text": _otext, "resource_type": _rtb,
+                                        "reason": "guard_refused", "detail": _gdec.type,
+                                        "authorization_id": _auth.authorization_id, "status": "ok"}); continue
+                                _eb = _state_snapshot(env)
+                                try:
+                                    _cres = env.call_tool("fhir_create", {"resource": _resource})
+                                except Exception as _ce:
+                                    _cres = {"error": repr(_ce)}
+                                _ea = _state_snapshot(env)
+                                try:
+                                    _harness.after_action(_forced, _cres, _eb, _ea, step=step)
+                                except Exception as _ae:
+                                    _harness_runtime_errors.append("effect_after_action: %r" % _ae)
+                                _conf = None
+                                try:
+                                    _conf = env.reconcile_write("fhir_create", {"resource": _resource}, _cres).get("confirmed")
+                                except Exception:
+                                    pass
+                                _harness.ledger.consume_authorization(_auth)
+                                _harness.ledger.clear_mutation_hold()
+                                _cid = (_cres.get("id") if isinstance(_cres, dict) else None)
+                                _cerr = (_cres.get("error") if isinstance(_cres, dict) else None)
+                                trajectory.append({"step": step, "event_type": "effect_completion", "surface": "state",
+                                    "order_text": _otext, "category": _ocat, "resource_type": _rtb,
+                                    "authorization_id": _auth.authorization_id, "source": "deterministic_gap",
+                                    "existing_effect_state": _insp["state"],
+                                    "guard": (_gdec.type if _gdec is not None else "ALLOW"),
+                                    "created_id": _cid, "confirmed": _conf, "error": _cerr,
+                                    "status": ("ok" if (not _cerr and _conf) else "failed")})
+                except Exception as _ece:
+                    _harness_runtime_errors.append("effect_completion: %r" % _ece)
         _last_tool_ev = _ev   # mark consumed only if a later agent.act() runs (circuit-break -> stays False)
         if _err:
             _sig = (action["tool"], json.dumps(action.get("args", {}), sort_keys=True), _ev.get("error_type"))
