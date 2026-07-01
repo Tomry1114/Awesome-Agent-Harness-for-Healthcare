@@ -15,7 +15,7 @@ import os
 
 class ActionOutcome:
     __slots__ = ("res", "err", "result_ok", "result_status", "recon",
-                 "state_before", "state_after", "snap_before", "snap_after")
+                 "state_before", "state_after", "snap_before", "snap_after", "created_id")
 
     def __init__(self, res, err, result_ok, result_status, recon,
                  state_before, state_after, snap_before, snap_after):
@@ -28,6 +28,7 @@ class ActionOutcome:
         self.state_after = state_after
         self.snap_before = snap_before
         self.snap_after = snap_after
+        self.created_id = None
 
 
 class ActionExecutor:
