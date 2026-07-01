@@ -64,8 +64,14 @@ def test_api_agent_act_fc_surfaces_harness_feedback():
 
 
 def _run_src():
-    with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "run.py"), encoding="utf-8") as f:
-        return f.read()
+    # Commit B: the per-action pipeline (execute/normalize/read-back/event) was factored into
+    # harness/executor.py; the runner "source" for these mechanism-presence checks now spans both files.
+    base = os.path.dirname(os.path.abspath(__file__))
+    src = ""
+    for rel in ("run.py", os.path.join("harness", "executor.py")):
+        with open(os.path.join(base, rel), encoding="utf-8") as f:
+            src += f.read() + "\n"
+    return src
 
 
 def test_run_before_action_is_additive_not_overwrite():
@@ -123,11 +129,13 @@ def test_run_layer2_candidate_selection_flow():
     # Layer-2: the answer-layer repair mode is an ablation flag; a candidate-mode REVISE holds the ORIGINAL
     # and the next final is compared and only conservatively adopted.
     assert 'os.environ.get("MH_REPAIR"' in src
-    assert "_pending_candidate" in src
-    assert "compare_answer_candidates" in src and "adopt_revised" in src
-    assert '"revised_commit_adopted"' in src and '"kept_original"' in src
-    # soft = naive adopt-if-preferred; select/full = conservative adopt_revised.
-    assert 'if _repair_mode == "soft"' in src
+    assert "_pending_iv" in src
+    # strengthened AnswerRetention: a held candidate is adjudicated by evaluate_candidate into exactly one of
+    # two dispositions (ADOPT_B / KEEP_A), recorded as final_disposition. (Replaces the old
+    # compare_answer_candidates/adopt_revised/soft-vs-select mechanism.)
+    assert "evaluate_candidate" in src
+    assert "ADOPT_B" in src and "KEEP_A" in src
+    assert '"final_disposition"' in src and '"kept_original' in src
 
 
 

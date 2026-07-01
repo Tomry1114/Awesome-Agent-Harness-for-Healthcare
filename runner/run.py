@@ -224,6 +224,8 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
         _io = env.initial_observation()
         if _io is not None:
             last_res = _io; last_obs = json.dumps(_io, ensure_ascii=False)[:int(os.environ.get("MH_OBS_MAX_LEN", "10000"))]
+    from harness.executor import ActionExecutor
+    _executor = ActionExecutor(_canon, env_type, _state_hash, _state_snapshot)
     for step in range(0 if _harness_infra_error else (max_steps + max_repair_turns + 2)):
         _env_budget_spent = _env_actions >= max_steps   # CONTRACT(2): tool budget used; still allow a final-only turn
         _bw = deliv.budget_warning(env, _env_actions, max_steps, trajectory)
@@ -519,43 +521,12 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
                                        "filled": _pc.get("filled"), "surface": "artifact",
                                        "content_sha": hashlib.sha1((action["args"].get("content") or "").encode("utf-8")).hexdigest()[:12],
                                        "status": "ok"})
-        _state_before = _state_hash(env); _snap_before = _state_snapshot(env)
-        try:
-            res = env.call_tool(action["tool"], action.get("args", {}))
-        except Exception as _e:
-            res = {"error": repr(_e)}
+        _outcome = _executor.execute_and_normalize(action, env)   # Commit B: single per-action pipeline
+        res = _outcome.res; _err = _outcome.err; _recon = _outcome.recon
+        _state_before = _outcome.state_before; _state_after = _outcome.state_after
+        _snap_before = _outcome.snap_before; _snap_after = _outcome.snap_after
+        _result_status = _outcome.result_status
         _env_actions += 1   # the environment call HAPPENED (count before any post-action escalate / circuit-break)
-        _state_after = _state_hash(env); _snap_after = _state_snapshot(env)
-        # UNIFIED tool-result status, computed BEFORE the harness sees the result. Recognize the common
-        # failure envelopes here (not after) so a failed tool call is never passed to the harness as
-        # result_ok=True and recorded as VALIDATED evidence.
-        _err = res.get("error") if isinstance(res, dict) else None
-        if not _err and isinstance(res, dict):
-            if res.get("success") is False or res.get("ok") is False or \
-               str(res.get("status", "")).lower() in ("failed", "error", "failure"):
-                _err = "result_status_failure"
-            _out = res.get("output")
-            if not _err and isinstance(_out, str) and _out.lstrip().startswith("["):
-                _marker = (_out[_out.find("[") + 1:_out.find("]")] if "]" in _out else _out[:40]).lower()
-                if any(w in _marker for w in ("error", "unknown", "invalid", "fail")):
-                    _err = _out[:120]
-        # ACTIVE READ-BACK: for a write that CLAIMED success, re-read the env to confirm it landed; an
-        # unconfirmed write becomes an error so the commit gate refuses to finalize over it (unknown state).
-        _recon = None
-        if not _err:
-            try:
-                _recon = env.reconcile_write(action["tool"], action.get("args", {}), res)
-            except Exception as _rex:
-                _recon = {"confirmed": None, "detail": "reconcile_error:%r" % (_rex,)}
-            if _recon and _recon.get("confirmed") is False:
-                _err = "readback_unconfirmed"
-        elif _err:                                   # a CLAIMED-FAILED write: read back -- it may have landed
-            try:
-                _recon = env.reconcile_write(action["tool"], action.get("args", {}), res)
-            except Exception as _rex:
-                _recon = {"confirmed": None, "detail": "reconcile_error:%r" % (_rex,)}
-            if _recon and _recon.get("confirmed") is True:
-                _err = None                          # active read-back CONFIRMS it landed despite the transport error
         if _reconcile is not None:                   # a read executed under recovery -> try to resolve the pending commit
             try:
                 _rr = env.reconcile_write(_reconcile["action"]["tool"], _reconcile["action"].get("args", {}), _reconcile["res"])
@@ -573,48 +544,17 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
         if _recon and _recon.get("confirmed") is not None:
             trajectory.append({"step": step, "event_type": "reconciliation", "tool": action["tool"],
                                "confirmed": _recon.get("confirmed"), "detail": _recon.get("detail"), "status": "ok"})
-        _cres = _canon.canonical_result(res) or {}
-        _estr = ("%s %s" % (_cres.get("error_type"), _err)).lower()
-        _result_status = ("ok" if not _err
-                          else ("unknown" if ("timeout" in _estr or "readback" in _estr or any(c in _estr for c in ("500", "502", "503", "429")))
-                                else "failed"))
         _hpost = None
         if _harness is not None:
             try:
-                # pass the STRUCTURED snapshot (field-level predicates); fall back to the hash when the env
-                # exposes no structured state (state_transition still works on the hash).
-                _hb_before = _snap_before if _snap_before is not None else _state_before
-                _hb_after = _snap_after if _snap_after is not None else _state_after
-                _hpost = _harness.after_action(action, res, _hb_before, _hb_after, step=step,
-                                               canonical_observation=_canon.canonical_observation(res, env_type),
-                                               result_ok=not _err, raw_observation=res, result_status=_result_status)
+                _hpost = _executor.run_after_action(_harness, action, _outcome, step)
             except Exception as _he:
                 _hpost = None
                 _harness_runtime_errors.append("after_action: %r" % _he)
                 if _harness_requested_mode == "enforce":
                     trajectory.append({"step": step, "event_type": "harness_escalation", "stage": "after_action",
                                        "reason": "hook_error", "status": "error"}); _aborted = True; break
-        _src_full = json.dumps(res, ensure_ascii=False)
-        obs = _src_full[:int(os.environ.get("MH_OBS_MAX_LEN", "10000"))]  # official mini_agent caps tool output to LLM at 10k (was 200 -> agent could not see search results -> over-read)
-        _ev = {"step": step, "event_type": "tool_call", "tool": action["tool"],
-               "args": action.get("args", {}), "result": res, "observation": obs, "ts": str(step),
-               "status": "error" if _err else "ok",
-               "canonical_action": _canon.canonical_action(action, env_type),
-               "canonical_result": _canon.canonical_result(res),
-               "agent_visible_text": obs,  # EXACT string fed into the agent context (Observability truth)
-               "canonical_observation": _canon.canonical_observation(res, env_type),  # F2: explicit per-action status + canonical observation (Codex #5: wire the defined-but-unused observation)
-               "delivery_record": {"produced": bool(res), "rendered_to_agent": True, "consumed_by_agent": False,
-                                   "source_hash": hashlib.sha256(_src_full.encode("utf-8", "replace")).hexdigest()[:12],
-                                   "rendered_hash": hashlib.sha256(obs.encode("utf-8", "replace")).hexdigest()[:12],
-                                   "truncated": len(_src_full) > len(obs),
-                                   "error_state_rendered": bool(_err) and any(w in obs.lower() for w in ("error", "fail", "invalid", "exception", "operationoutcome"))},
-               "state_record": {"state_before_hash": _state_before, "state_after_hash": _state_after,
-                                "state_changed": (_state_before != _state_after) if (_state_before is not None and _state_after is not None) else None}}
-        if _err:
-            _es = str(_err)
-            _ev["error_type"] = next(("http_" + c for c in ("400", "401", "403", "404", "409", "422", "500", "502", "503")
-                                      if ("HTTP " + c) in _es),
-                                     "exception" if any(k in _es for k in ("Error", "Exception", "Traceback")) else "tool_error")
+        _ev, obs = _executor.build_event(action, _outcome, step)   # Commit B: single event builder
         trajectory.append(_ev)
         if _hpost is not None:
             trajectory.extend(_hpost.events)
