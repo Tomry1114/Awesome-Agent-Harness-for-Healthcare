@@ -141,6 +141,16 @@ class HabBenchmarkAdapter(object):
             goals.append(self._mk_goal(idx, {"goal_type": G_APPEAL})); idx += 1
         if any(m in low for m in _DOC_MARKERS):
             goals.append(self._mk_goal(idx, {"goal_type": G_DOCUMENT})); idx += 1
+        # landed-decision documentation gap (mirrors the proven GuiRecoveryAdapter): the agent SELECTED a
+        # disposition (agent-origin, non-empty) but the decision-INDEPENDENT "document in Epic" marker is
+        # still False -> an implicit commitment to complete ONLY that mechanical documentation. Oracle-blind:
+        # reads the LIVE portal state folded into authoritative_state, never gold/checkpoints.
+        aa = ((ctx or {}).get("authoritative_state") or {}).get("agentActions") or {}
+        disp = aa.get("selectedDisposition")
+        documented = aa.get("documentedAppealInEpic")
+        if disp and not documented and not any(getattr(g, "goal_type", "") == G_DOCUMENT for g in goals):
+            goals.append(self._mk_goal(idx, {"goal_type": G_DOCUMENT,
+                                             "committed_fields": {"disposition": disp}})); idx += 1
         return goals
 
     def should_trigger(self, lifecycle_event):

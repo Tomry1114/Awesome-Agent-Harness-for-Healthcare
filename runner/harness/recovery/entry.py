@@ -243,6 +243,23 @@ def run_recovery_v3(task, root_content, lifecycle, trajectory=None,
     else:
         _inject_driver(substrate, driver)
     run_task = _augment_task(task, root_content)
+    # GUI: surface the LIVE portal state (agentActions/appealActions) into authoritative_state so the
+    # benchmark adapter can derive a landed-decision documentation gap oracle-blind (never reads gold).
+    if summary["env_type"] == "gui" and getattr(substrate, "driver", None) is not None:
+        try:
+            live = substrate.driver.read_recovery_state() or {}
+            fs = live.get("full_state") or {}
+            if isinstance(run_task, dict) and isinstance(fs, dict):
+                run_task = dict(run_task)
+                astate = dict(run_task.get("authoritative_state") or {})
+                astate["agentActions"] = fs.get("agentActions") or {}
+                astate["appealActions"] = fs.get("appealActions") or {}
+                astate["_live_full_state"] = fs
+                astate["payer_a_state"] = live.get("payer_a_state") or {}
+                astate["payer_b_state"] = live.get("payer_b_state") or {}
+                run_task["authoritative_state"] = astate
+        except Exception as _le:
+            summary["gui_live_state_error"] = "%r" % _le
 
     results = RecoveryKernel().run_all_episodes(
         bench, wf_registry, substrate, driver, run_task, trajectory, goal, judge)
