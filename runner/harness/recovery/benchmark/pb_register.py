@@ -8,10 +8,10 @@ registry.py.
     register(registry)      - append this stack's WorkflowModule(s) to an existing WorkflowRegistry (additive;
                               never removes another stack's modules).
     build_stack(backend=..) - construct a fully-wired RecoveryStack(env_type='fhir') = FhirSubstrateAdapter +
-                              WorkflowRegistry(CreateOrderWorkflow) + PbBenchmarkAdapter.
+                              WorkflowRegistry(GenericStructuredEffectCompletionWorkflow) + PbBenchmarkAdapter.
 """
 from ..registry import WorkflowRegistry, RecoveryStack
-from ..workflows.create_order import CreateOrderWorkflow
+from ..workflows.structured_effect import GenericStructuredEffectCompletionWorkflow
 from ..substrate.fhir import FhirSubstrateAdapter
 from .pb import PbBenchmarkAdapter
 
@@ -22,7 +22,7 @@ def register(registry):
     """Append the structured-record workflow module(s) to `registry` (additive). Returns the registry."""
     if registry is None:
         registry = WorkflowRegistry()
-    registry.register(CreateOrderWorkflow())
+    registry.register(GenericStructuredEffectCompletionWorkflow())
     return registry
 
 
@@ -38,4 +38,4 @@ def build_stack(backend=None, driver=None):
         workflow_registry=reg,
         benchmark_adapter=PbBenchmarkAdapter(),
         driver=driver,
-        notes=["BCR v3 structured-record stack (CreateOrderWorkflow); registry.py untouched (race-free)"])
+        notes=["BCR v3 structured-record stack (GenericStructuredEffectCompletionWorkflow); registry.py untouched (race-free)"])

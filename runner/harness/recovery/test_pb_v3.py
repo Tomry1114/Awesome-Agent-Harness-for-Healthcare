@@ -25,7 +25,7 @@ from harness.recovery import (
     IRREVERSIBLE_COMMIT,
 )
 from harness.recovery.substrate.fhir import FhirSubstrateAdapter
-from harness.recovery.workflows.create_order import CreateOrderWorkflow
+from harness.recovery.workflows.structured_effect import GenericStructuredEffectCompletionWorkflow
 from harness.recovery.benchmark.pb import PbBenchmarkAdapter
 from harness.recovery.benchmark import pb_register
 
@@ -117,11 +117,11 @@ def test_a_firm_order_four_step_plan():
     goals = bench.resolve_commitments(task, [], task["goal"], firm_judge, ctx)
     check("a_one_goal", len(goals) == 1, "n=%d" % len(goals))
     g = goals[0]
-    check("a_goal_type", g.goal_type == "create_order", g.goal_type)
+    check("a_goal_type", g.goal_type == "complete_committed_structured_effect", g.goal_type)
     check("a_code_text_agent", g.committed_fields.get("code_text") == "Order pelvic ultrasound",
           g.committed_fields)
 
-    wf = CreateOrderWorkflow()
+    wf = GenericStructuredEffectCompletionWorkflow()
     check("a_matches", wf.match_goal(g, ctx) is True)
     plan = wf.compile_plan(g, ctx)
     kinds = [s.kind for s in plan.steps]

@@ -18,10 +18,14 @@ text via the injected judge; on no-judge / parse-fail the extractor returns [] (
 import datetime
 
 from ..contracts import CommittedGoal
-from ...effect_completion import context_refs
+from ...effect_completion import context_refs, build_order_resource, resource_type_for_category
 from ...engines.semantic import extract_committed_orders
 
-_GOAL_TYPE = "create_order"
+_GOAL_TYPE = "complete_committed_structured_effect"
+# the decision-boundary args the kernel must resolve before the commit (generic categories,
+# not clinical names): the committed content + who/what + the operational stamps.
+_REQUIRED = ["code_text", "subject", "requester", "authoredOn", "idempotency_key", "recovery_tag"]
+_GOVERNANCE_RT = "AllergyIntolerance"
 
 
 def _now_iso():
@@ -70,6 +74,11 @@ class PbBenchmarkAdapter(object):
         goal_text = ctx.get("goal_text") or goal or (isinstance(root, dict) and root.get("goal")) or ""
         judge_fn = judge or ctx.get("judge")
         orders = extract_committed_orders(content, goal_text, judge_fn=judge_fn) or []
+        auth_state = ctx.get("authoritative_state") or {}
+        sys_meta = ctx.get("system_metadata") or {}
+        subject = auth_state.get("subject")
+        requester = auth_state.get("requester")
+        authored_on = sys_meta.get("authoredOn")
         out = []
         for i, o in enumerate(orders):
             if not isinstance(o, dict):
@@ -77,13 +86,32 @@ class PbBenchmarkAdapter(object):
             txt = str(o.get("text") or "").strip()
             if not txt:
                 continue
+            category = str(o.get("category") or "other")
+            # Benchmark-specific record shaping lives in the ADAPTER (data), NOT the workflow. Build the
+            # structured payload from the committed order + authoritative refs; None payload (unresolved
+            # subject/text) -> the kernel's decision-boundary gate BLOCKS before any commit.
+            rt, resource = build_order_resource(
+                {"text": txt, "category": category},
+                {"subject": subject, "requester": requester, "authoredOn": authored_on})
+            if rt is None:
+                rt = resource_type_for_category(category)
+                resource = None
+            effect_spec = {
+                "operation": "create",
+                "resource_type": rt,
+                "payload": resource,
+                "identity": {"subject": subject},
+                "required_bindings": list(_REQUIRED),
+                "precondition_reads": [{"resourceType": _GOVERNANCE_RT, "subject": subject}],
+                "postcondition": {"resourceType": rt, "subject": subject, "match_text": txt},
+            }
             out.append(CommittedGoal(
-                goal_id="order-%d" % i,
+                goal_id="effect-%d" % i,
                 goal_type=_GOAL_TYPE,
-                committed_fields={"code_text": txt, "category": str(o.get("category") or "other")},
-                dedup_key="order:%s" % txt.lower()[:80],
+                committed_fields={"code_text": txt, "category": category},
+                dedup_key="effect:%s" % txt.lower()[:80],
                 provenance="agent_commitment",
-                raw={"order": o}))
+                raw={"effect_spec": effect_spec, "order": o}))
         return out
 
     def should_trigger(self, lifecycle_event):
