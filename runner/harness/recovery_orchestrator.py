@@ -131,7 +131,11 @@ class RecoveryOrchestrator:
                 return EpisodeResult(RECONCILING, auth_status=st,
                                      reason="ambiguous_or_undispatched_terminal_reconcile_only",
                                      prereq_rounds=prereq_rounds, events=ev)
-            if st != "FAILED":                              # AVAILABLE/RESERVED/CANCELLED/None -> a driver bug; NEVER retry
+            if st == "CANCELLED":                           # R7: pre-dispatch cancel (e.g. budget block) -> clean terminal, NEVER wrote
+                return EpisodeResult(BLOCKED_TERMINAL, auth_status=st,
+                                     reason="cancelled_pre_dispatch",
+                                     prereq_rounds=prereq_rounds, events=ev)
+            if st != "FAILED":                              # AVAILABLE/RESERVED/None -> a driver bug; NEVER retry
                 return EpisodeResult(BLOCKED_TERMINAL, auth_status=st,
                                      reason="invalid_auth_terminal_state:%s" % st,
                                      prereq_rounds=prereq_rounds, events=ev)

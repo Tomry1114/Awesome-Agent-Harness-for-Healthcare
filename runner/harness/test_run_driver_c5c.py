@@ -27,6 +27,7 @@ class Ledger:
     def fail_authorization(s, a): a["status"] = "FAILED"; s.calls.append("fail")
     def unknown_authorization(s, a): a["status"] = "UNKNOWN"; s.calls.append("unknown")
     def verify_authorization(s, a): a["status"] = "VERIFIED"; s.calls.append("verify")
+    def cancel_authorization(s, a): a["status"] = "CANCELLED"; s.calls.append("cancel")
 class Harness:
     def __init__(s, before="ALLOW", raise_before=False, mode="enforce"):
         s.ledger = Ledger(); s.ctx = Ctx(); s._before = before; s._raise = raise_before; s.mode = mode
@@ -102,7 +103,7 @@ ck("budget_exhausted_read_no_exec", st == "UNKNOWN" and ex.env_calls == 0)
 h = Harness(); ex = Ex(Outcome())
 auth = {"status": "RESERVED"}
 d = driver(h, ex, budget=lambda: False); d.execute({"tool": "fhir_service_request_create", "args": {}}, auth)
-ck("budget_exhausted_create_no_exec", ex.env_calls == 0 and auth["status"] == "FAILED")
+ck("budget_exhausted_create_cancelled", ex.env_calls == 0 and auth["status"] == "CANCELLED")   # R7 fix2: RESERVED->CANCELLED, not illegal RESERVED->FAILED
 
 # ===== acquire / inspect delegate correctly =====
 h = Harness(); ex = Ex(Outcome(res={"entries": []}), after_fn=bind("ABSENT"))
@@ -139,6 +140,25 @@ h.ctx.verification = True
 auth = {"status": "RESERVED"}
 driver(h, ex).execute({"tool": "fhir_service_request_create", "args": {}}, auth)
 ck("create_after_crash_unknown_not_verified", auth["status"] == "UNKNOWN")
+
+# ===== R7 fix1: a budget_check that RAISES -> fail-closed (deny), no env call =====
+def _boom(): raise RuntimeError("budget infra down")
+h = Harness(); ex = Ex(Outcome(), after_fn=bind("ABSENT"))
+st, _ = driver(h, ex, budget=_boom).execute_recovery_read(READ)
+ck("budget_check_exception_denies", st == "UNKNOWN" and ex.env_calls == 0)
+
+# ===== R7 fix3: acquire_count spent ONLY on a query that executed; admission failure spends nothing =====
+h = Harness(); ex = Ex(Outcome(res={"entries": []}), after_fn=bind("ABSENT"))
+driver(h, ex).acquire(READ)
+ck("acquire_count_on_real_read", h.ledger.acquire_count == 1)
+
+h = Harness(); ex = Ex(Outcome(), after_fn=bind("ABSENT"))
+driver(h, ex, budget=lambda: False).acquire(READ)   # budget-blocked admission failure
+ck("acquire_count_not_spent_on_admission_fail", h.ledger.acquire_count == 0 and ex.env_calls == 0)
+
+h = Harness(before="BLOCK"); ex = Ex(Outcome(), after_fn=bind("ABSENT"))
+driver(h, ex).acquire(READ)   # before_action veto -> no query issued
+ck("acquire_count_not_spent_on_veto", h.ledger.acquire_count == 0 and ex.env_calls == 0)
 
 n = sum(1 for _, c in R if c)
 print("\n%d/%d run_driver C5d tests passed" % (n, len(R)))

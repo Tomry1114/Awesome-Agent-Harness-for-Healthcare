@@ -68,7 +68,7 @@ class RunDriver:
         try:
             return bool(self.budget_check())
         except Exception:
-            return True
+            return False   # R7 fix1: admission infra unknown -> deny (a harness-internal action never fails open)
 
     # -- internal helpers ------------------------------------------------------
     def _count_env(self, action):
@@ -162,11 +162,12 @@ class RunDriver:
     def acquire(self, next_action):
         if not next_action or not next_action.get("tool"):
             return False
-        try:
-            self.h.ledger.acquire_count = getattr(self.h.ledger, "acquire_count", 0) + 1
-        except Exception:
-            pass
-        state, _ = self.execute_recovery_read(next_action)
+        state, outcome = self.execute_recovery_read(next_action)
+        if outcome is not None:   # R7 fix3: count ONLY a query that was actually issued -- an admission failure
+            try:                  # (budget/before_action) never sent a query, so it must not spend the acquisition budget
+                self.h.ledger.acquire_count = getattr(self.h.ledger, "acquire_count", 0) + 1
+            except Exception:
+                pass
         return state in _RESOLVING
 
     # -- #7: existing-effect probe via the SAME strict reader; PRESENT still fail-closes on no comparable text --
@@ -190,7 +191,7 @@ class RunDriver:
         # P1: hard budget gate BEFORE the create's env call.
         if not self.can_execute_recovery_action():
             self._runtime_error("recovery_create_budget_exhausted")
-            L.fail_authorization(auth)
+            L.cancel_authorization(auth)   # R7 fix2: never dispatched -> CANCELLED (RESERVED->CANCELLED valid); fail() would be an illegal RESERVED->FAILED and leave it stuck
             class _O:
                 def __init__(s): s.res = {"error": "recovery_budget_exhausted"}; s.err = "recovery_budget_exhausted"; s.result_status = "failed"; s.recon = None; s.created_id = None
             return _O()

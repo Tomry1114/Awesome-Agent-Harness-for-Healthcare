@@ -69,10 +69,15 @@ r = RecoveryOrchestrator(d).realize(ACT, SCOPE)
 ck("dispatched_reconcile_no_retry", r.state == RECONCILING and d.executed == 1)
 
 # 8) C4.1: invalid/None terminal status -> BLOCKED_TERMINAL, NEVER retried
-for bad in ("AVAILABLE", "RESERVED", "CANCELLED", None):
+for bad in ("AVAILABLE", "RESERVED", None):
     d = StubDriver(evals=[("ALLOW", "ALLOW")] * 5, auth_status_seq=[bad] * 5)
     r = RecoveryOrchestrator(d).realize(ACT, SCOPE)
     ck("invalid_status_%s_blocked" % bad, r.state == BLOCKED_TERMINAL and "invalid_auth_terminal_state" in r.reason and d.executed == 1)
+
+# 8b) R7: CANCELLED terminal (pre-dispatch cancel, e.g. budget) -> clean BLOCKED_TERMINAL, NOT "invalid"
+d = StubDriver(evals=[("ALLOW", "ALLOW")], auth_status_seq=["CANCELLED"])
+r = RecoveryOrchestrator(d).realize(ACT, SCOPE)
+ck("cancelled_pre_dispatch_clean_terminal", r.state == BLOCKED_TERMINAL and r.reason == "cancelled_pre_dispatch")
 
 # 9) C4.1: FAILED -> bounded retry then RETRYABLE_FAILURE
 d = StubDriver(evals=[("ALLOW", "ALLOW")] * 3, auth_status_seq=["FAILED", "FAILED", "FAILED"])
