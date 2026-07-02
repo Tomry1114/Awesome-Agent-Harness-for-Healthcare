@@ -139,18 +139,10 @@ class HabBenchmarkAdapter(object):
             goals.append(self._mk_goal(idx, {"goal_type": G_PRIOR_AUTH})); idx += 1
         if any(m in low for m in _APPEAL_MARKERS):
             goals.append(self._mk_goal(idx, {"goal_type": G_APPEAL})); idx += 1
-        if any(m in low for m in _DOC_MARKERS):
-            goals.append(self._mk_goal(idx, {"goal_type": G_DOCUMENT})); idx += 1
-        # landed-decision documentation gap (mirrors the proven GuiRecoveryAdapter): the agent SELECTED a
-        # disposition (agent-origin, non-empty) but the decision-INDEPENDENT "document in Epic" marker is
-        # still False -> an implicit commitment to complete ONLY that mechanical documentation. Oracle-blind:
-        # reads the LIVE portal state folded into authoritative_state, never gold/checkpoints.
-        aa = ((ctx or {}).get("authoritative_state") or {}).get("agentActions") or {}
-        disp = aa.get("selectedDisposition")
-        documented = aa.get("documentedAppealInEpic")
-        if disp and not documented and not any(getattr(g, "goal_type", "") == G_DOCUMENT for g in goals):
-            goals.append(self._mk_goal(idx, {"goal_type": G_DOCUMENT,
-                                             "committed_fields": {"disposition": disp}})); idx += 1
+        # Documentation recovery REMOVED: on the live portal documentedAppealInEpic is set by the SAME
+        # submit that records the disposition (atomically coupled), so it is NOT an independently
+        # completable gap -- recovering it would mean the harness choosing the clinical disposition.
+        # HAB recovers ONLY the two separable payer-portal submissions (prior_auth / appeal).
         return goals
 
     def should_trigger(self, lifecycle_event):
