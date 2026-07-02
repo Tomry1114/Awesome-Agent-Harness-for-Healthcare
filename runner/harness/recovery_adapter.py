@@ -140,7 +140,7 @@ def _get_state_path(state_view, path):
     if not isinstance(state_view, dict):
         return None
     parts = [x for x in str(path or "").split(".") if x]
-    if parts and parts[0] == "emr":
+    if parts and parts[0] in ("emr", "full_state"):   # state_view IS the emr/full_state object
         parts = parts[1:]
     cur = state_view
     for seg in parts:
@@ -167,19 +167,19 @@ def _active_case(state_view):
 
 
 class GuiRecoveryAdapter(RecoveryAdapter):
-    """Interactive-GUI portal substrate (stateful). COMPLETE-effect target: the agent DECIDED the outcome (a
-    submit-allowed disposition it SELECTED, plus any note it TYPED -- reversible actions that ALREADY LANDED in
-    the authoritative EMR state) but never fired the IRREVERSIBLE submit. The harness completes ONLY the
-    mechanical submit; it NEVER chooses the disposition or writes the note.
+    """Interactive-GUI portal substrate (stateful). COMPLETE-effect target: the agent MADE the decision (it
+    SELECTED a disposition that ALREADY LANDED in authoritative state) but never fired the mechanical
+    "document the decision in Epic" action, so documentedAppealInEpic stayed False and the documentation
+    checkpoint failed. The harness completes ONLY that mechanical documentation; it NEVER chooses the
+    disposition (that is the clinical decision, and it is the agent's).
 
     H0 conservatism -- a commitment forms ONLY when ALL hold:
-      1) the agent explicitly selected a submit-allowed disposition (do_not_appeal etc. -> no commitment);
-      2) that EXACT disposition has landed in emr.agentActions.selectedDisposition;
-      3) if the agent typed a note, that note has landed (an attempted-but-unlanded edit -> no commitment);
-      4) the commit marker emr.appealActions.submittedAppeal is currently False;
-      5) the active displayed case == the assigned case;
-      6) every value comes from an agent action, never harness-generated.
-    Effect truth = the commit marker EXACT-TRUE only (never any_path_nonempty; an attachment is not a submit)."""
+      1) the agent explicitly SELECTED a disposition (any value -- documentation is decision-INDEPENDENT);
+      2) that EXACT disposition has landed in full_state.agentActions.selectedDisposition;
+      3) the commit marker full_state.agentActions.documentedAppealInEpic is currently False;
+      4) the active displayed case == the assigned case;
+      5) every value comes from an agent action, never harness-generated.
+    Effect truth = the commit marker EXACT-True only (never any_path_nonempty)."""
     substrate = "gui"
 
     def __init__(self, manifest=None):
@@ -187,16 +187,14 @@ class GuiRecoveryAdapter(RecoveryAdapter):
         root = self.manifest.get("manifest") if isinstance(self.manifest.get("manifest"), dict) else self.manifest
         effs = (root.get("recovery_effects") or [{}])
         e = effs[0] or {}
-        self.effect_type = e.get("effect_type", "appeal_submission")
-        self.commit_marker = e.get("commit_marker", "emr.appealActions.submittedAppeal")
-        self.disposition_path = e.get("disposition_path", "emr.agentActions.selectedDisposition")
-        self.note_path = e.get("note_path", "emr.agentActions.addedAuthNote")
-        self.allowed_dispositions = set(e.get("allowed_dispositions") or ["appeal", "dispute", "file_appeal"])
-        self.submit_labels = e.get("submit_labels") or ["Submit Appeal", "File Appeal", "Submit"]
+        self.effect_type = e.get("effect_type", "decision_documentation")
+        self.commit_marker = e.get("commit_marker", "full_state.agentActions.documentedAppealInEpic")
+        self.decision_path = e.get("decision_path", "full_state.agentActions.selectedDisposition")
+        self.document_labels = e.get("document_labels") or ["Document in Epic", "Document Decision", "Document"]
+        self._marker_key = self.commit_marker.split(".")[-1]
 
     def should_trigger(self, lifecycle_event):
-        # HAB fires at the agent-done boundary: all reversible edits are settled, and we never race the agent's
-        # own submit. (No benchmark branch in run.py -- the adapter declares its trigger.)
+        # HAB fires at the agent-done boundary: all reversible edits are settled, we never race the agent.
         return lifecycle_event == "before_final"
 
     def context(self, task):
@@ -206,83 +204,76 @@ class GuiRecoveryAdapter(RecoveryAdapter):
         return {"case_id": (m.group(1) if m else None),
                 "task_id": str(task.get("id") or task.get("task_id") or "task")}
 
+    def _marker_true(self, state_view):
+        v = _get_state_path(state_view, self.commit_marker)
+        return v is True or (isinstance(v, str) and v.strip().lower() == "true")
+
     def extract_commitments(self, root_content, trajectory, goal, judge, context=None):
         ctx = context or {}
         state_view = ctx.get("state_view")
         assigned = ctx.get("case_id")
         if not isinstance(state_view, dict) or not assigned:
             return []                                  # cannot validate against authoritative state -> fail-closed
-        # (5) active displayed case must equal the assigned case
         active = _active_case(state_view)
-        if not active or active != str(assigned):
+        if not active or active != str(assigned):      # (4) never document for the wrong case
             return []
-        # (4) not already submitted
-        if _get_state_path(state_view, self.commit_marker):
+        if self._marker_true(state_view):              # (3) already documented -> nothing to complete
             return []
-        # scan agent actions for the disposition the agent SELECTED + a note it TYPED (with action ids)
-        sel_val, sel_id, typed_note, type_id = None, None, False, None
+        # (1) the agent explicitly SELECTED a disposition (with its action id)
+        sel_val, sel_id = None, None
         for ev in (trajectory or []):
             if ev.get("event_type") != "tool_call" or ev.get("origin") == "recovery":
                 continue
             tool, args = ev.get("tool"), (ev.get("args") or {})
             field = str(args.get("field") or args.get("target") or "").lower()
-            if tool == "select" and "disposition" in field:
-                sel_val = args.get("value"); sel_id = ev.get("action_id") or ev.get("step")
-            elif tool == "type" and any(k in field for k in ("note", "appeal", "rationale", "reason")):
-                typed_note = True; type_id = ev.get("action_id") or ev.get("step")
-        # (1) an explicit submit-allowed disposition
-        if sel_val is None or str(sel_val).lower() not in self.allowed_dispositions:
+            if tool == "select" and "disposition" in field and args.get("value"):
+                sel_val, sel_id = args.get("value"), (ev.get("action_id") or ev.get("step"))
+        if sel_val is None:
             return []
         # (2) that EXACT disposition landed in authoritative state
-        landed_disp = _get_state_path(state_view, self.disposition_path)
-        if landed_disp is None or str(landed_disp).lower() != str(sel_val).lower():
+        landed = _get_state_path(state_view, self.decision_path)
+        if landed is None or str(landed).strip() == "" or str(landed).strip().lower() != str(sel_val).strip().lower():
             return []
-        # (3) if the agent typed a note, it must have landed (attempted-but-unlanded -> block)
-        landed_note = _get_state_path(state_view, self.note_path)
-        if typed_note and not (landed_note and str(landed_note).strip()):
-            return []
-        ids = [x for x in (sel_id, type_id) if x is not None]
-        payload = {"disposition": str(landed_disp), "note": (str(landed_note) if landed_note else None)}
-        sig = ("appeal-submit:%s:%s" % (assigned, str(landed_disp))).lower()
-        return [Commitment(text="submit appeal (%s)" % landed_disp, category="appeal", signature=sig,
-                           effect_type=self.effect_type, target_entity=str(assigned),
-                           payload=payload, origin_action_ids=ids)]
+        payload = {"disposition": str(landed)}
+        sig = ("document-decision:%s:%s" % (assigned, str(landed))).lower()
+        return [Commitment(text="document decision in Epic (%s)" % landed, category="documentation",
+                           signature=sig, effect_type=self.effect_type, target_entity=str(assigned),
+                           payload=payload, origin_action_ids=[x for x in [sel_id] if x is not None])]
 
     def effect_key(self, commitment, context):
         return EffectCompletionKey(str(commitment.target_entity or context.get("case_id")),
                                    context.get("artifact_hash", ""), commitment.signature, commitment.effect_type)
 
     def inspect_effect(self, commitment, driver, context):
-        """Effect truth = the commit marker ONLY: EXACT-True -> PRESENT, False -> ABSENT, missing/unreadable ->
-        UNKNOWN. Never any_path_nonempty (an attachment is not a completed submit)."""
+        """Effect truth = the commit marker ONLY: True -> PRESENT, False -> ABSENT, missing/unreadable -> UNKNOWN."""
         state_view = (context or {}).get("state_view")
         if not isinstance(state_view, dict):
             return EffectInspection(state="UNKNOWN")
-        # case consistency is a precondition for trusting the marker
         active = _active_case(state_view)
         if commitment.target_entity and active and str(active) != str(commitment.target_entity):
             return EffectInspection(state="UNKNOWN")
         v = _get_state_path(state_view, self.commit_marker)
-        if v is True:
-            return EffectInspection(state="PRESENT", texts=["submitted"])
-        if v is False:
+        if self._marker_true(state_view):
+            return EffectInspection(state="PRESENT", texts=["documented"])
+        if v is False or (isinstance(v, str) and v.strip().lower() == "false"):
             return EffectInspection(state="ABSENT")
-        return EffectInspection(state="UNKNOWN")       # missing / non-boolean -> cannot tell
+        return EffectInspection(state="UNKNOWN")
 
     def is_realized(self, commitment, texts):
         return bool(texts)
 
     def compile_effect(self, commitment, context, manifest):
-        """A PLAN, not a static click: snapshot the page, then submit the UNIQUELY-resolved affordance (by
-        label/role) -- the driver resolves the ref from the snapshot; ambiguous/absent -> the driver blocks.
-        NEVER a select/type (never chooses disposition or writes note)."""
-        scope = {"allowed_semantic_type": "submit", "allowed_tool": "submit", "allowed_effect": "irreversible",
-                 "target_path": "%s/submitAppeal" % (commitment.target_entity or context.get("case_id")),
+        """A PLAN, not a static click: snapshot, then activate the UNIQUELY-resolved "document" affordance (by
+        label/role -- the driver resolves the concrete ref; ambiguous/absent -> block). NEVER a select (never
+        chooses the disposition)."""
+        scope = {"allowed_semantic_type": "submit", "allowed_tool": "click", "allowed_effect": "reversible",
+                 "target_path": "%s/%s" % (commitment.target_entity or context.get("case_id"), self._marker_key),
                  "expected_postcondition": {"path": self.commit_marker, "equals": True,
                                             "verify": "state_marker_false_to_true"}}
         return EffectPlan(scope=scope, effect_type=commitment.effect_type,
                           prepare_actions=[{"type": "tool_call", "tool": "snapshot", "args": {}}],
-                          commit_affordance={"tool": "submit", "match": {"labels": self.submit_labels, "role": "button"}})
+                          commit_affordance={"tool": "click", "target_key": self._marker_key,
+                                             "match": {"labels": self.document_labels, "role": "button"}})
 
 
 def get_recovery_adapter(env_type, manifest=None):

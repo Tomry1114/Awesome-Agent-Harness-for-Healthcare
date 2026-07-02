@@ -25,13 +25,15 @@ manifest:
   # NOT any appealActions path (an uploaded attachment with submittedAppeal=False is NOT a completed submit).
   # disposition/note paths are the AUTHORITATIVE landed values the harness validates the agent commitment against.
   recovery_effects:
-    - effect_type: appeal_submission
-      commit_marker: emr.appealActions.submittedAppeal
+    # The COMMIT MARKER the native checkpoints actually score is documentedAppealInEpic (a decision-INDEPENDENT
+    # "record the decision in Epic" action, expected True for EVERY disposition). The harness completes ONLY this
+    # mechanical documentation of a decision the agent ALREADY made (selectedDisposition landed) -- it never
+    # chooses the disposition. full_state.agentActions == emr.agentActions (GuiEnvReal exposes full_state = emr).
+    - effect_type: decision_documentation
+      commit_marker: full_state.agentActions.documentedAppealInEpic
       verification: exact_true
-      disposition_path: emr.agentActions.selectedDisposition
-      note_path: emr.agentActions.addedAuthNote
-      allowed_dispositions: [appeal, dispute, file_appeal, submit_appeal]
-      submit_labels: [Submit Appeal, File Appeal, Submit]
+      decision_path: full_state.agentActions.selectedDisposition
+      document_labels: [Document in Epic, Document Appeal in Epic, Document Decision, Document]
   subject:
     type: admin_case
     binding: implicit_active   # the operated case is the one DISPLAYED on the page (no per-action arg)
