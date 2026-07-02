@@ -16,7 +16,7 @@ for i in 1 2 3; do
   $PY runner/extract_script.py rep_rec/gpt5/$TID/trajectory.jsonl script.json >> rep.log 2>&1 && { GOT=1; break; }
   echo "[record attempt $i: agent placed the order or no write -- retrying]" >> rep.log
 done
-if [ $GOT -ne 1 ]; then echo "[FAILED to record a no-order trace in 3 tries]" >> rep.log; echo "[e2e ALL DONE $(date)]" >> rep.log; exit 0; fi
+if [ $GOT -ne 1 ]; then echo "[FAILED to record a no-order trace in 3 tries -- NO attribution sample]" >> rep.log; echo "[e2e ALL DONE $(date)]" >> rep.log; exit 3; fi
 
 # 2) REPLAY OFF (scripted == recorded agent, effect=0) and ON (SAME script, effect=1). Only variable = MH_COMPLETE_EFFECT.
 env $BASE MH_COMPLETE_EFFECT=0 MH_SCRIPT_FILE=$PWD/script.json $PY runner/run_batch.py --bench PhysicianBench --agent scripted --task-id $TID $FB --reset-mode restore_pristine --out rep_off/ >> rep.log 2>&1
@@ -37,8 +37,10 @@ def load(root):
             try:r=json.loads(l)
             except:continue
             if r.get("event_type")=="effect_completion": ev["effect"].append({k:r.get(k) for k in ("episode_state","reason","created_id")})
-            if r.get("event_type")=="tool_call" and "service_request_create" in str(r.get("tool","")):
-                ev["recovery_create" if r.get("origin")=="recovery" else "agent_create"]+=1
+            if r.get("event_type")=="tool_call":
+                _t=str(r.get("tool","")); _rt=((r.get("args") or {}).get("resource") or {}).get("resourceType")
+                if "service_request_create" in _t or (_t=="fhir_create" and _rt=="ServiceRequest"):
+                    ev["recovery_create" if r.get("origin")=="recovery" else "agent_create"]+=1
     return {"cps":cps,"ev":ev}
 off,on=load("rep_off"),load("rep_on")
 print("\n================ CONTROLLED REPLAY (identical agent script; only MH_COMPLETE_EFFECT differs) ================")

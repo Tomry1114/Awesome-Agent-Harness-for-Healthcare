@@ -21,6 +21,17 @@ manifest:
     - match: {field_keywords: [review, view, access, inspect, retrieve]}
       writable_paths: [emr.agentActions.viewedDenialDetails, emr.agentActions.viewedRemittanceImage, emr.agentActions.accessedPayerPortalForDenial, emr.agentActions.viewedAuthLetter]
       verification: {type: any_path_nonempty}
+  # recovery_effects (H0): the COMMIT MARKER for the irreversible submit is submittedAppeal EXACT-TRUE only --
+  # NOT any appealActions path (an uploaded attachment with submittedAppeal=False is NOT a completed submit).
+  # disposition/note paths are the AUTHORITATIVE landed values the harness validates the agent commitment against.
+  recovery_effects:
+    - effect_type: appeal_submission
+      commit_marker: emr.appealActions.submittedAppeal
+      verification: exact_true
+      disposition_path: emr.agentActions.selectedDisposition
+      note_path: emr.agentActions.addedAuthNote
+      allowed_dispositions: [appeal, dispute, file_appeal, submit_appeal]
+      submit_labels: [Submit Appeal, File Appeal, Submit]
   subject:
     type: admin_case
     binding: implicit_active   # the operated case is the one DISPLAYED on the page (no per-action arg)

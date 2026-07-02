@@ -636,7 +636,7 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
                         _rctx = _radapter.context(task)
                         _rctx["artifact_hash"] = hashlib.sha1((_root_content or "").encode("utf-8")).hexdigest()[:12]
                         _committed = _radapter.extract_commitments(_root_content, trajectory, _cm.get("goal"),
-                                                                   getattr(_harness.ctx, "judge_fn", None))
+                                                                   getattr(_harness.ctx, "judge_fn", None), _rctx)
                         if _committed and _rctx.get("subject"):
                             for _oi, _c in enumerate(_committed[:2]):
                                 _recovery_orch.d.episode_id = "recovery-s%d-%d" % (step, _oi)   # #9
