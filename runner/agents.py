@@ -118,7 +118,13 @@ class ScriptedAgent(AgentBase):
     name = "scripted"
     def __init__(self, task):
         import json, os
-        self.steps = json.loads(os.environ.get("MH_SCRIPT", "[]"))
+        # MH_SCRIPT_FILE (a path) takes precedence over MH_SCRIPT (inline JSON) -- a full deliverable script is
+        # too large for an env var. Used by the CONTROLLED-REPLAY attribution harness (agents own recorded trace).
+        _sf = os.environ.get("MH_SCRIPT_FILE")
+        if _sf:
+            with open(_sf) as _fh: self.steps = json.load(_fh)
+        else:
+            self.steps = json.loads(os.environ.get("MH_SCRIPT", "[]"))
         for st in self.steps:
             st.setdefault("type", "tool_call")
         if not self.steps or self.steps[-1].get("type") != "final":

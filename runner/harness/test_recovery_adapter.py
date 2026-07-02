@@ -10,7 +10,7 @@ def ck(n, c): R.append((n, bool(c))); print(("OK  " if c else "FAIL") + " " + n)
 
 a = get_recovery_adapter("fhir")
 ck("factory_fhir", isinstance(a, FhirRecoveryAdapter))
-ck("factory_none_for_gui", get_recovery_adapter("gui") is None)
+ck("factory_none_for_unmodelled", get_recovery_adapter("tool_sandbox") is None)   # perceptual substrate not modelled yet
 
 ctx = {"subject": "Patient/MRN1", "artifact_hash": "hh", "task_id": "PB-x"}
 c = Commitment(text="Order pelvic ultrasound", category="imaging",

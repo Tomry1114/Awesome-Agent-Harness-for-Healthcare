@@ -128,8 +128,102 @@ class FhirRecoveryAdapter(RecoveryAdapter):
         return EffectPlan(mutation_action=mact, scope=scope, effect_type=rtb, resource=resource)
 
 
-def get_recovery_adapter(env_type):
+def _get_state_path(state_view, path):
+    """Walk a dotted writable_path into the portal emr state_view. A leading 'emr.' is dropped (state_view IS emr)."""
+    if not isinstance(state_view, dict):
+        return None
+    parts = [x for x in path.split(".") if x]
+    if parts and parts[0] == "emr":
+        parts = parts[1:]
+    cur = state_view
+    for seg in parts:
+        if isinstance(cur, dict) and seg in cur:
+            cur = cur[seg]
+        else:
+            return None
+    return cur
+
+
+class GuiRecoveryAdapter(RecoveryAdapter):
+    """Interactive-GUI portal substrate (stateful). COMPLETE-effect target: the agent DECIDED the outcome (a
+    disposition it SELECTED and/or a note it TYPED -- reversible actions that already landed in state) but never
+    fired the IRREVERSIBLE submit, so the appeal was never submitted. The harness completes ONLY the mechanical
+    submit; it never chooses the disposition or writes the note. Effect truth = the portal full_state (emr), read
+    as harness-internal authoritative state (NOT gold). Effect paths come from the manifest repair_targets (portal
+    schema) -- no field hard-coded in core."""
+    substrate = "gui"
+
+    def __init__(self, manifest=None):
+        self.manifest = manifest or {}
+        root = self.manifest.get("manifest") if isinstance(self.manifest.get("manifest"), dict) else self.manifest
+        self._targets = (root.get("repair_targets") or [])
+
+    def _writable_paths(self, keyword):
+        for t in self._targets:
+            kws = (t.get("match") or {}).get("field_keywords") or []
+            if any(keyword in k or k in keyword for k in kws):
+                return t.get("writable_paths") or []
+        return []
+
+    def context(self, task):
+        import re
+        goal = task.get("goal") if isinstance(task.get("goal"), str) else ""
+        m = re.search(r"([A-Z]{2,5}-\d+)", goal or "")
+        return {"case_id": (m.group(1) if m else None),
+                "task_id": str(task.get("id") or task.get("task_id") or "task")}
+
+    def extract_commitments(self, root_content, trajectory, goal, judge):
+        """Agent-origin ONLY: a disposition the agent SELECTED and/or a note it TYPED implies it decided to submit
+        the appeal. The value is the agent's own -- never chosen here."""
+        disposition, noted = None, False
+        for ev in (trajectory or []):
+            if ev.get("event_type") != "tool_call" or ev.get("origin") == "recovery":
+                continue
+            tool, args = ev.get("tool"), (ev.get("args") or {})
+            field = str(args.get("field") or args.get("target") or "").lower()
+            if tool == "select" and "disposition" in field:
+                disposition = args.get("value")
+            elif tool == "type" and any(k in field for k in ("note", "appeal", "rationale", "reason")):
+                noted = True
+        if disposition is None and not noted:
+            return []
+        value = str(disposition or "appeal")
+        return [Commitment(text="submit appeal (%s)" % value, category="appeal",
+                           signature=("submit-appeal:%s" % value).lower(), effect_type="submittedAppeal")]
+
+    def effect_key(self, commitment, context):
+        return EffectCompletionKey(str(context.get("case_id")), context.get("artifact_hash", ""),
+                                   commitment.signature, commitment.effect_type)
+
+    def inspect_effect(self, commitment, driver, context):
+        """PRESENT if the submit effect already landed, ABSENT if state readable but not, UNKNOWN if unreadable.
+        The emr state_view is provided by the caller in context['state_view'] (a snapshot recovery read)."""
+        state_view = context.get("state_view")
+        if not isinstance(state_view, dict):
+            return EffectInspection(state="UNKNOWN")
+        for path in self._writable_paths("appeal"):
+            v = _get_state_path(state_view, path)
+            if v:
+                return EffectInspection(state="PRESENT", texts=[str(v)])
+        return EffectInspection(state="ABSENT")
+
+    def is_realized(self, commitment, texts):
+        return bool(texts)   # PRESENT (a nonempty submit-effect value) == already submitted
+
+    def compile_effect(self, commitment, context, manifest):
+        """Only the MECHANICAL submit (irreversible). NEVER a disposition/note write."""
+        mact = {"type": "tool_call", "tool": "submit", "args": {"target": "submitAppeal"}}
+        scope = {"allowed_semantic_type": "submit", "allowed_tool": "submit", "allowed_effect": "irreversible",
+                 "target_path": "%s/submitAppeal" % context.get("case_id"),
+                 "expected_postcondition": {"paths": self._writable_paths("appeal"),
+                                            "verify": "state_readback_nonempty"}}
+        return EffectPlan(mutation_action=mact, scope=scope, effect_type=commitment.effect_type)
+
+
+def get_recovery_adapter(env_type, manifest=None):
     """The recovery adapter for this substrate, or None if recovery is not modelled for it yet."""
     if env_type == "fhir":
         return FhirRecoveryAdapter()
+    if env_type == "gui":
+        return GuiRecoveryAdapter(manifest)
     return None
