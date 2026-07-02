@@ -237,6 +237,22 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
         nonlocal _recovery_orch
         if _harness is None or os.environ.get("MH_COMPLETE_EFFECT", "0") != "1":
             return
+        if os.environ.get("MH_RECOVERY_V3") == "1":   # BCR v3 feature flag: route to the v3 stack INSTEAD
+            try:                                        # of the legacy recovery_adapter path (reversible: delete this if-block)
+                from harness.run_driver import RunDriver
+                from harness.recovery.entry import run_recovery_v3
+                _v3_driver = RunDriver(_harness, _executor, env, task, _state_snapshot,
+                    on_env_action=_on_recovery_env,
+                    budget_check=lambda: (_env_actions + _recovery_env_actions[0]) < max_steps)
+                _v3_driver.step = step; _v3_driver.trajectory = trajectory
+                run_recovery_v3(task, _root_content, _lifecycle, trajectory,
+                    driver=_v3_driver, judge=getattr(_harness.ctx, "judge_fn", None),
+                    goal=((_harness.contract.meta or {}).get("goal")
+                          if (_harness.contract and _harness.contract.meta) else None),
+                    manifest=getattr(_harness, "manifest", None), step=step)
+            except Exception as _v3e:
+                _harness_runtime_errors.append("recovery_v3: %r" % _v3e)
+            return
         try:
             from harness.evidence_state import PRESENT, UNKNOWN
             from harness.recovery_orchestrator import (RecoveryOrchestrator,
