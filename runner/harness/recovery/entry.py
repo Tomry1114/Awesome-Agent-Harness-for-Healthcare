@@ -135,6 +135,33 @@ class _RunDriverGuiBackend(object):
             fs = getattr(self.env, "full_state", None) or {}
         return {"full_state": fs, "payer_a_state": pa, "payer_b_state": pb, "fax": fax}
 
+    def list_controls(self):
+        """Live unified control model for the current page: [{ref, role, label, name, required, value,
+        options, commit}]. Benchmark-name-free; the generic GUI workflow decides fills from this."""
+        js = ("() => {"
+              " const SEL='button,a,[role=button],input,select,textarea';"
+              " const els=Array.from(document.querySelectorAll(SEL));"
+              " return els.map((el,i)=>{"
+              "  let ref=el.getAttribute('data-mh-ref'); ref=ref!==null?parseInt(ref):i;"
+              "  const tag=el.tagName.toLowerCase();"
+              "  const type=(el.getAttribute('type')||el.getAttribute('role')||'').toLowerCase();"
+              "  let label=(el.innerText||'').trim();"
+              "  if(!label) label=el.getAttribute('aria-label')||el.getAttribute('placeholder')||el.getAttribute('name')||el.getAttribute('title')||'';"
+              "  const name=el.getAttribute('name')||el.getAttribute('id')||'';"
+              "  const required=!!(el.required||el.getAttribute('aria-required')==='true');"
+              "  const value=String(el.value||'').slice(0,80);"
+              "  let options=[]; if(tag==='select'){try{options=Array.from(el.options).map(o=>o.value||o.text);}catch(e){}}"
+              "  const isSubmit=(type==='submit')||(tag==='button' && /submit|save|send|file appeal|confirm/i.test(label));"
+              "  const role=tag==='select'?'select':(tag==='textarea'?'textbox':(tag==='input'?(type||'input'):(tag==='button'?'button':tag)));"
+              "  return {ref, role, label:String(label).slice(0,60), name, required, value, options, commit:!!isSubmit};"
+              " }).filter(c=>c.label||c.role==='select'||c.name);"
+              "}")
+        try:
+            ctrls = self.env.page.evaluate(js)
+            return ctrls if isinstance(ctrls, list) else []
+        except Exception:
+            return []
+
     @property
     def page(self):
         return getattr(self.env, "page", None)
@@ -258,6 +285,15 @@ def run_recovery_v3(task, root_content, lifecycle, trajectory=None,
                 astate["payer_a_state"] = live.get("payer_a_state") or {}
                 astate["payer_b_state"] = live.get("payer_b_state") or {}
                 run_task["authoritative_state"] = astate
+                try:
+                    run_task["gui_controls"] = substrate.driver.list_controls()
+                except Exception:
+                    run_task["gui_controls"] = []
+                try:
+                    snap = substrate.driver.call_tool("snapshot", {})
+                    run_task["observation"] = (snap or {}).get("observation") if isinstance(snap, dict) else None
+                except Exception:
+                    pass
         except Exception as _le:
             summary["gui_live_state_error"] = "%r" % _le
 

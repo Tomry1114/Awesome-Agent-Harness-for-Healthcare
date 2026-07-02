@@ -43,10 +43,17 @@ def test_a_build_registry():
     reg = build_registry()
     check("a1 build_registry is a WorkflowRegistry", isinstance(reg, WorkflowRegistry))
     names = {type(m).__name__ for m in reg.all()}
-    expected = {"CreateOrderWorkflow", "PriorAuthorizationWorkflow", "DecisionDocumentationWorkflow",
-                "AppealSubmissionWorkflow", "EvidenceAcquisitionWorkflow"}
-    check("a2 all five workflow modules registered", expected.issubset(names))
-    check("a3 registry length matches", len(reg) >= 5)
+    # ONE generic workflow per substrate family (task-name-specific workflows were removed):
+    expected = {"GenericStructuredEffectCompletionWorkflow", "GenericGuiCompletionWorkflow",
+                "EvidenceAcquisitionWorkflow"}
+    check("a2 the three generic workflow modules registered", expected.issubset(names))
+    check("a3 no task-name workflow remains", not (names & {
+        "CreateOrderWorkflow", "PriorAuthorizationWorkflow", "AppealSubmissionWorkflow",
+        "DecisionDocumentationWorkflow"}))
+    check("a3b registry length matches", len(reg) >= 3)
+    assert expected.issubset(names), names                       # hard pytest gate
+    assert not (names & {"CreateOrderWorkflow", "PriorAuthorizationWorkflow",
+                         "AppealSubmissionWorkflow", "DecisionDocumentationWorkflow"}), names
 
 
 def test_b_stacks_per_env():

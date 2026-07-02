@@ -4,8 +4,8 @@ register(registry) installs the interactive-GUI administrative-portal workflow m
 WorkflowRegistry, in priority order. Additive: it does NOT edit registry.py. Idempotent-friendly - it
 skips a workflow class already present so repeated calls do not double-register.
 """
-from ..workflows.prior_auth import PriorAuthorizationWorkflow
-from ..workflows.appeal_submission import AppealSubmissionWorkflow
+from ..workflows.gui_completion import GenericGuiCompletionWorkflow
+
 
 # Registration order = match priority. HAB recovery targets ONLY the two SEPARABLE mechanical steps that
 # are independent of the clinical decision: prior-auth submission and appeal submission to the payer
@@ -13,8 +13,7 @@ from ..workflows.appeal_submission import AppealSubmissionWorkflow
 # the SAME submit that records the disposition, so it is not an independently-completable gap -- recovering
 # it would mean the harness choosing the disposition (forbidden). Each match_goal is keyed on goal_type.
 _WORKFLOW_CLASSES = (
-    PriorAuthorizationWorkflow,
-    AppealSubmissionWorkflow,
+    GenericGuiCompletionWorkflow,
 )
 
 

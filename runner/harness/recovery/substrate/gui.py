@@ -215,12 +215,16 @@ class GuiSubstrateAdapter(object):
                 sub = op
                 if sub in ("type", "fill"):
                     arg_name = act.get("arg")
-                    val = (action.get("bindings") or {}).get(arg_name)
+                    val = act.get("value")                      # dynamic per-control value from compile
+                    if val is None:
+                        val = (action.get("bindings") or {}).get(arg_name)
                     args["text"] = "" if val is None else str(val)
                     r = driver.call_tool("type", args)
                 elif sub == "select":
                     arg_name = act.get("arg")
-                    val = (action.get("bindings") or {}).get(arg_name)
+                    val = act.get("value")
+                    if val is None:
+                        val = (action.get("bindings") or {}).get(arg_name)
                     args["value"] = "" if val is None else str(val)
                     r = driver.call_tool("select", args)
                 elif sub == "upload":

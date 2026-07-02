@@ -18,6 +18,17 @@ from ..contracts import CommittedGoal
 G_PRIOR_AUTH = "submit_prior_auth"
 G_APPEAL = "submit_appeal"
 G_DOCUMENT = "document_decision"
+G_GUI = "complete_committed_gui_effect"
+
+# Adapter CONFIG only: which persisted-state path indicates the committed GUI effect landed.
+# Keyed on the PUBLIC task_type (never gold/checkpoints). The kernel/workflow/substrate never
+# see this; the generic GUI workflow just receives {path, check} in goal.raw["verify_spec"].
+_VERIFY_BY_TASKTYPE = {
+    "submit_auth_aetna":  {"path": "payer_a_state.differences.priorAuth.added", "check": "nonempty"},
+    "submit_auth_anthem": {"path": "payer_b_state.differences.priorAuth.added", "check": "nonempty"},
+    "electronic_appeals": {"path": "payer_a_state.appealActions.submittedAppeal", "check": "truthy"},
+    "fax_appeal":         {"path": "fax.sentFaxes", "check": "nonempty"},
+}
 
 # ---- binding schema -------------------------------------------------------------------------------
 # Clinical/business payload of an admin submission is SEMANTIC (must trace to a semantic source; can
@@ -120,30 +131,34 @@ class HabBenchmarkAdapter(object):
                 ctx[k] = task[k]
         return ctx
 
+    # (helper defined at module scope: _dig_state)
     def resolve_commitments(self, root, trajectory, goal, judge, ctx):
-        """Oracle-blind: derive the goals the agent committed to. Prefer explicit agent-extracted
-        commitments (root/task['recovery_commitments']); else scan the agent's trajectory text. One
-        CommittedGoal per independent episode. Empty list => DECLINED_NO_COMMITMENT."""
+        """Oracle-blind, GENERIC: the agent committed to a GUI effect (the task objective is a portal
+        submission) that the environment has NOT yet realized. Emit ONE generic complete_committed_gui_effect
+        goal carrying only a verify_spec (which persisted-state path indicates completion -- adapter CONFIG,
+        keyed on the PUBLIC task_type, never gold). The generic workflow decides per-control whether every
+        REQUIRED field can be bound (from EMR/commitment/evidence) and BLOCKS if new content is needed."""
         task = root if isinstance(root, dict) else {}
-        explicit = task.get("recovery_commitments")
-        goals = []
-        if isinstance(explicit, list) and explicit:
-            for i, c in enumerate(explicit):
-                goals.append(self._mk_goal(i, c))
-            return goals
-        # trajectory fallback (agent's own words).
-        text = self._trajectory_text(trajectory, goal)
-        low = text.lower()
-        idx = 0
-        if any(m in low for m in _PA_MARKERS):
-            goals.append(self._mk_goal(idx, {"goal_type": G_PRIOR_AUTH})); idx += 1
-        if any(m in low for m in _APPEAL_MARKERS):
-            goals.append(self._mk_goal(idx, {"goal_type": G_APPEAL})); idx += 1
-        # Documentation recovery REMOVED: on the live portal documentedAppealInEpic is set by the SAME
-        # submit that records the disposition (atomically coupled), so it is NOT an independently
-        # completable gap -- recovering it would mean the harness choosing the clinical disposition.
-        # HAB recovers ONLY the two separable payer-portal submissions (prior_auth / appeal).
-        return goals
+        tt = ((task.get("environment") or {}).get("config") or {}).get("task_type", "")
+        vs = _VERIFY_BY_TASKTYPE.get(tt)
+        if not vs:
+            return []                                          # no known GUI-completion surface -> decline
+        # already realized? (oracle-blind live-state read folded into authoritative_state) -> nothing to do.
+        live = (ctx or {}).get("authoritative_state") or {}
+        already = _dig_state(live, vs.get("path"))
+        if vs.get("check") == "nonempty":
+            realized = bool(already) and (not hasattr(already, "__len__") or len(already) >= 1)
+        else:
+            realized = bool(already)
+        if realized:
+            return []                                          # ALREADY_REALIZED -> DECLINED (correct)
+        return [CommittedGoal(
+            goal_id="gui-0",
+            goal_type=G_GUI,
+            committed_fields=dict((task.get("metadata") or {}).get("committed_fields") or {}),
+            dedup_key="gui:%s" % tt,
+            provenance="agent_commitment",
+            raw={"verify_spec": vs, "task_type": tt})]
 
     def should_trigger(self, lifecycle_event):
         ev = lifecycle_event
@@ -195,3 +210,18 @@ class HabBenchmarkAdapter(object):
                         if isinstance(v, str):
                             parts.append(v)
         return "\n".join(parts)
+
+
+def _dig_state(state, dotted):
+    node = state
+    for seg in [p for p in str(dotted or "").split(".") if p]:
+        if isinstance(node, dict):
+            node = node.get(seg)
+        elif isinstance(node, list):
+            try:
+                node = node[int(seg)]
+            except (ValueError, IndexError, TypeError):
+                return None
+        else:
+            return None
+    return node
