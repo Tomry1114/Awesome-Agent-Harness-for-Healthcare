@@ -219,26 +219,22 @@ class GuiRecoveryAdapter(RecoveryAdapter):
             return []
         if self._marker_true(state_view):              # (3) already documented -> nothing to complete
             return []
-        # (1) the agent explicitly SELECTED a disposition (with its action id)
-        sel_val, sel_id = None, None
-        for ev in (trajectory or []):
-            if ev.get("event_type") != "tool_call" or ev.get("origin") == "recovery":
-                continue
-            tool, args = ev.get("tool"), (ev.get("args") or {})
-            field = str(args.get("field") or args.get("target") or "").lower()
-            if tool == "select" and "disposition" in field and args.get("value"):
-                sel_val, sel_id = args.get("value"), (ev.get("action_id") or ev.get("step"))
-        if sel_val is None:
-            return []
-        # (2) that EXACT disposition landed in authoritative state
+        # (1)+(2) the agent's DECISION is whatever landed in authoritative state -- the harness NEVER sets
+        # selectedDisposition, so a non-empty landed value IS agent-origin. We do not require a specific tool:
+        # the real portal sets the disposition via a typed field -> state (no `select` tool exists there).
         landed = _get_state_path(state_view, self.decision_path)
-        if landed is None or str(landed).strip() == "" or str(landed).strip().lower() != str(sel_val).strip().lower():
-            return []
+        if landed is None or str(landed).strip() == "":
+            return []                                  # no decision landed -> nothing to document
+        # provenance (best-effort): agent actions that touched the disposition field
+        ids = [(ev.get("action_id") or ev.get("step")) for ev in (trajectory or [])
+               if ev.get("event_type") == "tool_call" and ev.get("origin") != "recovery"
+               and "disposition" in str((ev.get("args") or {}).get("field") or (ev.get("args") or {}).get("target") or "").lower()]
+        ids = [x for x in ids if x is not None]
         payload = {"disposition": str(landed)}
         sig = ("document-decision:%s:%s" % (assigned, str(landed))).lower()
         return [Commitment(text="document decision in Epic (%s)" % landed, category="documentation",
                            signature=sig, effect_type=self.effect_type, target_entity=str(assigned),
-                           payload=payload, origin_action_ids=[x for x in [sel_id] if x is not None])]
+                           payload=payload, origin_action_ids=ids)]
 
     def effect_key(self, commitment, context):
         return EffectCompletionKey(str(commitment.target_entity or context.get("case_id")),

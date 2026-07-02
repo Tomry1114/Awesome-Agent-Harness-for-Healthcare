@@ -37,13 +37,19 @@ ck("any_landed_disposition_commits", len(a.extract_commitments(None, [SEL("Write
 c = {**ctx0, "state_view": fs(disp=None, documented=False)}
 ck("no_disposition_no_commitment", a.extract_commitments(None, [{"event_type":"tool_call","origin":"agent","tool":"type","args":{"field":"note","text":"x"}}], "", None, c) == [])
 
-# select attempted but NOT landed -> NO commitment
+# no disposition landed in state -> NO commitment (state is the source of truth)
 c = {**ctx0, "state_view": fs(disp=None, documented=False)}
-ck("select_not_landed_no_commitment", a.extract_commitments(None, [SEL("Route to Clinical Appeals")], "", None, c) == [])
+ck("landed_empty_no_commitment", a.extract_commitments(None, [SEL("Route to Clinical Appeals")], "", None, c) == [])
 
-# selected value != landed value -> NO commitment (state disagreement)
+# REAL-PORTAL: disposition landed in state with NO `select` action (typed -> state) -> STILL a commitment
+c = {**ctx0, "state_view": fs(disp="Route to Clinical Appeals", documented=False)}
+_typed = [{"event_type": "tool_call", "origin": "agent", "tool": "type", "args": {"ref": 13, "text": "Route to Clinical Appeals ..."}}]
+ck("landed_via_type_commits", len(a.extract_commitments(None, _typed, "", None, c)) == 1)
+
+# state is the source of truth: the LANDED disposition is what commits (whatever a select action said)
 c = {**ctx0, "state_view": fs(disp="Transfer to Patient", documented=False)}
-ck("select_mismatch_landed_no_commitment", a.extract_commitments(None, [SEL("Route to Clinical Appeals")], "", None, c) == [])
+_coms = a.extract_commitments(None, [SEL("Route to Clinical Appeals")], "", None, c)
+ck("landed_state_is_truth", len(_coms) == 1 and _coms[0].payload["disposition"] == "Transfer to Patient")
 
 # already documented -> NO commitment
 c = {**ctx0, "state_view": fs(disp="Write Off", documented=True)}
