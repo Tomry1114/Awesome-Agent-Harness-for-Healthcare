@@ -260,16 +260,11 @@ class GuiEnvMock(EnvironmentAdapter):
     def __init__(self, task, **kw):
         super().__init__(task); self.full_state = None
     def reset(self):
-        self.full_state = {"agentActions": {"viewedDenialDetails": False, "viewedRemittanceImage": False,
-                                           "selectedDisposition": None, "documentedAppealInEpic": False},
-                           "signals": {}, "triageNotes": "", "fields": {}, "_page": None}
+        self.full_state = {"agentActions": {}, "signals": {}, "triageNotes": "", "fields": {}, "_page": None}
     def call_tool(self, name, args):
         fs = self.full_state
         if name == "navigate":
             fs["_page"] = args.get("url") or args.get("target")
-            import re as _re
-            _m = _re.search(r"([A-Z]{2,5}-\d+)", str(fs["_page"] or ""))
-            if _m: fs.setdefault("signals", {})["caseId"] = _m.group(1)   # displayed case
         elif name == "click":
             t = args.get("target", ""); fs["agentActions"][t] = True
         elif name == "type":
