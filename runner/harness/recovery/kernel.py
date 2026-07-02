@@ -142,6 +142,126 @@ class RecoveryKernel:
                 idempotency_key=_idem_key(goal_id, i))
         return None
 
+    # -- dynamic closed-loop episode (observe -> decide next action -> execute -> re-observe) -------
+    def _run_dynamic(self, cg, ctx, wf, substrate, events=None):
+        goal_id = cg.goal_id
+        events = events if events is not None else [{"event": "start", "goal": goal_id}]
+        driver_shim = getattr(substrate, "driver", None)
+        history = []
+        created_ids = []
+        committed = False
+        commit_verified = False
+        unknown_seen = False
+        auth_status = None
+
+        for i in range(self.max_steps):
+            # OBSERVE: fresh observation string + live control model + persisted state.
+            observation = None
+            try:
+                snap = substrate.execute_primitive(
+                    C.READ, {"kind": C.READ, "action": {"op": "snapshot"}, "affordance": None}, None)
+                res = getattr(snap, "result", None)
+                observation = res.get("observation") if isinstance(res, dict) else res
+            except Exception:
+                pass
+            controls = []
+            if driver_shim is not None and hasattr(driver_shim, "list_controls"):
+                try:
+                    controls = driver_shim.list_controls() or []
+                except Exception:
+                    controls = []
+            try:
+                state_view = substrate.read_state([]) or {}
+            except Exception:
+                state_view = {}
+
+            # DECIDE the ONE next action.
+            try:
+                decision = wf.next_action(cg, ctx, controls, state_view, history) or {}
+            except Exception as e:
+                events.append({"event": "next_action_error", "detail": repr(e)})
+                decision = {"kind": "block", "reason": "next_action_error"}
+            dk = decision.get("kind")
+            events.append({"event": "decide", "i": i, "kind": dk,
+                           "reason": decision.get("reason"), "tag": decision.get("tag")})
+
+            if dk == "done":
+                break
+            if dk == "block":
+                return C.EpisodeResult(
+                    state=C.BLOCKED_NEEDS_DECISION, path=C.PATH_EXECUTION, goal_id=goal_id,
+                    completed_steps=history, created_ids=created_ids, auth_status=auth_status,
+                    reason="dynamic_block:%s" % decision.get("reason"), events=events)
+            step = decision.get("step")
+            if step is None:
+                break
+
+            # AFFORDANCE: locate the control live.
+            aff = None
+            if step.affordance_target is not None:
+                ab = substrate.resolve_affordance(step.affordance_target, observation)
+                if isinstance(ab, str):
+                    events.append({"event": "affordance_block", "result": ab,
+                                   "target": step.affordance_target})
+                    return C.EpisodeResult(
+                        state=ab, path=C.PATH_EXECUTION, goal_id=goal_id, completed_steps=history,
+                        created_ids=created_ids, auth_status=auth_status,
+                        reason="affordance:%s" % ab, events=events)
+                aff = ab
+
+            # AUTH (scoped for staged, single-use irreversible for a commit).
+            try:
+                auth = self._mint_auth(step, unknown_seen, goal_id, i)
+            except _CommitBlocked:
+                return C.EpisodeResult(
+                    state=C.UNKNOWN, path=C.PATH_VERIFICATION, goal_id=goal_id,
+                    completed_steps=history, created_ids=created_ids, auth_status=auth_status,
+                    reason="no_repeat_after_unknown", events=events)
+
+            # EXECUTE.
+            action = {"kind": step.kind, "action": step.action or {}, "bindings": {},
+                      "affordance": aff, "goal_id": goal_id}
+            outcome = substrate.execute_primitive(step.kind, action, auth)
+            cls = substrate.classify_result(outcome)
+            events.append({"event": "exec", "i": i, "kind": step.kind, "class": cls,
+                           "tag": decision.get("tag")})
+            if getattr(outcome, "created_id", None):
+                created_ids.append(outcome.created_id)
+            if step.kind == C.IRREVERSIBLE_COMMIT:
+                committed = True
+                auth_status = C.AUTH_TIER_IRREVERSIBLE
+                if cls == C.RESULT_UNKNOWN:
+                    unknown_seen = True
+                elif cls == C.RESULT_OK and getattr(outcome, "created_id", None):
+                    commit_verified = True
+            history.append(decision.get("tag") or ("step%d" % i))
+
+        # VERIFY against the workflow's outcome-related postcondition.
+        try:
+            state_view = substrate.read_state([]) or {}
+        except Exception:
+            state_view = {}
+        verdict = wf.verify_effect(cg, state_view)
+        events.append({"event": "verify", "verdict": verdict, "committed": committed})
+        reason = "verify_effect:%s" % verdict
+        if verdict is True:
+            state = C.VERIFIED
+        elif verdict is False:
+            if commit_verified:
+                state = C.VERIFIED
+                reason = "commit_server_verified;verify_effect:False"
+            else:
+                state = C.FAILED
+        else:
+            if commit_verified:
+                state = C.VERIFIED
+                reason = "commit_server_verified;verify_effect:None"
+            else:
+                state = C.UNKNOWN if (committed or unknown_seen) else C.VERIFIED
+        return C.EpisodeResult(
+            state=state, path=C.PATH_EXECUTION, goal_id=goal_id, completed_steps=history,
+            created_ids=created_ids, auth_status=auth_status, reason=reason, events=events)
+
     # -- the single-episode state machine ---------------------------------------------------------
     def _run_single(self, cg, ctx, registry, substrate):
         goal_id = cg.goal_id
@@ -153,6 +273,11 @@ class RecoveryKernel:
             events.append({"event": "no_workflow"})
             return C.EpisodeResult(state=C.NOT_APPLICABLE, path=None, goal_id=goal_id,
                                    reason="no_matching_workflow", events=events)
+
+        # 1b) dynamic closed-loop mode: a workflow that exposes next_action drives observe->decide->execute
+        #     ->re-observe (multi-step GUI / adaptive acquisition) instead of a one-shot static plan.
+        if hasattr(wf, "next_action"):
+            return self._run_dynamic(cg, ctx, wf, substrate, events)
 
         # 2) plan + compile-time invariants
         try:

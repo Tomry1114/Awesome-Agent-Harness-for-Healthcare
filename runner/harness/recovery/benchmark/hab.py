@@ -152,13 +152,19 @@ class HabBenchmarkAdapter(object):
             realized = bool(already)
         if realized:
             return []                                          # ALREADY_REALIZED -> DECLINED (correct)
+        # target keywords from the PUBLIC task goal (operational, not gold) drive generic navigation.
+        import re as _re
+        gtext = str(task.get("goal") or "")
+        kws = [w for w in _re.findall(r"[A-Za-z]{4,}", gtext.lower())
+               if w not in ("open", "review", "available", "information", "about", "this", "that",
+                            "with", "from", "into", "your", "determine", "appropriate", "request")]
         return [CommittedGoal(
             goal_id="gui-0",
             goal_type=G_GUI,
             committed_fields=dict((task.get("metadata") or {}).get("committed_fields") or {}),
             dedup_key="gui:%s" % tt,
             provenance="agent_commitment",
-            raw={"verify_spec": vs, "task_type": tt})]
+            raw={"verify_spec": vs, "task_type": tt, "target_keywords": kws[:12]})]
 
     def should_trigger(self, lifecycle_event):
         ev = lifecycle_event
