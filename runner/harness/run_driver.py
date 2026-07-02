@@ -186,7 +186,73 @@ class RunDriver:
         return {"state": "UNKNOWN", "texts": [], "matched_ids": []}
 
     # -- authorized CREATE through the same executor (dispatch just before the env call) + finalize the auth --
+    # ===== GUI substrate: authoritative snapshot (H1) + affordance resolution (H2) + marker verify (H3) =====
+    def snapshot_gui_state(self):
+        """H1: read the portal full_state THROUGH the executor (counted, canonical event) -- never a private
+        env read. Returns the full_state/emr dict, or None (budget/read failure)."""
+        if not self.can_execute_recovery_action():
+            self._runtime_error("recovery_snapshot_budget_exhausted")
+            return None
+        rd = {"type": "tool_call", "tool": "snapshot", "args": {}}
+        outcome = self.ex.execute_and_normalize(rd, self.env)
+        self._count_env(rd)
+        ev, _ = self.ex.build_event(rd, outcome, self.step, origin="recovery", audience="harness")
+        self._emit_event(ev)
+        res = outcome.res if isinstance(outcome.res, dict) else {}
+        fs = res.get("full_state")
+        fs = fs if isinstance(fs, dict) else (res if isinstance(res, dict) else None)
+        import copy as _copy
+        return _copy.deepcopy(fs) if isinstance(fs, dict) else None   # point-in-time snapshot (never a live env ref)
+
+    def resolve_document_affordance(self, affordance, state_view):
+        """H2: resolve the commit affordance to ONE concrete action. Mock portal -> click(target=target_key).
+        A real portal would resolve a unique DOM ref by label/role. None if it cannot be uniquely resolved."""
+        aff = affordance or {}
+        tk = aff.get("target_key")
+        if not tk:
+            return None
+        return {"type": "tool_call", "tool": aff.get("tool", "click"), "args": {"target": tk}}
+
+    def _marker_true(self, state_view, marker):
+        from .recovery_adapter import _get_state_path
+        v = _get_state_path(state_view or {}, marker)
+        return v is True or (isinstance(v, str) and v.strip().lower() == "true")
+
+    def _execute_gui_marker(self, action, auth):
+        """H3: authorized GUI commit + EXACT verify the marker went False->True. Reuses ActionExecutor +
+        MutationAuthorization (the orchestrator already reserved this auth)."""
+        L = self.h.ledger
+        marker = action.get("_verify_marker")
+        if not self.can_execute_recovery_action():
+            self._runtime_error("recovery_gui_budget_exhausted")
+            L.cancel_authorization(auth)
+            class _O:
+                def __init__(s): s.res = {"error": "recovery_budget_exhausted"}; s.err = "recovery_budget_exhausted"; s.result_status = "failed"; s.recon = None; s.created_id = None
+            return _O()
+        pre = self.snapshot_gui_state()
+        outcome = self.ex.execute_and_normalize(action, self.env, ledger=L, auth=auth)   # dispatches auth + runs the click
+        if outcome.err == "authorization_not_dispatchable":
+            L.fail_authorization(auth)
+            ev, _ = self.ex.build_event(action, outcome, self.step, origin="recovery", audience="harness")
+            self._emit_event(ev); outcome.created_id = None
+            return outcome
+        self._count_env(action)
+        post = self.snapshot_gui_state()
+        ev, _ = self.ex.build_event(action, outcome, self.step, origin="recovery", audience="harness")
+        self._emit_event(ev)
+        pre_t, post_t = self._marker_true(pre, marker), self._marker_true(post, marker)
+        if post_t and not pre_t:
+            L.verify_authorization(auth)          # EXACT False->True: the mechanical effect landed
+        elif post_t:
+            L.unknown_authorization(auth)         # already true before -> ambiguous (should not happen; ABSENT was checked)
+        else:
+            L.fail_authorization(auth)            # marker did not flip -> the action did not take
+        outcome.created_id = None
+        return outcome
+
     def execute(self, action, auth):
+        if action.get("_verify_marker"):          # GUI state-marker effect (documentedAppealInEpic False->True)
+            return self._execute_gui_marker(action, auth)
         L = self.h.ledger
         # P1: hard budget gate BEFORE the create's env call.
         if not self.can_execute_recovery_action():

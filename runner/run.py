@@ -230,6 +230,84 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
     from harness.executor import ActionExecutor
     _executor = ActionExecutor(_canon, env_type, _state_hash, _state_snapshot)
     _recovery_orch = None   # C5b: RecoveryOrchestrator (lazy, per-task; episode registry persists across the task)
+
+    def _run_effect_completion(_root_content, _lifecycle):
+        # C6/H1: substrate-agnostic COMPLETE-effect. FHIR fires at deliverable_confirmed; GUI at before_final
+        # (the adapter's should_trigger decides). All substrate specifics live behind the RecoveryAdapter.
+        nonlocal _recovery_orch
+        if _harness is None or os.environ.get("MH_COMPLETE_EFFECT", "0") != "1":
+            return
+        try:
+            from harness.evidence_state import PRESENT, UNKNOWN
+            from harness.recovery_orchestrator import (RecoveryOrchestrator,
+                VERIFIED as _RV, ALREADY_REALIZED as _RA, RECONCILING as _RC, EpisodeResult as _ER)
+            from harness.run_driver import RunDriver
+            from harness.recovery_adapter import get_recovery_adapter
+            _et = (task.get("environment") or {}).get("type")
+            _rad = get_recovery_adapter(_et, getattr(_harness, "manifest", None))
+            if _rad is None or not _rad.should_trigger(_lifecycle):
+                return
+            if _recovery_orch is None:
+                _recovery_orch = RecoveryOrchestrator(RunDriver(_harness, _executor, env, task, _state_snapshot,
+                    on_env_action=_on_recovery_env,
+                    budget_check=lambda: (_env_actions + _recovery_env_actions[0]) < max_steps))
+            _recovery_orch.d.step = step; _recovery_orch.d.trajectory = trajectory
+            _cm = (_harness.contract.meta if (_harness.contract and _harness.contract.meta) else {})
+            _rctx = _rad.context(task)
+            _rctx["artifact_hash"] = hashlib.sha1((_root_content or "").encode("utf-8")).hexdigest()[:12]
+            if getattr(_rad, "substrate", None) == "gui":
+                _rctx["state_view"] = _recovery_orch.d.snapshot_gui_state()   # H1: authoritative snapshot through executor
+            _committed = _rad.extract_commitments(_root_content, trajectory, _cm.get("goal"),
+                                                  getattr(_harness.ctx, "judge_fn", None), _rctx)
+            _target = _rctx.get("subject") or _rctx.get("case_id")
+            if not (_committed and _target):
+                return
+            for _oi, _c in enumerate(_committed[:2]):
+                _recovery_orch.d.episode_id = "recovery-s%d-%d" % (step, _oi)
+                _key = _rad.effect_key(_c, _rctx)
+                _prior = _recovery_orch.episodes.get(_key)
+                if _prior is not None and _prior.state in (_RV, _RA):
+                    trajectory.append({"step": step, "event_type": "effect_completion", "surface": "state",
+                        "order_text": _c.text, "resource_type": _c.effect_type, "reason": "already_realized_registry",
+                        "created_id": _prior.created_id, "episode_state": _prior.state, "status": "ok"}); continue
+                _insp = _rad.inspect_effect(_c, _recovery_orch.d, _rctx)
+                if _prior is not None and _prior.state == _RC:
+                    if _insp.state == PRESENT and _rad.is_realized(_c, _insp.texts):
+                        _recovery_orch.episodes[_key] = _ER(_RV, created_id=_prior.created_id,
+                            auth_status="VERIFIED", reason="reconciled_present")
+                        trajectory.append({"step": step, "event_type": "effect_completion", "surface": "state",
+                            "order_text": _c.text, "resource_type": _c.effect_type, "reason": "reconciled_present",
+                            "created_id": _prior.created_id, "episode_state": _RV, "status": "ok"})
+                    else:
+                        trajectory.append({"step": step, "event_type": "effect_completion_blocked", "surface": "state",
+                            "order_text": _c.text, "resource_type": _c.effect_type, "reason": "still_reconciling", "status": "ok"})
+                    continue
+                if _insp.state == UNKNOWN:
+                    trajectory.append({"step": step, "event_type": "effect_completion_blocked", "surface": "state",
+                        "order_text": _c.text, "resource_type": _c.effect_type, "reason": "existing_effect_unknown", "status": "ok"}); continue
+                if _insp.state == PRESENT and _rad.is_realized(_c, _insp.texts):
+                    trajectory.append({"step": step, "event_type": "effect_completion", "surface": "state",
+                        "order_text": _c.text, "resource_type": _c.effect_type, "reason": "already_realized", "created_id": None, "status": "ok"}); continue
+                _plan = _rad.compile_effect(_c, _rctx, getattr(_harness, "manifest", None))
+                if not _plan:
+                    continue
+                _mact = _plan.mutation_action
+                if _mact is None and _plan.commit_affordance:   # H2: resolve the GUI affordance to ONE concrete action
+                    _mact = _recovery_orch.d.resolve_document_affordance(_plan.commit_affordance, _rctx.get("state_view"))
+                    if not _mact:
+                        trajectory.append({"step": step, "event_type": "effect_completion_blocked", "surface": "state",
+                            "order_text": _c.text, "resource_type": _c.effect_type, "reason": "affordance_unresolved", "status": "ok"}); continue
+                    _mact["_verify_marker"] = ((_plan.scope.get("expected_postcondition") or {}).get("path"))   # H3: exact marker verify
+                _res = _recovery_orch.realize(_mact, _plan.scope, key=_key)
+                _harness.ledger.clear_mutation_hold()
+                trajectory.append({"step": step, "event_type": "effect_completion", "surface": "state",
+                    "order_text": _c.text, "category": _c.category, "resource_type": _plan.effect_type, "episode_state": _res.state,
+                    "created_id": _res.created_id, "reason": _res.reason, "auth_status": _res.auth_status,
+                    "prereq_rounds": _res.prereq_rounds, "status": ("ok" if _res.realized else "blocked")})
+        except Exception as _ece:
+            _harness_runtime_errors.append("effect_completion: %r" % _ece)
+            try: _harness.ledger.clear_mutation_hold()
+            except Exception: pass
     for step in range(0 if _harness_infra_error else (max_steps + max_repair_turns + 2)):
         _env_budget_spent = (_env_actions + _recovery_env_actions[0]) >= max_steps   # CONTRACT(2)+#6: agent + recovery tool budget; still allow a final-only turn
         _bw = deliv.budget_warning(env, _env_actions + _recovery_env_actions[0], max_steps, trajectory)   # +#6 recovery calls
@@ -250,6 +328,7 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
             trajectory.append({"step": step, "event_type": "agent_error", "error": "invalid_action", "raw": str(action)[:200], "status": "error"})
             finished = True; break
         if action["type"] == "final":
+            _run_effect_completion(action.get("answer", ""), "before_final")   # H1: GUI completes at the agent-done boundary
             _pn = deliv.pre_final_nudge(env, step, trajectory)
             if _pn is not None:
                 last_res, last_obs = _pn
@@ -609,78 +688,14 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
         # EFFECT COMPLETION (Phase 4b, GUARDED): realize an order the AGENT committed to in its ROOT deliverable
         # but never executed. Fail-CLOSED throughout. Runs ONLY after the deliverable write is CONFIRMED
         # (after_action processed, no RECONCILE/ESCALATE, read-back not failed). Provenance-sealed (ROOT agent
-        # content only), governance-first via EvidenceState, existing-effect fail-closed, and the fhir_create
-        # routes through before_action/after_action so the MutationAuthorization is a real execution boundary.
+        # C6/H1: PB deliverable-confirmed trigger -> the adapter's should_trigger gates it. GUI fires at before_final.
         if (_harness is not None and os.environ.get("MH_COMPLETE_EFFECT", "0") == "1" and not _err
-                and _reconcile is None and (_recon is not None and _recon.get("confirmed") is True)   # #8 STRICT: only run when the deliverable write is POSITIVELY read-back-confirmed
+                and _reconcile is None and (_recon is not None and _recon.get("confirmed") is True)
                 and action.get("tool") == "write_file" and (action.get("args") or {}).get("content")):
             _ec_sem = getattr(_harness.ctx, "sem", None)
-            _ec_path = (action.get("args") or {}).get("path")
-            _ec_env_type = (task.get("environment") or {}).get("type")
-            if (_ec_sem is not None and _ec_sem.is_commit()):   # #8: dedup owned by EffectCompletionKey registry, NOT a path gate
-                try:
-                    from harness.evidence_state import PRESENT, UNKNOWN
-                    from harness.recovery_orchestrator import (RecoveryOrchestrator,
-                        VERIFIED as _RV, ALREADY_REALIZED as _RA, RECONCILING as _RC, EpisodeResult as _ER)
-                    from harness.run_driver import RunDriver
-                    from harness.recovery_adapter import get_recovery_adapter
-                    _radapter = get_recovery_adapter(_ec_env_type)   # C6: substrate seam -- FHIR/GUI/perceptual
-                    if _radapter is not None:
-                        if _recovery_orch is None:
-                            _recovery_orch = RecoveryOrchestrator(RunDriver(_harness, _executor, env, task, _state_snapshot,
-                                on_env_action=_on_recovery_env,
-                                budget_check=lambda: (_env_actions + _recovery_env_actions[0]) < max_steps))   # P1: recovery cannot exceed tool budget
-                        _recovery_orch.d.step = step; _recovery_orch.d.trajectory = trajectory
-                        _root_content = _root_agent_content.get(_ec_path, action["args"].get("content"))   # PROVENANCE: root only
-                        _cm = (_harness.contract.meta if (_harness.contract and _harness.contract.meta) else {})
-                        _rctx = _radapter.context(task)
-                        _rctx["artifact_hash"] = hashlib.sha1((_root_content or "").encode("utf-8")).hexdigest()[:12]
-                        _committed = _radapter.extract_commitments(_root_content, trajectory, _cm.get("goal"),
-                                                                   getattr(_harness.ctx, "judge_fn", None), _rctx)
-                        if _committed and _rctx.get("subject"):
-                            for _oi, _c in enumerate(_committed[:2]):
-                                _recovery_orch.d.episode_id = "recovery-s%d-%d" % (step, _oi)   # #9
-                                # P1 REGISTRY-FIRST: build the per-order key, THEN decide -- a settled key is never re-probed.
-                                _key = _radapter.effect_key(_c, _rctx)
-                                _prior = _recovery_orch.episodes.get(_key)
-                                if _prior is not None and _prior.state in (_RV, _RA):
-                                    trajectory.append({"step": step, "event_type": "effect_completion", "surface": "state",
-                                        "order_text": _c.text, "resource_type": _c.effect_type, "reason": "already_realized_registry",
-                                        "created_id": _prior.created_id, "episode_state": _prior.state, "status": "ok"}); continue
-                                _insp = _radapter.inspect_effect(_c, _recovery_orch.d, _rctx)   # #7: probe through the executor
-                                if _prior is not None and _prior.state == _RC:
-                                    # prior ambiguous create -> reconcile: present+realized UPGRADES to VERIFIED (never re-create)
-                                    if _insp.state == PRESENT and _radapter.is_realized(_c, _insp.texts):
-                                        _recovery_orch.episodes[_key] = _ER(_RV, created_id=_prior.created_id,
-                                            auth_status="VERIFIED", reason="reconciled_present")
-                                        trajectory.append({"step": step, "event_type": "effect_completion", "surface": "state",
-                                            "order_text": _c.text, "resource_type": _c.effect_type, "reason": "reconciled_present",
-                                            "created_id": _prior.created_id, "episode_state": _RV, "status": "ok"})
-                                    else:
-                                        trajectory.append({"step": step, "event_type": "effect_completion_blocked", "surface": "state",
-                                            "order_text": _c.text, "resource_type": _c.effect_type, "reason": "still_reconciling", "status": "ok"})
-                                    continue
-                                if _insp.state == UNKNOWN:
-                                    trajectory.append({"step": step, "event_type": "effect_completion_blocked", "surface": "state",
-                                        "order_text": _c.text, "resource_type": _c.effect_type, "reason": "existing_effect_unknown", "status": "ok"}); continue
-                                if _insp.state == PRESENT and _radapter.is_realized(_c, _insp.texts):
-                                    trajectory.append({"step": step, "event_type": "effect_completion", "surface": "state",
-                                        "order_text": _c.text, "resource_type": _c.effect_type, "reason": "already_realized", "created_id": None, "status": "ok"}); continue
-                                _plan = _radapter.compile_effect(_c, _rctx, getattr(_harness, "manifest", None))
-                                if not _plan:
-                                    continue
-                                # the orchestrator drives ACQUIRE-prereq (governance via RequiredContext, through the
-                                # SAME executor -> binds evidence) + re-evaluate + authorized mutation + verify. SAME key.
-                                _res = _recovery_orch.realize(_plan.mutation_action, _plan.scope, key=_key)
-                                _harness.ledger.clear_mutation_hold()
-                                trajectory.append({"step": step, "event_type": "effect_completion", "surface": "state",
-                                    "order_text": _c.text, "category": _c.category, "resource_type": _plan.effect_type, "episode_state": _res.state,
-                                    "created_id": _res.created_id, "reason": _res.reason, "auth_status": _res.auth_status,
-                                    "prereq_rounds": _res.prereq_rounds, "status": ("ok" if _res.realized else "blocked")})
-                except Exception as _ece:
-                    _harness_runtime_errors.append("effect_completion: %r" % _ece)
-                    try: _harness.ledger.clear_mutation_hold()
-                    except Exception: pass
+            if _ec_sem is not None and _ec_sem.is_commit():
+                _ec_path = (action.get("args") or {}).get("path")
+                _run_effect_completion(_root_agent_content.get(_ec_path, action["args"].get("content")), "deliverable_confirmed")
         _last_tool_ev = _ev   # mark consumed only if a later agent.act() runs (circuit-break -> stays False)
         if _err:
             _sig = (action["tool"], json.dumps(action.get("args", {}), sort_keys=True), _ev.get("error_type"))
