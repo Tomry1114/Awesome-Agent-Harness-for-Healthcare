@@ -74,6 +74,81 @@ def _build_fhir_backend(driver, manifest):
     return _RunDriverFhirBackend(driver, manifest)
 
 
+# --- LIVE GUI backend shim (wiring boundary) -----------------------------------------------------------
+# GuiSubstrateAdapter calls backend.call_tool(name,args) / .read_recovery_state() / .reconcile_write() /
+# .page / .full_state. A raw RunDriver exposes none of these (its .env=GuiEnvReal does). Injecting the raw
+# driver would AttributeError on every call. This shim routes each GUI primitive through the SAME counted
+# executor path recovery FHIR reads used (budget gate + execute_and_normalize + _count_env + provenance
+# event) so recovery GUI actions are FAIR against the tool budget and attributable -- never a free action.
+class _RunDriverGuiBackend(object):
+    def __init__(self, driver):
+        self.d = driver
+        self.env = getattr(driver, "env", None)
+
+    def call_tool(self, name, args):
+        # HARD budget gate BEFORE the real env call (parity with OFF; recovery cannot exceed the tool budget)
+        if hasattr(self.d, "can_execute_recovery_action") and not self.d.can_execute_recovery_action():
+            return {"error": "recovery_budget_exhausted"}
+        rd = {"type": "tool_call", "tool": name, "args": args or {}}
+        out = self.d.ex.execute_and_normalize(rd, self.env)
+        try:
+            self.d._count_env(rd)                              # #6 provenance + budget accounting
+        except Exception:
+            pass
+        try:
+            ev, _ = self.d.ex.build_event(rd, out, getattr(self.d, "step", 0),
+                                          origin="recovery", audience="harness")
+            self.d._emit_event(ev)
+        except Exception:
+            pass
+        res = getattr(out, "res", None)
+        return res if isinstance(res, dict) else {"result": res}
+
+    def reconcile_write(self, name, args, r):
+        fn = getattr(self.env, "reconcile_write", None)
+        if not callable(fn):
+            return None
+        try:
+            return fn(name, args or {}, r)
+        except Exception:
+            return None
+
+    def read_recovery_state(self):
+        # counted snapshot refreshes the emr digest through the executor; then read the FULL portals_state
+        # (emr + payer portals + fax) from localStorage so payer-landed submissions are also visible.
+        try:
+            self.call_tool("snapshot", {})
+        except Exception:
+            pass
+        import json as _json
+        fs, pa, pb, fax = {}, {}, {}, {}
+        try:
+            raw = self.env.page.evaluate(
+                "() => { try { return localStorage.getItem('portals_state'); } catch(e){ return null; } }")
+            st = _json.loads(raw) if raw else None
+            if isinstance(st, dict):
+                fs = st.get("emr") or {}
+                pa = st.get("payerA") or {}
+                pb = st.get("payerB") or {}
+                fax = st.get("fax") or {}
+        except Exception:
+            fs = getattr(self.env, "full_state", None) or {}
+        return {"full_state": fs, "payer_a_state": pa, "payer_b_state": pb, "fax": fax}
+
+    @property
+    def page(self):
+        return getattr(self.env, "page", None)
+
+    @property
+    def full_state(self):
+        return getattr(self.env, "full_state", None) or {}
+
+
+def _build_gui_backend(driver):
+    return _RunDriverGuiBackend(driver)
+
+
+
 def _to_entries_shape(res):
     """The harness's canonical search shape is {'entries':[{'resource':..}, ..]} (see _FHIR_SEM). A raw HAPI
     FHIR Bundle uses 'entry'. If the live search came back as a raw Bundle, project it onto the canonical
@@ -158,6 +233,12 @@ def run_recovery_v3(task, root_content, lifecycle, trajectory=None,
             substrate.backend = _build_fhir_backend(driver, manifest)
         except Exception as _e:
             summary["reason"] = "fhir_backend_wire_error:%r" % _e
+            return summary
+    elif summary["env_type"] == "gui" and driver is not None:
+        try:
+            substrate.driver = _build_gui_backend(driver)
+        except Exception as _e:
+            summary["reason"] = "gui_backend_wire_error:%r" % _e
             return summary
     else:
         _inject_driver(substrate, driver)
