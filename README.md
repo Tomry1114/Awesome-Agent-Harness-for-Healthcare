@@ -2,7 +2,7 @@
 
 # Awesome Agent Harness for Healthcare
 
-Evaluate healthcare agents on FHIR records, administrative web portals, and medical images. The runner executes tasks, records tool calls and environment changes, and scores task outcomes alongside seven healthcare workflow dimensions.
+Medical agents must carry out multi-step tasks while keeping evidence tied to the right patient, completing intended actions, verifying their effects, and respecting clinical safety boundaries. A correct final answer alone does not show whether these requirements were met. This repository provides an evaluation harness for medical agents that records their execution and evaluates task outcomes alongside seven healthcare workflow dimensions, covering action fulfillment, resource use, evidence alignment, workflow continuity, auditability, verification, and clinical conduct.
 
 ## Benchmarks
 
