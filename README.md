@@ -1,175 +1,89 @@
-![Medical Harness — a unified evaluation harness for healthcare AI agents](assets/Gemini_Generated_Image_3sd7e23sd7e23sd7.png)
+![Medical Harness](assets/Gemini_Generated_Image_3sd7e23sd7e23sd7.png)
 
 # Awesome Agent Harness for Healthcare
 
-A **unified, multimodal evaluation harness** for medical AI agents. Instead of scoring whether a
-model *answers* a medical question, it puts an agent inside a real working environment (an EHR API,
-an admin web portal, a multimodal tool sandbox), lets it complete multi-step tasks, and scores the
-run on two parallel lines:
-
-- **Outcome** — did the agent get the dataset's *native* task right (a single, separate line).
-- **7 healthcare harness dimensions** — CAF, CRC, PEA, CWC, CA, CLV, and CCB —
-  *how* it worked, scored from process evidence. Their definitions are listed below.
-
-Outcome never occupies any of the 7; the 7 never absorb clinical correctness. Both are always reported.
-
-Building on the ETCLOVG taxonomy of Li et al., *Agent Harness Engineering: A Survey*, we specialize
-its seven layers for healthcare workflows. Four Efficiency dimensions characterize action completion,
-resource use, evidence alignment, and workflow continuity; three Safety dimensions characterize
-auditability, verification, and clinical conduct. Native Outcome is reported separately.
+Evaluate healthcare agents on FHIR records, administrative web portals, and medical images. The runner executes tasks, records tool calls and environment changes, and scores task outcomes alongside seven healthcare workflow dimensions.
 
 ## Benchmarks
 
-| Benchmark | Modality | Scenario |
-|---|---|---|
-| **PhysicianBench** | structured clinical | real FHIR EHR (HAPI R4, de-identified) via API tools |
-| **HealthAdminBench** | GUI admin | real Next.js portal (prior-auth / appeals) driven by Playwright |
-| **MedCTA** | medical images (CT / X-ray / path / …) | multimodal tool sandbox (image description / region / OCR / search / calc) |
+| Benchmark | Tasks | Environment |
+|---|---:|---|
+| [PhysicianBench](benchmark_dataprocess/PhysicianBench/README.md) | 100 | FHIR API tools |
+| [HealthAdminBench](benchmark_dataprocess/HealthAdminBench/README.md) | 135 | Web portals controlled with Playwright |
+| [MedCTA](benchmark_dataprocess/MedCTA/README.md) | 107 | Image description, region description, OCR, search, and calculator tools |
 
-## Architecture — one loop, two convergence points, three roles
-
-```
-                 unified task   (one schema · PhysicianBench · HealthAdminBench · MedCTA)
-                                       │
-         ┌─────────────────────────────▼─────────────────────────────┐
-         │                  RUNNER — one main loop                    │
-         │               obs = env.step(action)   (×N steps)          │
-         └──────┬──────────────────────────────────────────▲─────────┘
-                │ action intent                  observation │
-   BRAIN  agent_model  (emits <tool_call>/<answer> only)     │
-                ▼                                             │
-   ┌─── ①  EnvironmentAdapter  · one class per substrate ─────┴───────┐
-   │    FhirEnv             GuiEnvReal             ToolSandboxEnv      │
-   │    real HAPI FHIR      real Playwright DOM    VLM image tools     │
-   └──────────────── HANDS  tool_backend_model  · real execution ─────┘
-                                       │
-                  trajectory.jsonl   (action + observation + state, per step)
-                                       │
-   ┌─── ②  checkpoint.method  · scorer dispatch ──────────────────────┐
-   │    native_pytest · jmespath · policy · deterministic · llm_judge  │
-   │                       JUDGE  judge_model                          │
-   └───────────────────────────────────┬──────────────────────────────┘
-                                        │
-                 ┌──────────────────────┴──────────────────────┐
-                 ▼                                              ▼
-          Outcome                                    7 healthcare dimensions
-          native task correctness                    Efficiency  ·  Safety
-          (separate line)                            CAF·CRC·PEA·CWC · CA·CLV·CCB
-```
-
-**Two convergence points** keep the loop benchmark-agnostic — execution differences live only in the
-`EnvironmentAdapter` (`obs = env.step(action)`), evaluation differences only in the `checkpoint.method`
-dispatch. **Three roles** are recorded separately in `provenance`, never collapsed even when one model
-fills two: **brain** `agent_model` (emits intent only) · **hands** `tool_backend_model` (performs the
-real execution: FHIR HTTP / Playwright DOM / the VLM *inside* the image tools) · **judge** `judge_model`
-(scores process + outcome). Judge **independence** is enforced against BOTH the brain and the tool
-backend — a judge sharing either is `judge_not_independent` (fail-closed, never a silent pass).
-
-## Metrics — the 7 healthcare dimensions, in two panels
-
-Every qualified run is scored on the same 7 dimensions in [0,1], grouped into two panels:
-**Efficiency** (did it do the task well) and **Safety** (can it be trusted). Reported per benchmark.
-
-| Panel | Code | Dimension | Operational focus |
-|---|---|---|---|
-| **Efficiency** | CAF | Care Action Fulfillment | Completion of required care actions to their intended state. |
-| | CRC | Clinical Resource Competence | Authorized, semantically valid, and productive use of clinical resources. |
-| | PEA | Patient–Evidence Alignment | Acquisition of required evidence and binding to the intended clinical subject. |
-| | CWC | Clinical Workflow Continuity | Ordered workflow progression, recovery from failed obligations, and appropriate termination. |
-| **Safety** | CA | Clinical Auditability | Reconstructability of execution state, failures, recovery, and reliability. |
-| | CLV | Closed-Loop Verification | Confirmation of decision-critical preconditions and post-action state changes. |
-| | CCB | Clinical Conduct Boundaries | Compliance with protected patient scope, authorization, and clinical safety constraints. |
-
-`dimension_scores`, checkpoint `dimension` tags, and report dimension keys use the full names in this
-table. Codes are display abbreviations. The scorer module filenames and subdimension identifiers
-retain their implementation names; renaming dimensions does not change scoring rules or weights.
-
-> **Outcome** — the dataset-native task correctness — is a SEPARATE line, not one of the 7.
-
-## Models & multi-key support
-
-The brain is any **OpenAI-compatible chat model** behind a gateway. The protocol a model is driven with,
-native function calling or the `<tool_call>`/`<answer>` text protocol, is a property of the model and is listed
-in `runner/models.yaml`; each benchmark's H0 workspace (`workspaces/<bench>/h0/`) holds one agent program per
-protocol, and the shell's transport (`runner/transport.py`) carries the calls.
-
-Each of the three model **roles** takes its own model + key env, so one run can put the agent, the
-image-perception VLM, and the judge on **different providers/keys** — useful when one key serves the
-agent model and another serves the judge:
-
-| Role | Model env | Key env |
-|---|---|---|
-| agent brain | `MH_API_MODEL` | `OPENAI_API_KEY` (global default) |
-| VLM perception (image tools) | `MH_VLM_API_MODEL` | `MH_VLM_API_KEY` |
-| judge (gacc / mm / governance / context / verification) | `MH_JUDGE_MODEL` | `MH_JUDGE_KEY` |
-
-`runner/gateway.py` resolves the key per call: explicit `override` > `MH_JUDGE_KEY` (judge calls) >
-`MH_OPENAI_KEY` / `OPENAI_API_KEY`. Set just `OPENAI_API_KEY` for a single-key run, or add
-`MH_JUDGE_KEY` / `MH_VLM_API_KEY` to split roles across keys.
-
-## Trajectories — what one run leaves behind
-
-Every task run writes one self-contained bundle. `examples/` holds one per benchmark (a train-split task the
-H0 harness solved with gpt-5.5), so the format can be read without running anything:
-
-```
-examples/<bench>/<task_id>/
-  task.json                         the unified task (spec/task.schema.json): goal, context, tools, policy, checkpoints
-  trajectory.jsonl                  one event per line (spec/trajectory.schema.json)
-  result.json                       the scored run (spec/result.schema.json)
-  verifier_logs/checkpoints_full.json   every checkpoint with its method, verdict and evidence
-```
-
-**`trajectory.jsonl`** records each step twice, once as the agent saw it and once in canonical form, so a
-run can be replayed and scored without the model:
-
-| field | what it holds |
-|---|---|
-| `step`, `event_type`, `origin`, `audience` | position; `tool_call` · `harness_decision` · `reconciliation` · `answer_attempt` · `final_answer`; who produced it and who saw it (agent or harness) |
-| `args`, `canonical_action` | the call as emitted, and normalised to the benchmark's action vocabulary |
-| `observation`, `canonical_observation`, `agent_visible_text` | what the environment returned, normalised, and the exact text delivered to the agent |
-| `result`, `canonical_result`, `status` | the call's outcome |
-| `state_record` | hash of the environment state before and after the step, and whether it changed (a write vs a read) |
-| `delivery_record` | whether the observation was produced, rendered to the agent and consumed; source vs rendered hash; truncation |
-
-**`result.json`** carries the native Outcome (`checkpoints` of the Outcome dimension, `success`), the 7
-Healthcare dimension scores (`dimension_scores`, with coverage and per-dimension status), `provenance` (brain / hands /
-judge models, never collapsed), `budget`, `tool_calls` and `failure_tags`. `result.rescored.json`, when
-present, is the same record after the post-hoc judge pass.
-
-## Layout
-
-```
-runner/                # the harness — env adapters · agent loop · transport/gateway · scorers · judges · tests
-spec/                  # JSON schemas (task · checkpoint · tool · trajectory · governance · result · …)
-workspaces/<bench>/h0/ # the H0 harness of each benchmark: agent programs, middleware, policies, prompts
-benchmark_dataprocess/ # per-benchmark converters, the unified tasks_unified.jsonl, train/val/test splits
-benchmark/             # where the upstream benchmarks are checked out (see benchmark/README.md)
-examples/              # one complete run bundle per benchmark
-TASK_MANIFEST.json     # task universe + pinned upstream revisions
-```
-
-> Per-run outputs are regenerable and git-ignored.
+Converted tasks are included in `benchmark_dataprocess/`. The [train/validation/test splits](benchmark_dataprocess/splits/README.md) contain 168/68/106 tasks. Install upstream code and runtime assets separately; see [Benchmark](benchmark/README.md) for paths and pinned revisions.
 
 ## Running
 
-```bash
-# single task (API brain via the gateway; needs OPENAI_API_KEY)
-python runner/run.py --bench MedCTA --task MCTA-0 --agent gpt5
+Run commands from the repository root after setting up the benchmark environment. PhysicianBench needs a running FHIR server, HealthAdminBench needs its portal and Playwright, and MedCTA needs image assets and tool services.
 
-# batch (per-task result bundles + summary.json), then post-hoc judge + pure-read report
-python runner/run_batch.py --bench PhysicianBench --agent gpt5 --limit 10 --fhir-base $FHIR --out results/
-python runner/scorers/rescore_judges.py results/gpt5 --judge-model <judge>   # writes result.rescored.json
-python runner/scorers/aggregate_report.py results/gpt5               # pure-read report.json
+Configure an OpenAI-compatible endpoint and models available through your provider:
+
+```bash
+export OPENAI_API_KEY="your-api-key"
+export MH_OPENAI_BASE="https://your-provider.example"
+export MH_API_MODEL="gpt-5.5"
+export MH_JUDGE_MODEL="gpt-5.4"
+export MH_HARNESS_JUDGE_MODEL="gpt-5.4"
+export LLM_JUDGE_MODEL="gpt-5.4"
 ```
 
-Key env vars: `MH_API_MODEL` (agent model) + `OPENAI_API_KEY` + `MH_OPENAI_BASE` (gateway),
-`MH_JUDGE_MODEL` / `MH_JUDGE_KEY` (judge), `MH_VLM_API_MODEL` / `MH_VLM_API_KEY` (image perception),
-`MH_GUI_MODE` (`real`|`mock` for HealthAdminBench), `MH_GATEWAY_TIMEOUT` / `MH_GATEWAY_RETRIES`.
+Agent models and their tool-call protocols are listed in [runner/models.yaml](runner/models.yaml). `--agent gpt5` selects the API agent; `MH_API_MODEL` selects its model. The judge must use a different model from the agent and tool backend.
 
-## Extensions: datasets, harness components, and custom functions
+With PhysicianBench's FHIR server running on port 38080:
 
-The harness supports Python benchmark plugins and workspace components:
+```bash
+python3 runner/run.py --bench PhysicianBench --task PB-chronic_urticaria_allergist \
+  --agent gpt5 --fhir-base http://localhost:38080/fhir --out /tmp/pb-result.json
+python3 runner/run_batch.py --bench PhysicianBench --agent gpt5 --limit 10 \
+  --fhir-base http://localhost:38080/fhir --out results/
+python3 runner/scorers/rescore_judges.py results/gpt5 --judge-model "$MH_JUDGE_MODEL"
+python3 runner/scorers/aggregate_report.py results/gpt5
+```
+
+The last two commands update judge scores and generate `report.json`. Report generation makes no model calls. See [runner/README.md](runner/README.md) for scoring details, FHIR resets, and extensions.
+
+| Setting | Purpose |
+|---|---|
+| `MH_JUDGE_KEY` | Separate API key for judge calls |
+| `MH_VLM_API_MODEL`, `MH_VLM_API_KEY` | Model and key for MedCTA image tools |
+| `MH_SERPER_KEY` or `SERPER_API_KEY` | MedCTA search API key |
+| `MH_GATEWAY_TIMEOUT`, `MH_GATEWAY_RETRIES` | API timeout and retry settings |
+
+## Metrics
+
+Native task outcome is reported separately: PhysicianBench and HealthAdminBench use their native checks; MedCTA uses goal accuracy (GAcc).
+
+The seven dimensions adapt the ETCLOVG taxonomy from Li et al., *Agent Harness Engineering: A Survey*, to healthcare workflows.
+
+| Group | Code | Dimension | Operational focus |
+|---|---|---|---|
+| Efficiency | CAF | Care Action Fulfillment | Completion of required care actions to their intended state. |
+| | CRC | Clinical Resource Competence | Authorized, semantically valid, and productive use of clinical resources. |
+| | PEA | Patient–Evidence Alignment | Acquisition of required evidence and binding to the intended clinical subject. |
+| | CWC | Clinical Workflow Continuity | Ordered workflow progression, recovery from failed obligations, and appropriate termination. |
+| Safety | CA | Clinical Auditability | Reconstructability of execution state, failures, recovery, and reliability. |
+| | CLV | Closed-Loop Verification | Confirmation of decision-critical preconditions and post-action state changes. |
+| | CCB | Clinical Conduct Boundaries | Compliance with protected patient scope, authorization, and clinical safety constraints. |
+
+Schemas and reports use the full dimension names. Reports include coverage and scoring status alongside scores; see the [scoring details](runner/README.md#scoring).
+
+## Outputs
+
+[examples/](examples/) contains a task and completed run for each benchmark:
+
+```text
+examples/<benchmark>/<task_id>/
+  task.json
+  trajectory.jsonl
+  result.json
+  verifier_logs/checkpoints_full.json
+```
+
+`trajectory.jsonl` records actions, observations, delivery to the agent, and state changes. `result.json` contains checkpoint verdicts, scores, model provenance, and execution counts. Post-hoc scoring writes `result.rescored.json`; the aggregate report contains native outcome and the seven workflow dimensions. The result's `success` field is the overall checkpoint gate, rather than native task outcome.
+
+## Extensions
 
 | Extension | Integration point |
 |---|---|
@@ -179,17 +93,24 @@ The harness supports Python benchmark plugins and workspace components:
 | Kernel capability | Subclass `workspace_api.Capability` and register it under `kernel_middleware`. Hooks can return harness decisions before/after an action or before the final answer. |
 | Custom helper functions | Define functions in a component module, or load workspace-local helpers through `workspace_api.load_relative()`, and call them from a registered hook. |
 
-A new dataset can reuse an existing environment type (`fhir`, `gui`, or `tool_sandbox`) with a matching
-workspace. A new environment type also needs an environment implementation and registration in
-`runner/environments.py`; its tool semantics and safety adapter must match that environment. Defining a
-Python function in a benchmark plugin does not by itself expose a new executable tool to the agent.
+Datasets can reuse the `fhir`, `gui`, or `tool_sandbox` environment. A different tool interface needs an environment implementation; a semantic plugin alone does not add executable tools.
 
-See [the extension guide](runner/README.md#extension-guide) for concrete plugin and component examples,
-hook signatures, and workspace import constraints.
+See the [extension guide](runner/README.md#extension-guide) for examples and hook signatures.
 
-## References
+## Repository
 
-- Li et al. *Agent Harness Engineering: A Survey.* — source of the ETCLOVG taxonomy specialized into the 7 healthcare dimensions.
-- PhysicianBench — `github.com/HealthRex/PhysicianBench`
-- HealthAdminBench — `github.com/som-shahlab/health-admin-bench`
-- MedCTA — HuggingFace `IVUL-KAUST/MedCTA`
+```text
+runner/                # execution, environments, scoring, and tests
+spec/                  # JSON schemas and dataset registry
+workspaces/            # agent programs, middleware, policies, and prompts
+benchmark_dataprocess/ # converters, unified tasks, and splits
+benchmark/             # benchmark code and assets
+examples/              # recorded runs
+TASK_MANIFEST.json     # dataset revisions and checksums
+```
+
+## Upstream projects
+
+- [PhysicianBench](https://github.com/HealthRex/PhysicianBench)
+- [HealthAdminBench](https://github.com/som-shahlab/health-admin-bench)
+- [MedCTA](https://huggingface.co/datasets/IVUL-KAUST/MedCTA)

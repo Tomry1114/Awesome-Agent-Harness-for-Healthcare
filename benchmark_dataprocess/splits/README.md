@@ -1,4 +1,4 @@
-# Fixed dataset split — train / val / test over all 342 tasks
+# Dataset splits
 
 | file | tasks | use |
 |---|---|---|

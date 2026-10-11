@@ -1,82 +1,58 @@
-# Unified Harness Runner
+# Runner
 
-One main loop turns any unified task into a scored result:
-**load task → environment adapter → agent loop → unified trajectory → checkpoint scorer → result**
-(validated against `spec/result.schema.json`). Three substrates, two parallel score lines
-(Outcome + the 7 healthcare dimensions, specialized from the ETCLOVG taxonomy of Li et al.,
-*Agent Harness Engineering: A Survey*),
-three separately-recorded roles (brain / hands / judge).
+The runner loads a unified task, executes the agent in its benchmark environment, records the trajectory, and evaluates checkpoints. Run commands from the repository root after configuring the environment and API settings in the [main README](../README.md#running).
 
-## Quick start
+## Commands
+
+| Command | Output |
+|---|---|
+| `run.py` | Single-task result and trajectory |
+| `run_batch.py` | Per-task bundles and `summary.json`; resumes matching completed runs |
+| `scorers/rescore_judges.py` | `result.rescored.json`, including the Clinical Conduct Boundaries judge score |
+| `scorers/aggregate_report.py` | `report.json`, without model calls |
+
+Use `--help` for task filters, execution budgets, and workspace options.
+
+## Code
+
+| Path | Purpose |
+|---|---|
+| `environments.py` | FHIR, GUI, and tool-sandbox adapters |
+| `agents.py` | API agent and stub, replay, and scripted test agents |
+| `models.yaml` | Agent model IDs and tool-call protocols |
+| `workspace.py`, `transport.py` | Workspace loading and model calls |
+| `middleware_host.py` | Host middleware hooks |
+| `harness/` | Kernel capabilities, policies, semantic analysis, and evidence ledger |
+| `gateway.py` | API client, role-specific keys, timeouts, and retries |
+| `adapters/` | Benchmark tools and native graders |
+| `scorers/scoring.py` | Checkpoint evaluation |
+| `scorers/governance_contract.py` | Clinical Conduct Boundaries blending, critical veto, and scoring configuration |
+| `scorers/dim_*.py`, `scorers/governance.py` | Dimension evaluators |
+| `tests/` | Runner and scoring tests |
+
+Default agent programs and components live in `workspaces/<benchmark>/h0/`. Model provenance records the agent, tool backend, and judge separately. A judge matching the agent or tool backend is rejected as non-independent.
+
+## Scoring
+
+`native_task_outcome` uses benchmark-native checks: all Outcome checkpoints must pass for PhysicianBench and HealthAdminBench; MedCTA's mean GAcc must be at least 0.5. Missing or non-terminal checks remain unresolved and are reflected in `native_evaluation_coverage`.
+
+`result.json`'s `success` field requires evaluated checkpoints, no error, and all checks passed. The report exposes it as `harness_gate` separately from native outcome.
+
+The aggregate report includes the seven healthcare dimensions, evidence coverage, and scoring status. Deterministic `substrate_universal` scores are eligible for formal analysis only when adapter admission is `ok`. Judge-backed `experimental_hybrid` scores are reported with that status.
+
+Clinical Conduct Boundaries combines the G1–G4 judge with a deterministic subject-scope veto. A failed judge leaves the score unavailable.
+
+Post-hoc scores include hashes of scoring code, tasks, trajectories, checkpoint sets, and deliverables. Report generation verifies these against current inputs and records artifact status. After changing scoring code, run:
 
 ```bash
-# API brain via an OpenAI-compatible gateway (needs OPENAI_API_KEY + MH_OPENAI_BASE; MH_API_MODEL picks the model)
-python3 runner/run.py --bench PhysicianBench --task PB-chronic_urticaria_allergist --agent gpt5 --out /tmp/r.json
-```
-PhysicianBench needs a live FHIR server first: `benchmark_dataprocess/PhysicianBench/run_fhir.sh`.
-
-## Pipeline (3 phases — judge calls are isolated, the report is pure-read)
-
-```
-run.py / run_batch.py              →  result.json + trajectory.jsonl   (agent + tool backend + in-run judges)
-scorers/rescore_judges.py          →  result.rescored.json             (the ONLY Clinical Conduct Boundaries judge caller)
-scorers/aggregate_report.py        →  report.json                      (PURE-READ — zero model calls)
+python3 -m pytest runner/tests/test_conformance.py -q
 ```
 
-## Files
+## FHIR resets
 
-| File | Role |
-|---|---|
-| `run.py` | single-task CLI: load task → agent loop → score → build + schema-validate result; records role-separated `provenance` (`agent_model` / `tool_backend_model` / `judge_model`) |
-| `run_batch.py` | batch + filters → per-task bundles + `summary.json`; reuses a finished task only when its recorded resume key matches |
-| `environments.py` | env adapters by `environment.type`: **PbNativeEnv** (live HAPI FHIR, the upstream PhysicianBench tool registry) · **GuiEnvReal** (real Playwright portal, state from browser localStorage) · **ToolSandboxEnv** (MedCTA) |
-| `agents.py` | `make_agent()` registry: `gpt5`/`openai` → `workspace.WorkspaceAgent` (the substrate's default workspace, running its agent program for the model's protocol) · `stub`/`replay`/`scripted` (regression agents, NOT baselines) |
-| `models.py` / `models.yaml` | the agent model table: model id → protocol (`function_calling` or `text`); a model not listed does not run |
-| `workspace.py` / `transport.py` | the workspace loader and agent object; the model transport (`chat_fc`, `chat_text`). The agent programs themselves live in `workspaces/<bench>/h0/` (`agent.py` function calling, `agent_text.py` text) |
-| `middleware_host.py` | calls a workspace's host middleware (`before_model`, `before_tool`, `before_final`, `after_episode`, …) in manifest order |
-| `harness/` | the harness kernel: capabilities (`scope_evidence`, `obligation_lifecycle`, `verify_commit`, `reference_integrity`), policy and semantic engines, ledger, repair primitives |
-| `gateway.py` | unified OpenAI-compatible HTTP client; **per-role key** resolution (`override > MH_JUDGE_KEY > MH_OPENAI_KEY > OPENAI_API_KEY > ~/.mh_openai_key`); bounded retry under a hard wall-clock deadline |
-| `adapters/medcta/vlm_backend.py` | MedCTA image perception: `ApiVLM` (a multimodal model behind the gateway, `MH_VLM_API_MODEL`, own `MH_VLM_API_KEY`) |
-| `adapters/medcta/tools_medcta.py` | MedCTA tool backend: ImageDescription / RegionAttributeDescription (VLM) / OCR (EasyOCR) / Calculator / GoogleSearch (Serper, behind `search_guard.py`) |
-| `adapters/medcta/gacc_judge.py` | MedCTA Goal-Accuracy (GAcc) judge, prompts copied from upstream |
-| `adapters/pb/grader.py` | runs PhysicianBench upstream pytest checkpoints |
-| `scorers/scoring.py` | checkpoint dispatch · subject-scope time-ordered state machine (cross-patient veto) · weighted 7-module aggregation |
-| `scorers/governance_contract.py` | **single source**: governance blend · critical predicate/veto · `scoring_config` (tree hash, g14 weight) · `checkpoint_set_sha` |
-| `scorers/governance.py` / `scorers/dim_*.py` | per-dimension evaluators (Care Action Fulfillment/Clinical Resource Competence/Patient–Evidence Alignment/Clinical Workflow Continuity/Clinical Auditability/Closed-Loop Verification + Clinical Conduct Boundaries) |
-| `scorers/rescore_judges.py` | post-hoc Clinical Conduct Boundaries judge; writes `result.rescored.json` top-level `Clinical Conduct Boundaries` + `input_provenance` hashes; records judge independence (vs agent AND tool backend) |
-| `scorers/aggregate_report.py` | pure-read report: `native_task_outcome` (single source) · evidence-tier coverage · provenance audit · paired model comparison (contract-gated) |
-| `tests/test_conformance.py` | conformance checks (metric integrity, governance contract, provenance, tamper detection) |
+The runner removes agent-created `stub-run` MedicationRequest resources before each task by default. `--unsafe-no-reset` skips this cleanup.
 
-## Scoring semantics
-
-- **Outcome** (`native_task_outcome`) = dataset-native task success, a SEPARATE line from the 7 dims:
-  PB = all `dimension=="Outcome"` checkpoints terminal-and-passed; HAB = every native eval passed;
-  MedCTA = mean GAcc ≥ 0.5. Non-terminal/missing Outcome → unresolved (excluded from the rate; see
-  `native_evaluation_coverage`). It NEVER reads `result["success"]` (the harness all-checkpoints gate, kept
-  separate as `harness_gate`).
-- **7 dimensions** = weighted aggregation of `dimension`-tagged checkpoints. `substrate_universal`
-  (deterministic) dims are `formal_analysis_eligible` only when adapter admission is `ok`;
-  `experimental_hybrid` (judge-backed) dims are reportable but never strict.
-- **`success`** = has an evaluated checkpoint, no error, all passed (skipped ≠ success).
-- **Clinical Conduct Boundaries** = the unified G1–G4 judge blended with the deterministic subject-scope critical veto
-  (the one blend lives in `governance_contract.blend_governance`); judge failure → N/A, never a
-  scope-only fallback.
-
-## Provenance & integrity
-
-`rescore_judges` stamps each `Clinical Conduct Boundaries` block with `scoring_config` (`scoring_code_tree_hash =
-git rev-parse HEAD:runner`, judge/prompt ids, `tasks_unified_sha256`) and `input_provenance`
-(`raw_result` / `trajectory` / `task` / `checkpoint_set` / `deliverable_files` sha256).
-`aggregate_report` recomputes them live and reports `scoring_code_status` / `task_asset_status` /
-`source_bundle_status` / `overall_artifact_status` (current only if all three verify). Run
-`python3 -m pytest runner/tests/test_conformance.py -q` after any scoring-path change.
-
-## FHIR state isolation
-
-`run_task` cleans agent-created stub resources (`_tag=stub-run` MedicationRequest) per task by default
-(`--unsafe-no-reset` skips it); `--reset-mode restore_pristine|per_task` re-derives a pristine H2 database
-from the OCI layer (`benchmark_dataprocess/PhysicianBench/augmentation/restore_pristine_h2.sh`; a reset failure
-is a hard error, never a silent dirty run).
+`--reset-mode restore_pristine` or `--reset-mode per_task` restores the H2 database from the container's OCI layer using `benchmark_dataprocess/PhysicianBench/augmentation/restore_pristine_h2.sh`. Reset failures stop the run.
 
 ## Extension guide
 
