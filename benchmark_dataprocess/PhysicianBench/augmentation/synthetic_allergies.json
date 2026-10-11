@@ -1,0 +1,294 @@
+{
+ "_meta": {
+  "scope": "all 26 medication tasks",
+  "provenance": "synthetic"
+ },
+ "allergies": [
+  {
+   "mrn": "MRN4888657619",
+   "task": "PB-adrenal_insufficiency_symptoms",
+   "specialty": "Endocrinology, Medication Prescribing",
+   "allergen": "metformin",
+   "criticality": "high",
+   "reaction": "rash",
+   "rxcui": "6809",
+   "provenance": "synthetic",
+   "tag": "synthetic-augmentation"
+  },
+  {
+   "mrn": "MRN4522690020",
+   "task": "PB-buprenorphine_initiation",
+   "specialty": "Primary Care, Medication Prescribing",
+   "allergen": "penicillin V",
+   "criticality": "low",
+   "reaction": "hives",
+   "rxcui": "7984",
+   "provenance": "synthetic",
+   "tag": "synthetic-augmentation"
+  },
+  {
+   "mrn": "MRN3857828509",
+   "task": "PB-chronic_urticaria_allergist",
+   "specialty": "Allergy & Immunology, Medication Prescribing",
+   "allergen": "loratadine",
+   "criticality": "high",
+   "reaction": "anaphylaxis",
+   "rxcui": "28889",
+   "provenance": "synthetic",
+   "tag": "synthetic-augmentation"
+  },
+  {
+   "mrn": "MRN3694860228",
+   "task": "PB-covid_immunocompromised",
+   "specialty": "Infectious Disease, Medication Prescribing",
+   "allergen": "sulfamethoxazole",
+   "criticality": "high",
+   "reaction": "angioedema",
+   "rxcui": "10180",
+   "provenance": "synthetic",
+   "tag": "synthetic-augmentation"
+  },
+  {
+   "mrn": "MRN8166025032",
+   "task": "PB-dermatology_econsult_rash",
+   "specialty": "Dermatology, Medication Prescribing",
+   "allergen": "doxycycline",
+   "criticality": "high",
+   "reaction": "hives",
+   "rxcui": "3640",
+   "provenance": "synthetic",
+   "tag": "synthetic-augmentation"
+  },
+  {
+   "mrn": "MRN5386175109",
+   "task": "PB-diabetes_a1c_improvement",
+   "specialty": "Endocrinology, Medication Prescribing",
+   "allergen": "levothyroxine",
+   "criticality": "high",
+   "reaction": "hives",
+   "rxcui": "10582",
+   "provenance": "synthetic",
+   "tag": "synthetic-augmentation"
+  },
+  {
+   "mrn": "MRN2946625742",
+   "task": "PB-diabetes_in_cirrhosis",
+   "specialty": "Geriatric Medicine, Medication Prescribing",
+   "allergen": "metformin",
+   "criticality": "low",
+   "reaction": "anaphylaxis",
+   "rxcui": "6809",
+   "provenance": "synthetic",
+   "tag": "synthetic-augmentation"
+  },
+  {
+   "mrn": "MRN1724700145",
+   "task": "PB-down_syndrome_neuropsych",
+   "specialty": "Psychiatry, Medication Prescribing",
+   "allergen": "sertraline",
+   "criticality": "high",
+   "reaction": "anaphylaxis",
+   "rxcui": "36437",
+   "provenance": "synthetic",
+   "tag": "synthetic-augmentation"
+  },
+  {
+   "mrn": "MRN4856660563",
+   "task": "PB-ed_premature_ejaculation",
+   "specialty": "Urology, Medication Prescribing",
+   "allergen": "sildenafil",
+   "criticality": "high",
+   "reaction": "anaphylaxis",
+   "rxcui": "136411",
+   "provenance": "synthetic",
+   "tag": "synthetic-augmentation"
+  },
+  {
+   "mrn": "MRN7165315965",
+   "task": "PB-erectile_dysfunction_workup",
+   "specialty": "Urology, Medication Prescribing",
+   "allergen": "tamsulosin",
+   "criticality": "high",
+   "reaction": "angioedema",
+   "rxcui": "77492",
+   "provenance": "synthetic",
+   "tag": "synthetic-augmentation"
+  },
+  {
+   "mrn": "MRN7483366056",
+   "task": "PB-gout_oncology",
+   "specialty": "Rheumatology, Medication Prescribing",
+   "allergen": "methotrexate",
+   "criticality": "high",
+   "reaction": "hives",
+   "rxcui": "6851",
+   "provenance": "synthetic",
+   "tag": "synthetic-augmentation"
+  },
+  {
+   "mrn": "MRN8523280142",
+   "task": "PB-iron_deficiency_anemia",
+   "specialty": "Internal Medicine, Medication Prescribing",
+   "allergen": "penicillin V",
+   "criticality": "high",
+   "reaction": "nausea",
+   "rxcui": "7984",
+   "provenance": "synthetic",
+   "tag": "synthetic-augmentation"
+  },
+  {
+   "mrn": "MRN5996775663",
+   "task": "PB-lipid_statin_management",
+   "specialty": "Cardiology, Medication Prescribing",
+   "allergen": "atorvastatin",
+   "criticality": "high",
+   "reaction": "anaphylaxis",
+   "rxcui": "83367",
+   "provenance": "synthetic",
+   "tag": "synthetic-augmentation"
+  },
+  {
+   "mrn": "MRN5978766063",
+   "task": "PB-mdr_uti_antibiotics",
+   "specialty": "Infectious Disease, Medication Prescribing",
+   "allergen": "azithromycin",
+   "criticality": "high",
+   "reaction": "rash",
+   "rxcui": "18631",
+   "provenance": "synthetic",
+   "tag": "synthetic-augmentation"
+  },
+  {
+   "mrn": "MRN3615507143",
+   "task": "PB-mds_iron_overload",
+   "specialty": "Hematology, Medication Prescribing",
+   "allergen": "aspirin",
+   "criticality": "low",
+   "reaction": "angioedema",
+   "rxcui": "1191",
+   "provenance": "synthetic",
+   "tag": "synthetic-augmentation"
+  },
+  {
+   "mrn": "MRN8038596016",
+   "task": "PB-oral_contraceptive_switch",
+   "specialty": "Family Medicine, Medication Prescribing",
+   "allergen": "penicillin V",
+   "criticality": "high",
+   "reaction": "nausea",
+   "rxcui": "7984",
+   "provenance": "synthetic",
+   "tag": "synthetic-augmentation"
+  },
+  {
+   "mrn": "MRN6241752544",
+   "task": "PB-osteoarthritis_nsaid_intolerant",
+   "specialty": "Family Medicine, Medication Prescribing",
+   "allergen": "penicillin V",
+   "criticality": "high",
+   "reaction": "hives",
+   "rxcui": "7984",
+   "provenance": "synthetic",
+   "tag": "synthetic-augmentation"
+  },
+  {
+   "mrn": "MRN7497220934",
+   "task": "PB-pcp_rash_workup",
+   "specialty": "Dermatology, Medication Prescribing",
+   "allergen": "doxycycline",
+   "criticality": "high",
+   "reaction": "angioedema",
+   "rxcui": "3640",
+   "provenance": "synthetic",
+   "tag": "synthetic-augmentation"
+  },
+  {
+   "mrn": "MRN2299051392",
+   "task": "PB-snri_to_ssri_titration",
+   "specialty": "Psychiatry, Medication Prescribing",
+   "allergen": "sertraline",
+   "criticality": "high",
+   "reaction": "nausea",
+   "rxcui": "36437",
+   "provenance": "synthetic",
+   "tag": "synthetic-augmentation"
+  },
+  {
+   "mrn": "MRN1939042955",
+   "task": "PB-ssri_intolerance_switch",
+   "specialty": "Internal Medicine, Medication Prescribing",
+   "allergen": "sulfamethoxazole",
+   "criticality": "high",
+   "reaction": "hives",
+   "rxcui": "10180",
+   "provenance": "synthetic",
+   "tag": "synthetic-augmentation"
+  },
+  {
+   "mrn": "MRN6488854841",
+   "task": "PB-svt_tuberous_sclerosis",
+   "specialty": "Cardiology, Medication Prescribing",
+   "allergen": "atorvastatin",
+   "criticality": "low",
+   "reaction": "angioedema",
+   "rxcui": "83367",
+   "provenance": "synthetic",
+   "tag": "synthetic-augmentation"
+  },
+  {
+   "mrn": "MRN1610637279",
+   "task": "PB-thyroid_medication_management",
+   "specialty": "Endocrinology, Medication Prescribing",
+   "allergen": "levothyroxine",
+   "criticality": "high",
+   "reaction": "anaphylaxis",
+   "rxcui": "10582",
+   "provenance": "synthetic",
+   "tag": "synthetic-augmentation"
+  },
+  {
+   "mrn": "MRN5398432401",
+   "task": "PB-trd_augmentation",
+   "specialty": "Psychiatry, Medication Prescribing",
+   "allergen": "sertraline",
+   "criticality": "high",
+   "reaction": "rash",
+   "rxcui": "36437",
+   "provenance": "synthetic",
+   "tag": "synthetic-augmentation"
+  },
+  {
+   "mrn": "MRN8235634313",
+   "task": "PB-trd_refill_review",
+   "specialty": "Psychiatry, Medication Prescribing",
+   "allergen": "sertraline",
+   "criticality": "high",
+   "reaction": "rash",
+   "rxcui": "36437",
+   "provenance": "synthetic",
+   "tag": "synthetic-augmentation"
+  },
+  {
+   "mrn": "MRN7887950851",
+   "task": "PB-trd_with_anxiety",
+   "specialty": "Psychiatry, Medication Prescribing",
+   "allergen": "sertraline",
+   "criticality": "low",
+   "reaction": "anaphylaxis",
+   "rxcui": "36437",
+   "provenance": "synthetic",
+   "tag": "synthetic-augmentation"
+  },
+  {
+   "mrn": "MRN1470939445",
+   "task": "PB-vte_prophylaxis_substitution",
+   "specialty": "Hematology, Medication Prescribing",
+   "allergen": "aspirin",
+   "criticality": "low",
+   "reaction": "hives",
+   "rxcui": "1191",
+   "provenance": "synthetic",
+   "tag": "synthetic-augmentation"
+  }
+ ]
+}

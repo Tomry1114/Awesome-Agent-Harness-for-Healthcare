@@ -1,0 +1,9 @@
+name: back
+description: Go back to the previous page - USE THIS to return from external portals
+parameters:
+  type: object
+  properties:
+    key_info:
+      type: string
+      description: One-line summary of NEW task-relevant facts on this page (see KEY_INFO rules in the system prompt). "None" if nothing new.
+  required: []

@@ -1,0 +1,16 @@
+name: select
+description: Select dropdown option by visible label (for <select> elements)
+parameters:
+  type: object
+  properties:
+    ref:
+      type: string
+      description: The [bracket] identifier shown in PAGE ELEMENTS.
+    option:
+      type: string
+    key_info:
+      type: string
+      description: One-line summary of NEW task-relevant facts on this page (see KEY_INFO rules in the system prompt). "None" if nothing new.
+  required:
+  - ref
+  - option

@@ -1,0 +1,31 @@
+name: fhir_condition_search_problems
+description: Search FHIR Condition resources for problems on a patient's chart. Retrieves problem list data across all encounters.
+parameters:
+  type: object
+  properties:
+    subject:
+      type: string
+      description: FHIR subject reference (e.g. Patient/12345)
+    patient:
+      type: string
+      description: FHIR Patient id (e.g. '12345')
+    clinical_status:
+      type: string
+      description: e.g. 'active', 'inactive', 'resolved'
+    category:
+      type: string
+      description: e.g. 'problem-list-item'
+    code:
+      type: string
+      description: Condition code filter (ICD-10, SNOMED, etc.)
+    onset_date:
+      type: string
+      description: The date a condition was noted
+    count:
+      type: integer
+      description: 'Page size (_count). Default: 10'
+      default: 10
+    page_limit:
+      type: integer
+      description: 'Max pages to follow via Bundle.link[rel=next]. Default: 3'
+      default: 3

@@ -1,0 +1,15 @@
+name: scroll
+description: Scroll the page
+parameters:
+  type: object
+  properties:
+    direction:
+      type: string
+      enum:
+      - up
+      - down
+    key_info:
+      type: string
+      description: One-line summary of NEW task-relevant facts on this page (see KEY_INFO rules in the system prompt). "None" if nothing new.
+  required:
+  - direction

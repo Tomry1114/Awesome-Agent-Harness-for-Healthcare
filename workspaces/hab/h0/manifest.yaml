@@ -1,0 +1,47 @@
+# HealthAdminBench H0 workspace: the default harness components (agent programs, prompts, middleware, policies).
+# The fixed shell is runner/. One agent program per model protocol; the run's model picks by its protocol in
+# runner/models.yaml (runner/workspace.py WorkspaceAgent).
+benchmark: HealthAdminBench
+env_type: gui
+agent_program: agent.py           # function calling
+system_prompt: system_prompt.md   # a template: agent.py puts the task's portal guidance at {portal_guidance}
+agent_program_text: agent_text.py           # <tool_call>/<answer> text protocol
+system_prompt_text: system_prompt_text.md   # a template: agent_text.py puts the tool list at {tools} and appends
+                                            # prompt_fragments/portal_operating_guidance.md
+prompt_fragments: prompt_fragments
+tool_descriptions: tool_descriptions
+completion_obligations: policies/completion_obligations.yaml   # per-task-type completion conjuncts; composed and
+                                 # evaluated by the shell (runner/harness/obligation_gate.py) for the terminal lock,
+                                 # ctx.obligations() and recovery. Not under `policies`: those are kernel policy
+                                 # modules (runner/harness/engines/policy.py)
+middleware:                       # called by runner/middleware_host.py, in this order
+  - middleware/recovery.py:Recovery                # first at before_final (then the nudge, then the audit); its
+                                                   # strategy modules are recovery/, loaded through workspace.load_relative
+  - middleware/obligation_nudge.py:ObligationNudge
+  - middleware/grounding_audit.py:GroundingAudit
+  - middleware/read_acquire.py:ReadAcquire
+  - middleware/precommit.py:PrecommitAudit
+  - middleware/attachment.py:AttachmentBlock
+  - middleware/collection_nudge.py:CollectionNudge
+  - middleware/write_verify.py:WriteVerify
+kernel_middleware:                # run by the harness kernel in this order, after the fixed shell's own capabilities
+  - middleware/goal_alignment.py:GoalAlignment
+  - middleware/required_context.py:RequiredContext
+  - middleware/active_evidence.py:ActiveEvidence
+  - middleware/evidence_coverage.py:EvidenceCoverage
+  - middleware/commitment_execution.py:CommitmentExecution
+  - middleware/fhir_empty_targeted_search_broad_reacquire.py:FhirEmptyTargetedSearchBroadReacquire
+semantic_budget:                  # the split of the shell's total semantic budget (runner/harness/kernel.py
+                                  # max_semantic_checks) across the consumers that draw judge units: named pools, the
+                                  # pools each consumer draws from in fallback order, and round bounds
+                                  # (runner/harness/semantic_budget.py). This allocation equals the shell's DEFAULT_ALLOCATION.
+  pools:
+    reserve: {share: 0.5, min: 1, max: 5}   # half the total, 1 to 5 units: one final verification per answer point
+                                            # (the first final answer, each acquire round, each revise round)
+    general: {rest: true}
+  draws:
+    final_verification: [reserve, general]
+    goal_spec: [general]
+    kernel_middleware: [general]
+    middleware: [general]
+  rounds: {acquire: 2, revise: 2}           # acquire / revise round bounds; no middleware of this workspace reads them

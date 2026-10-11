@@ -1,0 +1,15 @@
+# upstream benchmarks are checked out here, not committed (see benchmark/README.md)
+/benchmark/*/*
+!/benchmark/*/.gitkeep
+# run outputs
+/results*/
+/res_*/
+/runs/
+*.log
+# local state
+__pycache__/
+*.pyc
+.pytest_cache/
+.env
+*.key
+benchmark_dataprocess/PhysicianBench/h2data*/

@@ -1,0 +1,33 @@
+name: fhir_medication_request_search_orders
+description: Search FHIR MedicationRequest resources for medication orders. Returns inpatient, clinic-administered, patient-reported, and reconciled medications.
+parameters:
+  type: object
+  properties:
+    patient:
+      type: string
+      description: FHIR Patient id
+    subject:
+      type: string
+      description: FHIR subject reference
+    category:
+      type: string
+    status:
+      type: string
+      description: e.g. 'active', 'completed', 'cancelled'
+    authoredon:
+      type: string
+      description: Date prescription was authored
+    date:
+      type: string
+      description: The medication administration date
+    intent:
+      type: string
+      description: e.g. 'order', 'plan', 'proposal'
+    count:
+      type: integer
+      description: 'Page size (_count). Default: 50'
+      default: 50
+    page_limit:
+      type: integer
+      description: 'Max pages to follow via Bundle.link[rel=next]. Default: 6'
+      default: 6

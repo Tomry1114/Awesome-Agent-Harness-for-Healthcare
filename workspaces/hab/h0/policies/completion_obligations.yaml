@@ -1,0 +1,138 @@
+# WORKSPACE CONTENT: the task-helping COMPLETION obligations of a HealthAdminBench task, i.e. which public
+# portal effects make it complete. The fixed shell composes and evaluates them with its one engine,
+# runner/harness/obligation_gate.py, and every reader gets that one conjunction: the terminal-lock snapshot,
+# ctx.obligations() (read by middleware/obligation_nudge.py) and recovery.
+#
+# Sources. A conjunct comes from exactly one of two sources, never from a hidden checkpoint and never from the
+# non-public task type:
+#   the public goal         `when: {goal_mentions: [...]}` / `{goal_matches: [...]}`
+#   the agent's decisions   an outward commit the agent itself attempted (a submit, send, disposition or clear: an
+#                           agent-origin click on that control) composes its effect; `when: {agent_decision: <id>}`
+#                           makes a requirement depend on it. A task whose right outcome is not to commit (fax-hard: no
+#                           fax, no clear) gets no commit obligation unless the agent itself committed.
+# The outward commits are keyed on the agent's decision only, also where the goal names them: goals phrase them
+# conditionally ("If authorized, ... clear the referral", "document the issue and do not submit", "Determine the
+# appropriate action"), so a phrase cannot tell a required commit from a conditional one; the agent's attempt can.
+#
+# How the engine reads this file:
+#   decisions.<id>    match: an agent tool call meeting it (tool / tool_any / tool_pattern / ref_pattern over the
+#                     control's ref) is the decision; effect: the conjunct that says the chosen effect landed. The effects
+#                     of the decisions taken are composed first, in this order (the submissions the lock observes).
+#   requires          then these, in order, each kept when its `when` holds (all keys): goal_mentions (a phrase,
+#                     case-insensitive), goal_matches (a regex over the lower-cased goal), agent_decision (an id above).
+#   conjuncts.<id>    path, then alt_paths: the first that holds a truthy value is read. check: truthy | nonempty
+#                     (optional min_len, default 1) | equals (with value). `{payer}` in a path is the payer `payer`
+#                     resolves from the public goal; every path of a task uses that one payer, so an effect on the other
+#                     payer's portal never satisfies it.
+#
+# Every reader evaluates these paths against the shell's one view of the persisted portal state,
+# runner/harness/obligation_gate.py obligation_view: the native evaluator's root (full_state with faxPortal, signals,
+# payer_{a,b}_state.full_state.appealActions and .differences.priorAuth.added). GuiEnvReal.eval_state is that view (the
+# lock, ctx.obligations()); recovery builds it from its read-back. Paths into the raw slices (fax.*, top-level
+# agentActions, _live_full_state, payer_{payer}_state.appealActions / .submissions) are alternative paths that view
+# does not contain.
+#
+# Existence checks over public state only: never a gold value, never note content. None of these is a safety
+# obligation. Safety obligations are the shell's policy modules (runner/policies/clinical) and are not listed here.
+name: completion_obligations
+
+payer:
+  default: a
+  goal_mentions:
+    b: ["payer b", "payerb", "payer-b", "payer_b", "anthem"]      # Payer B is Anthem Blue Cross, Payer A is Aetna
+
+decisions:
+  # the agent's own outward commits: the controls are the portal's commit buttons (data-testid)
+  disposition_submit:
+    {match: {tool_any: [click, submit], ref_pattern: '^submit-disposition-button$'}, effect: disposition_selected}
+  appeal_submit:
+    {match: {tool_any: [click, submit], ref_pattern: '^submit-appeal-button$'}, effect: appeal_submitted}
+  prior_auth_submit:
+    {match: {tool_any: [click, submit], ref_pattern: '^submit-auth-button$'}, effect: prior_auth_submitted}
+  fax_send:
+    {match: {tool_any: [click, submit], ref_pattern: '^send-fax-button$'}, effect: fax_sent}
+  referral_clear:
+    {match: {tool_any: [click, submit], ref_pattern: '^clear-from-worklist-button$'}, effect: referral_cleared}
+
+conjuncts:
+  # ---- outward commits (effects of the agent's decisions)
+  disposition_selected:
+    path: agentActions.selectedDisposition
+    check: nonempty
+    alt_paths: [full_state.agentActions.selectedDisposition, _live_full_state.agentActions.selectedDisposition]
+  appeal_submitted:
+    # raw payer slice first; payer_{payer}_state.full_state.appealActions is where eval_state (and the native
+    # checkpoint) puts it
+    path: "payer_{payer}_state.appealActions.submittedAppeal"
+    check: truthy
+    alt_paths: ["payer_{payer}_state.full_state.appealActions.submittedAppeal"]
+  prior_auth_submitted:
+    {path: "payer_{payer}_state.submissions", check: nonempty, alt_paths: ["payer_{payer}_state.differences.priorAuth.added"]}
+  fax_sent:
+    {path: fax.faxesSent, check: truthy, alt_paths: [full_state.faxPortal.faxesSent]}
+  referral_cleared:
+    path: full_state.clearedReferrals
+    check: nonempty
+    alt_paths: [_live_full_state.clearedReferrals, clearedReferrals]
+
+  # ---- EHR documentation the goal asks for
+  appeal_documented:
+    path: agentActions.documentedAppealInEpic
+    check: truthy
+    alt_paths: [full_state.agentActions.documentedAppealInEpic, _live_full_state.agentActions.documentedAppealInEpic]
+  auth_note_added:
+    path: agentActions.addedAuthNote
+    check: truthy
+    alt_paths: [full_state.agentActions.addedAuthNote, _live_full_state.agentActions.addedAuthNote]
+  progress_note_added:
+    path: agentActions.addedProgressNote
+    check: truthy
+    alt_paths: [full_state.agentActions.addedProgressNote, _live_full_state.agentActions.addedProgressNote]
+
+  # ---- public workflow steps the goal names (portal flags)
+  viewed_denial_details:
+    path: full_state.agentActions.viewedDenialDetails
+    check: truthy
+    alt_paths: [_live_full_state.agentActions.viewedDenialDetails, agentActions.viewedDenialDetails,
+                full_state.signals.viewedDenialDetails, signals.viewedDenialDetails,
+                _live_full_state.signals.viewedDenialDetails]
+  viewed_remittance_image:
+    path: full_state.agentActions.viewedRemittanceImage
+    check: truthy
+    alt_paths: [_live_full_state.agentActions.viewedRemittanceImage, agentActions.viewedRemittanceImage,
+                full_state.signals.viewedRemittanceImage, signals.viewedRemittanceImage,
+                _live_full_state.signals.viewedRemittanceImage]
+
+  # ---- contents of the fax the agent sent
+  fax_attachment:
+    path: full_state.faxPortal.attachmentNames
+    check: nonempty
+    alt_paths: [_live_full_state.faxPortal.attachmentNames, fax.attachmentNames]
+  fax_recipient:
+    path: full_state.faxPortal.faxRecipient
+    check: nonempty
+    alt_paths: [_live_full_state.faxPortal.faxRecipient, fax.faxRecipient]
+
+requires:
+  # "Open denial DEN-001 ..." / "Review the CO-50 medical necessity denial in EMR" (the portal records the open denial)
+  - conjunct: viewed_denial_details
+    when: {goal_matches: ['\bopen (?:the completed )?denial den-', '\bdenial\b[^.]*\bin emr\b']}
+  # "check the remittance image" / "Click the Remittance Image tab"
+  - conjunct: viewed_remittance_image
+    when: {goal_mentions: ["remittance image"]}
+  # "Document your reasoning in a triage note" / "document the confirmation number ... in a triage note"
+  - conjunct: appeal_documented
+    when: {goal_mentions: ["triage note"]}
+  # "Record the authorization number in EMR": the number exists once the agent submitted the authorization
+  - conjunct: auth_note_added
+    when: {agent_decision: prior_auth_submit, goal_mentions: ["authorization number in emr", "auth number in emr"]}
+  # "add a progress note" / "document your findings in a progress note"
+  - conjunct: progress_note_added
+    when: {goal_mentions: ["progress note"]}
+  # "Download the required documents, fax them to the DME supplier" / "attach the downloaded clinical documents to the
+  # fax": the documents travel in the fax the agent sent
+  - conjunct: fax_attachment
+    when: {agent_decision: fax_send, goal_mentions: ["required documents", "attach"]}
+  # "fax them to the DME supplier" / "to the correct supplier" / "look up the ... fax number"
+  - conjunct: fax_recipient
+    when: {agent_decision: fax_send, goal_mentions: ["fax them to", "to the correct supplier", "fax number"]}

@@ -1,0 +1,34 @@
+# MedCTA default (h0) workspace: the benchmark-specific half of the harness. The fixed shell is runner/.
+# One agent program per model protocol; the run's model selects one by its protocol in runner/models.yaml
+# (runner/workspace.py WorkspaceAgent).
+benchmark: MedCTA
+env_type: tool_sandbox
+agent_program: agent.py                     # function calling
+system_prompt: system_prompt.md
+agent_program_text: agent_text.py           # <tool_call>/<answer> text protocol
+system_prompt_text: system_prompt_text.md   # a template: agent_text.py puts the tool list at {tools}
+tool_descriptions: tool_descriptions
+middleware:                       # called by runner/middleware_host.py, in this order
+  - middleware/answer_candidate.py:AnswerCandidate
+kernel_middleware:                # run by the harness kernel in this order, after the fixed shell's own capabilities
+  - middleware/answer_repair.py:AnswerRepair   # first, right after verify_commit, whose audit it reads
+  - middleware/goal_alignment.py:GoalAlignment
+  - middleware/required_context.py:RequiredContext
+  - middleware/active_evidence.py:ActiveEvidence
+  - middleware/evidence_coverage.py:EvidenceCoverage
+  - middleware/commitment_execution.py:CommitmentExecution
+  - middleware/fhir_empty_targeted_search_broad_reacquire.py:FhirEmptyTargetedSearchBroadReacquire
+semantic_budget:                  # the split of the shell's total semantic budget (runner/harness/kernel.py
+                                  # max_semantic_checks) across the consumers that draw judge units: named pools, the
+                                  # pools each consumer draws from in fallback order, and round bounds
+                                  # (runner/harness/semantic_budget.py). This is the default allocation.
+  pools:
+    reserve: {share: 0.5, min: 1, max: 5}   # half the total, 1 to 5 units: one final verification per answer point
+                                            # (the first final answer, each acquire round, each revise round)
+    general: {rest: true}
+  draws:
+    final_verification: [reserve, general]
+    goal_spec: [general]
+    kernel_middleware: [general]
+    middleware: [general]
+  rounds: {acquire: 2, revise: 2}           # answer-candidate round bounds, read by middleware/answer_candidate.py

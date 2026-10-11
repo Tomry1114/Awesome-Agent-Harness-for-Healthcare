@@ -1,0 +1,28 @@
+name: fhir_observation_search_labs
+description: Search FHIR Observation resources for lab results. Returns component-level data for lab results.
+parameters:
+  type: object
+  properties:
+    patient:
+      type: string
+      description: FHIR Patient id
+    subject:
+      type: string
+      description: FHIR subject reference
+    category:
+      type: string
+      description: e.g. 'laboratory'
+    code:
+      type: string
+      description: LOINC code filter
+    date:
+      type: string
+      description: The date range for when the Observation was taken.
+    count:
+      type: integer
+      description: 'Page size (_count). Default: 50'
+      default: 50
+    page_limit:
+      type: integer
+      description: 'Max pages to follow via Bundle.link[rel=next]. Default: 6'
+      default: 6

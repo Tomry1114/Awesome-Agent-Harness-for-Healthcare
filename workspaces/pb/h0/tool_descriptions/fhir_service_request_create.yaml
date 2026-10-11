@@ -1,0 +1,64 @@
+name: fhir_service_request_create
+description: Create a FHIR ServiceRequest to place orders for labs, imaging, procedures, referrals, or other services.
+parameters:
+  type: object
+  properties:
+    patient_reference:
+      type: string
+      description: e.g. 'Patient/12345'
+    code_code:
+      type: string
+      description: Service code (LOINC/CPT/SNOMED)
+    code_display:
+      type: string
+      description: Display name for the service
+    requester_reference:
+      type: string
+      description: Ordering practitioner reference
+    category_code:
+      type: string
+      default: '108252007'
+      description: SNOMED category (108252007=Lab, 363679005=Imaging, 387713003=Surgical)
+    category_display:
+      type: string
+      default: Laboratory procedure
+    category_system:
+      type: string
+      default: http://snomed.info/sct
+    code_system:
+      type: string
+      default: http://loinc.org
+    status:
+      type: string
+      default: active
+    intent:
+      type: string
+      default: order
+    priority:
+      type: string
+      description: '''routine'', ''urgent'', ''asap'', ''stat'''
+    encounter_reference:
+      type: string
+    performer_reference:
+      type: string
+    reason_code:
+      type: string
+    reason_display:
+      type: string
+    reason_system:
+      type: string
+    note_text:
+      type: string
+    occurrence_datetime:
+      type: string
+    body_site_code:
+      type: string
+    body_site_display:
+      type: string
+    body_site_system:
+      type: string
+  required:
+  - patient_reference
+  - code_code
+  - code_display
+  - requester_reference

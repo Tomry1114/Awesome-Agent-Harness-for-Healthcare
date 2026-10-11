@@ -1,0 +1,156 @@
+# ENVIRONMENT ADAPTER — HAPI FHIR EHR. The ONLY layer that knows tool names / observation schema. It maps
+# raw tool calls to canonical semantics and declares which SUBSTRATE this environment is and which reusable
+# CLINICAL policy modules are in force. A second FHIR-like dataset adds its own adapter (different tool
+# names) on the SAME substrate + clinical modules — zero core/substrate/policy change.
+name: hapi_fhir
+substrate: structured_record
+clinical_modules: [medication_safety]   # the shell's; chart_review is a workspace policy (workspaces/pb/h0/policies)
+
+manifest:
+  # EVIDENCE AFFORDANCES: per evidence_unit, the PhysicianBench tool that reads that resource for the
+  # patient + subject parameter + id shape + result semantics. Core compiles an abstract EvidenceRequest through
+  # these -- it never guesses a tool or `patient` vs `subject` from the resource name. Tool and parameter names are
+  # the upstream registry's (harness.substrate_catalog.tool_parameters("fhir")); the subject is named the way
+  # manifest.subject.to_args names it for a harness-built read (semantics.bind_subject: the first to_args entry
+  # the tool accepts is `patient`, value Patient/<id>). PB has no AllergyIntolerance or generic search tool
+  # (no `fhir_search`), so no unit points at one. Patient has no affordance.
+  evidence_affordances:
+    - evidence_unit: MedicationRequest
+      tool: fhir_medication_request_search_orders
+      subject_arg: patient
+      subject_ref_style: typed_ref    # patient=Patient/<id>
+      result_semantics: {collection_paths: [entries], count_paths: [total], absence_when_empty: true}
+    - evidence_unit: ServiceRequest
+      tool: fhir_service_request_search
+      subject_arg: patient
+      subject_ref_style: typed_ref
+      result_semantics: {collection_paths: [entries], count_paths: [total], absence_when_empty: true}
+    - evidence_unit: Observation
+      tool: fhir_observation_search_labs
+      subject_arg: patient
+      subject_ref_style: typed_ref
+      result_semantics: {collection_paths: [entries], count_paths: [total], absence_when_empty: true}
+    - evidence_unit: Condition
+      tool: fhir_condition_search_problems
+      subject_arg: patient
+      subject_ref_style: typed_ref
+      result_semantics: {collection_paths: [entries], count_paths: [total], absence_when_empty: true}
+  # repair_targets: the proposed FHIR payload paths (harness root {candidate, state}). Standard
+  # FHIR resource structure -- adapter schema, not gold.
+  repair_targets:
+    - match: {field_keywords: [subject, patient]}
+      writable_paths: [candidate.args.resource.subject.reference, candidate.args.subject]
+      verification: {type: path_present}
+    - match: {field_keywords: [dose, dosage, doseandrate]}
+      writable_paths: ["candidate.args.resource.dosageInstruction[0].doseAndRate", candidate.args.dose]
+      verification: {type: path_present}
+    - match: {field_keywords: [route]}
+      writable_paths: ["candidate.args.resource.dosageInstruction[0].route", candidate.args.route]
+    - match: {field_keywords: [frequency, timing]}
+      writable_paths: ["candidate.args.resource.dosageInstruction[0].timing", candidate.args.frequency]
+    - match: {field_keywords: [medication, drug, code]}
+      writable_paths: [candidate.args.resource.medicationCodeableConcept, candidate.args.resource.code, candidate.args.medication]
+    - match: {field_keywords: [reason, indication]}
+      writable_paths: [candidate.args.resource.reasonCode, candidate.args.reason]
+  subject:
+    type: patient
+    binding: required        # every patient action must NAME its patient; "no target" != "active patient"
+    id_context_keys: [patient_ref, patient_id, patient]      # structured context -> assigned subject
+    # operated subject — supports nested FHIR create args (resource.subject.reference) via dotted paths.
+    from_args: [patient_reference, patient, subject, subject_reference, subject_ref, patient_ref, patient_id, subject_id,
+                resource.subject.reference, resource.patient.reference, subject.reference,
+                identifier, mrn]   # LAST-RESORT: standard FHIR patient-lookup (Patient?identifier=MRN) names the subject;
+                                   # only used when no explicit patient/subject arg is present (creates keep resource.subject.reference precedence).
+    # The inverse of from_args, for an action the HARNESS builds itself (a harness READ): which argument
+    # names the assigned subject, first match against the tool's own parameters, and its value, where {id} is
+    # the assigned subject's bare id. Only forms verified against the live HAPI server:
+    # patient/subject take "Patient/<id>" (and the bare id); identifier takes the bare MRN -- "Patient/<id>"
+    # returns 0 there. A lab search with no subject at all returns OTHER patients' records.
+    to_args:
+      - {arg: patient, value: "Patient/{id}"}
+      - {arg: subject, value: "Patient/{id}"}
+      - {arg: patient_reference, value: "Patient/{id}"}
+      - {arg: identifier, value: "{id}"}
+  reference_paths:                 # ORACLE-BLIND commit-reference integrity: a ref must be grounded in
+    # the agent's retrieved evidence or the public goal; ungrounded/placeholder -> repair/strip (per on_ungrounded).
+    - {path: encounter_reference, resource: Encounter, required: false, on_ungrounded: strip}
+    - {path: recipient_reference, resource: Practitioner, required: false, on_ungrounded: strip}
+  actions:
+    # resource-specific reads first (they tag the evidence resource); then generic read; then writes.
+    - match: {tool_pattern: allergy}
+      semantic_type: read
+      effect: none
+      resource: AllergyIntolerance
+      produces_evidence: {source_class: record, modality: record}
+    - match: {tool_pattern: medication_request_search}
+      semantic_type: read
+      effect: none
+      resource: MedicationRequest
+      produces_evidence: {source_class: record, modality: record}
+    - match: {tool_pattern: patient_search}
+      semantic_type: read
+      effect: none
+      resource: Patient
+      produces_evidence: {source_class: record, modality: record}
+    - match: {tool_pattern: condition_search}
+      semantic_type: read
+      effect: none
+      resource: Condition
+      produces_evidence: {source_class: record, modality: record}
+    - match: {tool_pattern: observation_search}
+      semantic_type: read
+      effect: none
+      resource: Observation
+      produces_evidence: {source_class: record, modality: record}
+    - match: {tool_pattern: procedure_search}
+      semantic_type: read
+      effect: none
+      resource: Procedure
+      produces_evidence: {source_class: record, modality: record}
+    - match: {tool_pattern: document_reference_search}
+      semantic_type: read
+      effect: none
+      resource: DocumentReference
+      produces_evidence: {source_class: record, modality: record}
+    - match: {tool_pattern: service_request_search}
+      semantic_type: read
+      effect: none
+      resource: ServiceRequest
+      produces_evidence: {source_class: record, modality: record}
+    - match: {tool_pattern: _search}
+      semantic_type: read
+      effect: none
+      produces_evidence: {source_class: record, modality: record, resource_from_args: [resourceType]}
+    - match: {tool_pattern: _read}
+      semantic_type: read
+      effect: none
+      produces_evidence: {source_class: record, modality: record}
+    - match: {tool: get_lab_reference_range}                # reference-range lookup: NOT patient-bound
+      semantic_type: read
+      effect: none
+      subject_binding: none
+      produces_evidence: {source_class: record, modality: record}
+    - match: {tool_pattern: medication_request_create}      # the high-risk commit (no evidence binding)
+      semantic_type: create
+      effect: irreversible
+      resource: MedicationRequest
+    - match: {tool_pattern: service_request_create}
+      semantic_type: create
+      effect: irreversible
+      resource: ServiceRequest
+    - match: {tool_pattern: communication_create}
+      semantic_type: create
+      effect: reversible        # a patient Communication/message is amendable + landing-confirmed by
+                                # reconciliation; NOT an irreversible clinical commit (orders stay irreversible)
+      resource: Communication
+    - match: {tool_pattern: appointment_create}
+      semantic_type: create
+      effect: irreversible
+      resource: Appointment
+    - match: {tool_pattern: _create}
+      semantic_type: create
+      effect: irreversible
+    - match: {tool: write_file}      # generic scratchpad write — NOT a patient operation
+      semantic_type: update
+      effect: reversible
+      subject_binding: none

@@ -1,0 +1,24 @@
+name: fhir_procedure_search_orders
+description: Search FHIR Procedure resources for completed procedures. Includes surgeries, endoscopies, biopsies, counseling, physiotherapy, etc.
+parameters:
+  type: object
+  properties:
+    date:
+      type: string
+      description: Date or period that the procedure was performed, using the FHIR date parameter format.
+    patient:
+      type: string
+      description: FHIR Patient id
+    subject:
+      type: string
+      description: FHIR subject reference
+    category:
+      type: string
+    count:
+      type: integer
+      description: 'Page size (_count). Default: 50'
+      default: 50
+    page_limit:
+      type: integer
+      description: 'Max pages to follow via Bundle.link[rel=next]. Default: 6'
+      default: 6

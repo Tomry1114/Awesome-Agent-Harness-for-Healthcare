@@ -1,0 +1,147 @@
+"""Scoped Repair capability (registered under the name 'goal_alignment').
+
+Two layers, both oracle-blind, substrate-agnostic (it speaks PROJECTIONS via repair_surface):
+  L1 Deterministic guard  -- drop any 'missing' finding whose named target is in fact already non-empty
+                             (so the harness never tells the agent to redo work it already did).
+  L2 Semantic sufficiency -- the judge names localized defects (target_path + smallest repair + preserve).
+
+A finding then enters the ledger lifecycle: delivered once, NOT re-nagged until the agent acts, and every
+attempt is DELTA-VALIDATED (defect fixed AND protected content preserved) before it is accepted. A repair
+that fixes the target but overwrites protected content is vetoed as `repair_regression`, so a repair cannot
+destroy content that was already correct."""
+from workspace_api import Capability, decision as D
+from workspace_api import at_least, R2
+from workspace_api import surface_for, is_present, target_sig, effect_paths, effect_fingerprint
+from workspace_api import validate_repair
+from workspace_api import enforceable
+
+
+class GoalAlignment(Capability):
+    # LAYER: AMPLIFICATION -- localized goal-aware repair; the delta veto is INFRASTRUCTURE
+    name = "goal_alignment"
+
+    # ---- hooks ------------------------------------------------------------------------------------------
+    def before_action(self, action, ctx):
+        if not at_least(ctx.risk or R2, R2):
+            return None
+        if not (ctx.sem and getattr(ctx.sem, "semantic_type", None) in ("create", "update", "submit")):
+            return None
+        candidate = getattr(ctx.sem, "raw", None) or action
+        return self._run(ctx, state=ctx.current_state, candidate=candidate, stage="before_action")
+
+    def before_final(self, answer, ctx):
+        # Answer-repair runs ONLY when the manifest declares the terminal answer the graded commit (perceptual answer
+        # substrate). For a non-commit terminal_response (form / FHIR -- the graded deliverable is created resources /
+        # written files, NOT the chat answer), answer-repair is OFF (it would otherwise re-project EMR/resource findings onto
+        # the answer surface -> guaranteed-fail churn).
+        if not getattr(ctx, "final_is_commit", False):
+            return None
+        cand = {"answer": answer if isinstance(answer, str) else str(answer)}
+        return self._run(ctx, state=cand, candidate=cand, stage="before_final")
+
+    # ---- engine -----------------------------------------------------------------------------------------
+    def _goal_spec(self, ctx):
+        return (ctx.contract.meta or {}).get("goal_spec") if (ctx.contract and ctx.contract.meta) else None
+
+    def _task_id(self, ctx):
+        return str((ctx.contract.meta or {}).get("task_id") or "t") if (ctx.contract and ctx.contract.meta) else "t"
+
+    def _run(self, ctx, state, candidate, stage):
+        surf = surface_for(ctx.env_type)
+        led = ctx.ledger
+        meta = (ctx.contract.meta or {}) if ctx.contract else {}
+
+        # 1) DELTA-VALIDATE delivered findings the agent acted on. The 'did the agent act' signal is the
+        #    EFFECT fingerprint (target + every declared equivalent persistence path), NOT just the target --
+        #    else a write to an equivalent slot leaves target_sig unchanged and revalidation is wrongly
+        #    skipped. Still excludes the whole root, so unrelated writes don't churn.
+        for fid, rec in list(led.repair_findings.items()):
+            if rec.finding.rule_id != "scoped_repair" or rec.status not in ("delivered", "attempted"):
+                continue
+            # only revalidate where the target can localize on the current surface.
+            if not surf.can_localize(state, candidate, rec.finding):
+                continue
+            after = surf.project(state, candidate, rec.finding)
+            eps = effect_paths(rec.finding, meta)
+            sig = (target_sig(after), effect_fingerprint(surf.root(state, candidate), eps))
+            if sig == rec.last_projection:
+                continue                                   # nothing in this finding's effect region changed
+            led.mark_attempted(fid, sig, ctx.step)
+            v = validate_repair(rec.finding, rec.baseline_projection, after, surface=surf, effect_paths=eps)
+            if v.accepted:
+                led.resolve_finding(fid)
+                continue
+            return self._emit([rec.finding], v.reason, stage, ctx)
+
+        if any(r.finding.rule_id == "scoped_repair" and r.status in ("delivered", "attempted")
+               for r in led.repair_findings.values()):
+            return None
+
+        # 2) DISCOVER new localized findings (judge-gated).
+        gs = self._goal_spec(ctx)
+        judge = ctx.semantic_check() if gs else None
+        if judge is None:
+            return None
+        from workspace_api import scoped_goal_findings
+        # pass the surface so FHIR findings target the PROPOSED payload (candidate.args.*), not the
+        # mutable-state digest.
+        findings = scoped_goal_findings(gs, state, candidate, judge, self._task_id(ctx), surface=surf)
+
+        fresh = []
+        for f in findings:
+            cls = self._classify(f, ctx, stage, surf, state, candidate)
+            if cls == "drop":
+                continue
+            if cls == "advise":
+                # an advisory finding NEVER enters the enforce lifecycle (no open_finding/mark_delivered)
+                # -- else it sits forever as DELIVERED, the agent never sees it, and it suppresses every later
+                # finding. Advisory findings live only in ledger.advisories.
+                led.record_advisory(f.to_dict())
+                continue
+            proj = surf.project(state, candidate, f)
+            if f.defect_type == "missing" and is_present(proj.get("target")):
+                continue                                   # L1 guard: present-but-claimed-missing
+            # one-finding-at-a-time: open/deliver only the FIRST enforce finding; the agent fixes one concrete
+            # patch per turn (weak models succeed far more often on a single patch than on a batch).
+            sig = (target_sig(proj), effect_fingerprint(surf.root(state, candidate), effect_paths(f, meta)))
+            mode, _rec = led.repair_decision(f, sig)
+            if mode == "suppress":
+                continue
+            if mode == "new":
+                led.open_finding(f, proj, ctx.step)
+            led.mark_delivered(f.finding_id, sig, ctx.step)
+            fresh.append(f)
+            break
+        if not fresh:
+            return None
+        return self._emit(fresh, "goal_misalignment", stage, ctx)
+
+    def _classify(self, f, ctx, stage, surf, state, candidate):
+        """Four-gate routing -> 'enforce' | 'advise' | 'drop'. Only DETERMINISTIC, localizable, stage-
+        appropriate defects are ENFORCED (external high-gain). Everything else is advisory or dropped, so
+        external can never amplify an uncertain / unactionable signal."""
+        if not surf.can_localize(state, candidate, f):
+            return "drop"                                  # not localizable -> observe-only
+        if not enforceable(f):
+            return "advise"                                # uncertain semantic -> advisory
+        # action-vs-task completeness: an intermediate create/update is a BUILD step; a task-completeness
+        # finding on it is advisory (blocking it derails the agent mid-build). Only the terminal `submit`
+        # enforces output-completeness. (Action-level checks -- subject, required API fields, safety prereq --
+        # are enforced by the dedicated infrastructure capabilities, not here.)
+        if stage == "before_action" and getattr(ctx.sem, "semantic_type", None) in ("create", "update"):
+            return "advise"
+        return "enforce"
+
+    # ---- decision rendering -----------------------------------------------------------------------------
+    def _emit(self, findings, reason_code, stage, ctx):
+        rf = [f.to_dict() for f in findings]
+        miss = [f.required_change for f in findings]
+        head = findings[0]
+        reason = ("scoped repair (%s): %s at %s -- %s"
+                  % (reason_code, head.defect_type, head.target_path, head.required_change))
+        return self._decide(
+            D.REVISE, rule_id="scoped_repair", reason_code=reason_code, deterministic=False,
+            missing_obligations=miss, reason=reason,
+            extra={"repair_findings": rf},
+            feedback="Apply this localized patch to %s (operation %s): %s. Modify ONLY that target; preserve "
+                     "all existing substantive content." % (head.target_path, head.operation.value, head.required_change))

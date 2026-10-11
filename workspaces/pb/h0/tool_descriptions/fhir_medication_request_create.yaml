@@ -1,0 +1,69 @@
+name: fhir_medication_request_create
+description: Create a medication order using FHIR R4 MedicationRequest. Places prescription orders with dose, frequency, route, and duration.
+parameters:
+  type: object
+  properties:
+    patient_reference:
+      type: string
+      description: e.g. 'Patient/12345'
+    medication_display:
+      type: string
+      description: Display name of the medication
+    requester_reference:
+      type: string
+      description: e.g. 'Practitioner/67890'
+    medication_code:
+      type: string
+      description: RxNorm code
+    medication_system:
+      type: string
+      default: http://www.nlm.nih.gov/research/umls/rxnorm
+    status:
+      type: string
+      default: active
+    intent:
+      type: string
+      default: order
+    dose_value:
+      type: number
+      description: Numeric dose amount
+    dose_unit:
+      type: string
+      description: e.g. 'mg'
+    frequency_text:
+      type: string
+      description: e.g. 'Once daily', 'BID'
+    route_code:
+      type: string
+      description: SNOMED CT route code
+    route_display:
+      type: string
+      description: e.g. 'Oral route'
+    duration_value:
+      type: number
+    duration_unit:
+      type: string
+      description: e.g. 'd', 'wk', 'mo'
+    dispense_quantity:
+      type: number
+    dispense_unit:
+      type: string
+    num_refills:
+      type: integer
+    reason_code:
+      type: string
+    reason_display:
+      type: string
+    reason_system:
+      type: string
+    note_text:
+      type: string
+    encounter_reference:
+      type: string
+    priority:
+      type: string
+      description: '''routine'', ''urgent'', ''asap'', ''stat'''
+  required:
+  - patient_reference
+  - medication_display
+  - requester_reference

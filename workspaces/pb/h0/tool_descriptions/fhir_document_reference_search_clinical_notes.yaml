@@ -1,0 +1,31 @@
+name: fhir_document_reference_search_clinical_notes
+description: Search FHIR DocumentReference resources for clinical note metadata. Use Binary.Read to retrieve actual note content from returned references.
+parameters:
+  type: object
+  properties:
+    category:
+      type: string
+      description: e.g. 'clinical-note'
+    date:
+      type: string
+      description: FHIR date search using prefix syntax. Use 'ge2022-01-01' for on/after, 'le2022-02-01' for on/before.
+    encounter:
+      type: string
+      description: Encounter reference
+    patient:
+      type: string
+      description: FHIR Patient id
+    subject:
+      type: string
+      description: FHIR subject reference
+    type:
+      type: string
+      description: LOINC code for note type
+    count:
+      type: integer
+      description: 'Page size (_count). Default: 5'
+      default: 5
+    page_limit:
+      type: integer
+      description: 'Max pages to follow via Bundle.link[rel=next]. Default: 2'
+      default: 2

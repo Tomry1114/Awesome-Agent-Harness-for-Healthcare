@@ -1,0 +1,51 @@
+name: fhir_patient_search_demographics
+description: Search FHIR Patient resources by demographic parameters. Retrieves patient demographic information from patient charts.
+parameters:
+  type: object
+  properties:
+    address:
+      type: string
+    address_city:
+      type: string
+    address_postalcode:
+      type: string
+    address_state:
+      type: string
+    birthdate:
+      type: string
+      description: e.g. '1990-01-01'
+    family:
+      type: string
+      description: Family name
+    gender:
+      type: string
+      description: e.g. 'male', 'female'
+    given:
+      type: string
+      description: Given name
+    identifier:
+      type: string
+      description: Patient identifier (e.g. MRN)
+    name:
+      type: string
+      description: Name search (family and/or given)
+    own_name:
+      type: string
+    own_prefix:
+      type: string
+    partner_name:
+      type: string
+    partner_prefix:
+      type: string
+    telecom:
+      type: string
+    legal_sex:
+      type: string
+    count:
+      type: integer
+      description: 'Page size (_count). Default: 50'
+      default: 50
+    page_limit:
+      type: integer
+      description: 'Max pages to follow via Bundle.link[rel=next]. Default: 6'
+      default: 6

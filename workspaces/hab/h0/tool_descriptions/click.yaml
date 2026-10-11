@@ -1,0 +1,13 @@
+name: click
+description: Click an element with the specified identifier (USE THIS FOR NAVIGATION)
+parameters:
+  type: object
+  properties:
+    ref:
+      type: string
+      description: The [bracket] identifier shown in PAGE ELEMENTS.
+    key_info:
+      type: string
+      description: One-line summary of NEW task-relevant facts on this page (see KEY_INFO rules in the system prompt). "None" if nothing new.
+  required:
+  - ref

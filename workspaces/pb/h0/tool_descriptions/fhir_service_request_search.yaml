@@ -1,0 +1,43 @@
+name: fhir_service_request_search
+description: Search FHIR ServiceRequest resources for lab orders, imaging orders, referrals, and procedures.
+parameters:
+  type: object
+  properties:
+    patient:
+      type: string
+      description: FHIR Patient id
+    subject:
+      type: string
+      description: FHIR subject reference
+    status:
+      type: string
+      description: e.g. 'active', 'completed', 'cancelled'
+    intent:
+      type: string
+      description: e.g. 'order', 'plan'
+    category:
+      type: string
+      description: e.g. 'laboratory', 'imaging'
+    code:
+      type: string
+      description: LOINC/CPT code
+    authored:
+      type: string
+      description: Date authored using FHIR prefix syntax. Use 'ge2022-01-01' for on/after, 'le2022-02-01' for on/before.
+    requester:
+      type: string
+      description: Practitioner reference
+    performer:
+      type: string
+      description: Organization reference
+    encounter:
+      type: string
+      description: Encounter reference
+    count:
+      type: integer
+      description: 'Page size (_count). Default: 50'
+      default: 50
+    page_limit:
+      type: integer
+      description: 'Max pages to follow via Bundle.link[rel=next]. Default: 6'
+      default: 6

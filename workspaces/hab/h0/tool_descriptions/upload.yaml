@@ -1,0 +1,17 @@
+name: upload
+description: Upload a previously downloaded file to a file input
+parameters:
+  type: object
+  properties:
+    ref:
+      type: string
+      description: The [bracket] identifier shown in PAGE ELEMENTS.
+    file:
+      type: string
+      description: filename or "last"
+    key_info:
+      type: string
+      description: One-line summary of NEW task-relevant facts on this page (see KEY_INFO rules in the system prompt). "None" if nothing new.
+  required:
+  - ref
+  - file

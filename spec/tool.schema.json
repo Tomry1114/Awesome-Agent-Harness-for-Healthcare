@@ -1,0 +1,23 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://medical-harness/spec/tool.schema.json",
+  "title": "Medical Harness Tool",
+  "description": "A tool exposed in available_tools (agent_visible). The gold sufficient subset lives in task.reference.sufficient_tools (hidden), NOT here.",
+  "type": "object",
+  "required": ["name", "provenance"],
+  "properties": {
+    "name": {"type": "string"},
+    "signature": {"type": "string"},
+    "description": {"type": "string"},
+    "backend": {
+      "type": "object",
+      "description": "Resolved at run time; recorded in result.provenance.tool_backend.",
+      "properties": {
+        "model": {"type": "string", "description": "e.g. gpt-4o, qwen-vl"},
+        "mode": {"enum": ["api", "local_vlm", "cached", "frozen", "online", "deterministic"]}
+      }
+    },
+    "visibility": {"const": "agent_visible", "default": "agent_visible"},
+    "provenance": {"enum": ["native", "converted", "augmented", "synthetic"], "description": "e.g. FHIR tools=native; get_lab_reference_range=augmented"}
+  }
+}

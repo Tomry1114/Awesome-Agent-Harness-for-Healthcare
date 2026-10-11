@@ -1,0 +1,24 @@
+# SUBSTRATE POLICY — interactive GUI workflow. Generic invariant: a submission (irreversible) must change
+# observable workflow state. No tool names; no portal-specific fields.
+name: interactive_gui
+
+evidence_obligations: []
+workflow_obligations: []
+
+commit_points:
+  - match: {semantic_type: submit}
+    risk: R2
+    requires: []
+    postcondition: {type: state_transition}
+  # A reversible field write is how a GUI workflow makes progress, so it is a declared commit point of the
+  # task -- not a semantic-feedback-induced off-plan write. Without this, verify_commit's user_goal hatch
+  # (which needs matching_commit_points to be non-empty) never opens on this substrate and the agent's own
+  # form fills are BLOCKed as unauthorised, e.g.
+  #   REVISE committed_not_done -> BLOCK semantic_feedback_no_write_auth (repeated) -> repair_budget_exhausted
+  # which multiplies the step count without changing any checkpoint.
+  # R1, below the irreversible submission's R2, so the submission gate is unchanged; anything matching no
+  # commit point is still blocked, so the isolation this rule protects remains in force.
+  - match: {semantic_type: update, effect: reversible}
+    risk: R1
+    requires: []
+    postcondition: {type: state_transition}

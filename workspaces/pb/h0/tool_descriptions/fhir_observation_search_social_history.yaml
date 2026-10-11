@@ -1,0 +1,25 @@
+name: fhir_observation_search_social_history
+description: Search FHIR Observation resources for social history data. Returns tobacco use, alcohol use, substance use, occupation, and other social determinants. Always queries category=social-history.
+parameters:
+  type: object
+  properties:
+    patient:
+      type: string
+      description: FHIR Patient id
+    subject:
+      type: string
+      description: FHIR subject reference
+    code:
+      type: string
+      description: LOINC code filter (e.g. '72166-2' Tobacco smoking status, '11331-6' History of Alcohol use)
+    date:
+      type: string
+      description: FHIR date search using prefix syntax. Use 'ge2022-01-01' for on/after, 'le2022-02-01' for on/before.
+    count:
+      type: integer
+      description: 'Page size (_count). Default: 50'
+      default: 50
+    page_limit:
+      type: integer
+      description: 'Max pages to follow via Bundle.link[rel=next]. Default: 6'
+      default: 6

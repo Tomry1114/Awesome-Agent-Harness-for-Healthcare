@@ -1,0 +1,948 @@
+# Search blocklist: pages a web search must never return, because they are the benchmark's own source or the material
+# a benchmark item was taken from. Without it a search can retrieve the gold answer and a score gain means nothing.
+# This file is configuration data only; runner/search_guard.py reads it and the filtering is hard-wired there
+# (there is no switch that turns it off). One section per benchmark, keyed by the benchmark name the environment
+# passes to the guard.
+#
+# Each section has three benchmark-level rule lists (blocked_reason benchmark_dataset_source) and a per-item table,
+# `items` (blocked_reason benchmark_provenance_source, described above the MedCTA table). Every benchmark-level rule has
+# an `id` (what a blocked record names) and a `why`.
+#
+#   refuse_query   regex over the query text. A query that explicitly targets the benchmark source is refused before
+#                  the search runs; the agent sees a refusal, not results.
+#   urls           a result link. `hosts` matches the link host or any subdomain of it (a leading "www." is ignored).
+#                  `path` / `query` are regexes searched in the link's path / query string; a rule with both needs
+#                  both. A rule with `hosts: ["*"]` applies to every host.
+#   text           regex over a result's title, snippet and rendered line. Identifiers only (the dataset id, the
+#                  paper's name, title and arXiv id, the dataset row serialization), never topic keywords, so an
+#                  ordinary medical page stays searchable (runner/tests/test_search_guard.py checks that).
+#
+#   items          task id -> that item's direct material provenance (the article holding the item's original image
+#                  or figure, that figure or caption page, the article's supplement). Applied on that item's task only.
+#                  Empty when the benchmark has no item table.
+#
+# Regexes are Python `re` patterns; `flags: i` makes one case-insensitive.
+
+MedCTA:
+  sources:
+    - "HF dataset   https://huggingface.co/datasets/IVUL-KAUST/MedCTA (benchmark/MedCTA/README.md; task.json context.images[].source_dataset)"
+    - "paper        arXiv 2606.11702, 'MedCTA: A Benchmark for Clinical Tool Agents' (benchmark/MedCTA/README.md citation)"
+    - "project page https://ivul-kaust.github.io/MedCTA/ (benchmark/MedCTA/README.md)"
+    - "code repo    github.com/IVUL-KAUST/MedCTA (inferred from the project page's GitHub Pages owner; not linked in the README)"
+  refuse_query:
+    - id: benchmark_name
+      pattern: '\bmedcta\b'
+      flags: i
+      why: the benchmark's own name
+    - id: dataset_owner
+      pattern: '\bivul[\s_-]*kaust\b'
+      flags: i
+      why: the dataset's Hugging Face / GitHub owner (IVUL-KAUST/MedCTA)
+    - id: paper_arxiv_id
+      pattern: '\b2606\.11702\b'
+      why: the paper's arXiv id
+    - id: paper_title
+      pattern: 'benchmark\s+for\s+clinical\s+tool[\s-]+agents'
+      flags: i
+      why: the paper's title
+  urls:
+    - id: hf_dataset_url
+      hosts: [huggingface.co, hf.co, hf-mirror.com]
+      path: '^/(?:api/)?datasets/ivul-kaust/medcta(?:[/.?#]|$)'
+      flags: i
+      why: dataset card, viewer, files, discussions, parquet conversion and API of the dataset, and its hf-mirror copy
+    - id: hf_dataset_server
+      hosts: [datasets-server.huggingface.co]
+      query: '(?:^|&)dataset=ivul-kaust(?:/|%2f)medcta(?:&|$)'
+      flags: i
+      why: the dataset viewer's row API (/rows, /first-rows, /search)
+    - id: github_repo
+      hosts: [github.com, raw.githubusercontent.com, codeload.github.com]
+      path: '^/ivul-kaust/medcta(?:[/.?#]|$)'
+      flags: i
+      why: the benchmark's code repository
+    - id: project_page
+      hosts: [ivul-kaust.github.io]
+      path: '^/medcta(?:[/.?#]|$)'
+      flags: i
+      why: the benchmark's project page
+    - id: paper_arxiv_id_url
+      hosts: ["*"]
+      path: '(?:^|[/=_-])2606\.11702(?:v\d+)?(?:[/.?#_-]|$)'
+      why: the paper under its arXiv id on any host (arxiv.org abs/pdf/html, export.arxiv.org, alphaxiv, huggingface.co/papers, semantic scholar /arxiv/, emergentmind, papers.cool)
+    - id: paper_arxiv_id_query
+      hosts: ["*"]
+      query: '(?:^|[=&])(?:arxiv:)?2606\.11702(?:v\d+)?(?:&|$)'
+      flags: i
+      why: the paper under its arXiv id in a query string (arxiv-sanity style ?id=)
+    - id: paper_slug_semanticscholar
+      hosts: [semanticscholar.org]
+      path: '^/paper/medcta(?:[-/%]|$)'
+      flags: i
+      why: semantic scholar page slugged by the paper title
+    - id: paper_slug_paperswithcode
+      hosts: [paperswithcode.com]
+      path: '^/(?:paper|dataset)/medcta(?:[-/]|$)'
+      flags: i
+      why: papers with code paper / dataset page
+    - id: paper_slug_researchgate
+      hosts: [researchgate.net]
+      path: '^/publication/\d+_medcta(?:[_/]|$)'
+      flags: i
+      why: researchgate publication page
+  text:
+    - id: hf_dataset_id
+      pattern: '\bivul[\s_-]*kaust\s*/\s*medcta\b'
+      flags: i
+      why: 'the dataset id; seen in every leaked dataset result in recorded runs ("IVUL-KAUST/MedCTA · Datasets at Hugging Face")'
+    - id: paper_title
+      pattern: 'benchmark\s+for\s+clinical\s+tool[\s-]+agents'
+      flags: i
+      why: 'the paper title; seen in recorded runs ("MedCTA: A Benchmark for Clinical Tool Agents")'
+    - id: benchmark_name
+      pattern: '\bMedCTA\b'
+      flags: i
+      why: the benchmark's coined name, on a mirror or a page quoting it
+    - id: paper_arxiv_id
+      pattern: '\b2606\.11702\b'
+      why: the paper's arXiv id quoted in a snippet
+    - id: dataset_row_tool_list
+      pattern: '\[\s*"(?:OCR|ImageDescription|RegionAttributeDescription|GoogleSearch|Calculator)"'
+      why: 'the dataset row serialization of its tools column ([ "OCR", "ImageDescription" ]), seen in leaked rows; also used by GTA, the parent tool benchmark (not a medical page)'
+    - id: dataset_row_tool_chain
+      pattern: '\b(?:OCR|ImageDescription|RegionAttributeDescription|GoogleSearch|Calculator)\s*->\s*(?:OCR|ImageDescription|RegionAttributeDescription|GoogleSearch|Calculator)\b'
+      why: 'the dataset row serialization of its tool chain column (OCR -> ImageDescription), seen in leaked rows'
+    - id: paper_example_tools
+      pattern: '\bInvolved Tools:\s*(?:OCR|ImageDescription|RegionAttributeDescription|GoogleSearch|Calculator)\b'
+      why: 'the paper appendix example format ("Involved Tools: ImageDescription, GoogleSearch"), seen in recorded runs'
+  # Per-item provenance table: what each item was taken from. Read by runner/search_guard.py only; nothing of it
+  # reaches the agent, the harness context, the ledger or an observation. Every MedCTA task id has an entry.
+  #   status      known: the item's source article is established (ids required); unknown: not established,
+  #               nothing is blocked for the item (evidence says what was checked; note names a near miss)
+  #   ids         pmcid / pmid / doi. The guard turns each into rules: the PMCID or DOI in any link's path or
+  #               query and in a snippet; the PMID as a path segment or query value on ncbi.nlm.nih.gov /
+  #               europepmc.org / ebi.ac.uk and as 'PMID <n>' in a snippet; each also refuses a query that
+  #               contains it literally
+  #   text        item_title (field: title, anchored at the start of a result's title), item_byline (the
+  #               engine's scholarly byline plus a topic word, `also`), item_figure_caption (the item's figure
+  #               caption opening, anywhere in a result), item_article_figure (the first sentence of each
+  #               figure caption of the article, anchored at the start of a title: its figure pages)
+  #   pages       example pages of the article, its figure page and its supplement (PMC serves the article's
+  #               files under /bin/); URL forms, not fetched. runner/tests/test_search_guard.py checks each is
+  #               withheld on the item's task and kept on another
+  #   lookups     the NCBI E-utilities URLs that resolved the ids and the figure captions (free metadata)
+  #   evidence    for unknown items: dataset_metadata_checked = no source, credit, reference or id field in
+  #               tasks_unified.jsonl or the train.parquet columns, image files named image_<n>, and no source
+  #               named in the embedded image metadata; recorded_results_checked = no search result line in the
+  #               recorded reference runs was established as the item's source (candidate screens + NCBI
+  #               caption sweep)
+  items:
+    MCTA-0: {status: unknown, evidence: [dataset_metadata_checked, recorded_results_checked]}
+    MCTA-1: {status: unknown, evidence: [dataset_metadata_checked, recorded_results_checked]}
+    MCTA-2:
+      status: unknown
+      evidence: [dataset_metadata_checked, recorded_results_checked]
+      note: 'near miss, not blocked: results show neutrophil-recruitment articles (e.g. Dharancy 2010, Nod1) but none with the image''s labels (Hemorrhage Wild-Type / P-selectin (-/-), lung / liver / intestine); not established'
+    MCTA-3:
+      status: unknown
+      evidence: [dataset_metadata_checked, recorded_results_checked]
+      note: 'near miss, not blocked: candidate PMC2148186 (Mesaeli 1999, J Cell Biol; PMID 10085286), observed in recorded runs as its Figure 3 and 4 caption pages; both captions show crt+/- vs crt-/- embryonic heart sections stained with hematoxylin and eosin, but the matching criterion is not met (one distinctive image-label token, crt; the gold ''myocardial tissue, H&E'' is not a 6-token run) and the item''s figure (Figure 3 or 4) is not determined'
+    MCTA-4:
+      status: known
+      confidence: high
+      evidence:
+        - 'observed_in_recorded_results: 9 distinct result line(s)'
+        - 'resolved_ids: NCBI E-utilities (lookups)'
+        - 'pmc_figure_caption_match: 6 image labels in the caption (Gpc3, E12.0, E13.5, E16.5, E18.5, Cy)'
+      article: {journal: 'J Cell Biol', year: 1999, first_author: 'Cano-Gauci', pmc_figure_id: 'F7', figure_label: 'Figure 7'}
+      ids: {pmcid: 'PMC2199732', pmid: '10402475', doi: '10.1083/jcb.146.1.255'}
+      supplementary_files: []
+      pages:
+        article: https://pmc.ncbi.nlm.nih.gov/articles/PMC2199732/
+        figure: https://pmc.ncbi.nlm.nih.gov/articles/PMC2199732/figure/F7/
+        supplement: https://pmc.ncbi.nlm.nih.gov/articles/PMC2199732/bin/JCB9904071.f7.jpg
+        article_legacy_host: https://www.ncbi.nlm.nih.gov/pmc/articles/PMC2199732/
+        europepmc: https://europepmc.org/article/PMC/PMC2199732
+        pubmed: https://pubmed.ncbi.nlm.nih.gov/10402475/
+        doi: https://doi.org/10.1083/jcb.146.1.255
+      text:
+        - {id: item_title, field: title, flags: i, pattern: 'Glypican\W+3\W+deficient\W+mice\W+exhibit\W+developmental\W+overgrowth'}
+        - {id: item_byline, flags: i, pattern: '\bby\s+[A-Z]{1,4}\s+Cano-Gauci\s*·\s*1999\b', also: 'Gpc3|glypican'}
+        - {id: item_figure_caption, flags: i, pattern: 'Kidney\W+development\W+in\W+the\W+Gpc3\b'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'Gene\W*targeting\W*of\W*the\W*murine\W*Gpc3\W*locus'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'Histological\W*analysis\W*of\W*kidney\W*sections'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'Histological\W*analysis\W*of\W*wild\W*type\W*and\W*GPC3\W*deficient\W*lungs'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'Mandibular\W*hypoplasia\W*in\W*Gpc3\W*embryos'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'Comparative\W*analysis\W*of\W*IGF\W*II\W*levels\W*in\W*serum\W*whole\W*embryo'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'Kidney\W*development\W*in\W*the\W*Gpc3\W*mouse'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'Analysis\W*of\W*cell\W*proliferation\W*in\W*the\W*renal\W*collecting\W*system\W*of'}
+      lookups:
+        - https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&term=Glypican-3-deficient+mice+exhibit+developmental+overgrowth%5Bti%5D+AND+Cano-Gauci%5Bau%5D&retmax=5&retmode=json
+        - https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pubmed&id=10402475&retmode=xml
+        - https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pmc&id=2199732&retmode=xml
+    MCTA-5: {status: unknown, evidence: [dataset_metadata_checked, recorded_results_checked]}
+    MCTA-6: {status: unknown, evidence: [dataset_metadata_checked, recorded_results_checked]}
+    MCTA-7: {status: unknown, evidence: [dataset_metadata_checked, recorded_results_checked]}
+    MCTA-8: {status: unknown, evidence: [dataset_metadata_checked, recorded_results_checked]}
+    MCTA-9:
+      status: known
+      confidence: high
+      evidence:
+        - 'observed_in_recorded_results: 3 distinct result line(s)'
+        - 'resolved_ids: NCBI E-utilities (lookups)'
+        - 'pmc_figure_caption_match: image labels Mock and Ab in the caption; goblet cells of TCR-alpha-/- mice treated with anti-IL-4 or mock Ab, periodic acid-Schiff-alcian blue (the gold answer''s cell type and stain; 5-token gold run)'
+      article: {journal: 'J Exp Med', year: 1999, first_author: 'Iijima', pmc_figure_id: 'F8', figure_label: 'Figure 8'}
+      ids: {pmcid: 'PMC2195615', pmid: '10477546', doi: '10.1084/jem.190.5.607'}
+      supplementary_files: []
+      pages:
+        article: https://pmc.ncbi.nlm.nih.gov/articles/PMC2195615/
+        figure: https://pmc.ncbi.nlm.nih.gov/articles/PMC2195615/figure/F8/
+        supplement: https://pmc.ncbi.nlm.nih.gov/articles/PMC2195615/bin/JEM981431.f8a.jpg
+        article_legacy_host: https://www.ncbi.nlm.nih.gov/pmc/articles/PMC2195615/
+        europepmc: https://europepmc.org/article/PMC/PMC2195615
+        pubmed: https://pubmed.ncbi.nlm.nih.gov/10477546/
+        doi: https://doi.org/10.1084/jem.190.5.607
+      text:
+        - {id: item_title, field: title, flags: i, pattern: 'Alteration\W+of\W+interleukin\W+4\W+production\W+results'}
+        - {id: item_byline, flags: i, pattern: '\bby\s+[A-Z]{1,4}\s+Iijima\s*·\s*1999\b', also: 'IL\W*4|interleukin\W+4|TCR'}
+        - {id: item_figure_caption, flags: i, pattern: 'Histological\W+analysis\W+of\W+goblet\W+cells\W+in\W+the\W+intestinal\W+epithelium'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'Comparison\W*of\W*Ig\W*levels\W*in\W*serum\W*and\W*fecal\W*extracts\W*of'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'Histological\W*analysis\W*of\W*TCR\W*α\W*mice\W*treated\W*with\W*or\W*without'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'Enumeration\W*of\W*Ab\W*producing\W*cells\W*in\W*systemic\W*and\W*mucosal\W*lymphoid'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'Flow\W*cytometric\W*analysis\W*of\W*CD4\W*ββ\W*T\W*cells\W*in\W*the'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'Cytokine\W*specific\W*mRNA\W*expression\W*by\W*CD4\W*ββ\W*T\W*cells\W*in'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'Cytokine\W*production\W*by\W*colonic\W*lymphocytes\W*isolated\W*from\W*mice\W*with\W*anti'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'Body\W*weight\W*of\W*TCR\W*α\W*mice\W*treated\W*with\W*without\W*anti'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'Histological\W*analysis\W*of\W*goblet\W*cells\W*in\W*the\W*intestinal\W*epithelium\W*of'}
+      lookups:
+        - https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&term=Alteration%5Bti%5D+AND+interleukin%5Bti%5D+AND+production%5Bti%5D+AND+Iijima%5Bau%5D+AND+1999%5Bdp%5D&retmax=5&retmode=json
+        - https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pubmed&id=10477546&retmode=xml
+        - https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pmc&id=2195615&retmode=xml
+    MCTA-10: {status: unknown, evidence: [dataset_metadata_checked, recorded_results_checked]}
+    MCTA-11:
+      status: known
+      confidence: high
+      evidence:
+        - 'observed_in_recorded_results: 4 distinct result line(s)'
+        - 'resolved_ids: NCBI E-utilities (lookups)'
+        - 'pmc_figure_caption_match: Figure 2b caption shares a 14-token run with the gold answer; image labels 2a / 2b'
+      article: {journal: 'JSLS', year: 1999, first_author: 'Ohtsuka', pmc_figure_id: 'F2', figure_label: 'Figure 2a / 2b'}
+      ids: {pmcid: 'PMC3015369', pmid: '10694080', doi: null}
+      supplementary_files: []
+      pages:
+        article: https://pmc.ncbi.nlm.nih.gov/articles/PMC3015369/
+        figure: https://pmc.ncbi.nlm.nih.gov/articles/PMC3015369/figure/F2/
+        supplement: https://pmc.ncbi.nlm.nih.gov/articles/PMC3015369/bin/jsls-3-4-323-g02.jpg
+        article_legacy_host: https://www.ncbi.nlm.nih.gov/pmc/articles/PMC3015369/
+        europepmc: https://europepmc.org/article/PMC/PMC3015369
+        pubmed: https://pubmed.ncbi.nlm.nih.gov/10694080/
+      text:
+        - {id: item_title, field: title, flags: i, pattern: 'Posterior\W+hepatic\W+duct\W+injury\W+during\W+laparoscopic'}
+        - {id: item_byline, flags: i, pattern: '\bby\s+[A-Z]{1,4}\s+Ohtsuka\s*·\s*1999\b', also: 'hepatic|cholecystectomy'}
+        - {id: item_figure_caption, flags: i, pattern: 'Computed\W+tomography\W+(?:after\W+laparoscopic\W+cholecystectomy|before\W+hepatic\W+resection)\W+demonstrating'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'Drip\W*infusion\W*cholangiography\W*demonstrating\W*the\W*normal\W*common\W*hepatic\W*duct\W*but'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'Computed\W*tomography\W*after\W*laparoscopic\W*cholecystectomy\W*demonstrating\W*an\W*abnormal\W*fluid\W*collection'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'A\W*schema\W*of\W*the\W*biliary\W*system\W*during\W*hepatic\W*resection\W*in'}
+      lookups:
+        - https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&term=Posterior+hepatic+duct+injury+during+laparoscopic+cholecystectomy%5Bti%5D+AND+Ohtsuka%5Bau%5D&retmax=5&retmode=json
+        - https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pubmed&id=10694080&retmode=xml
+        - https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pmc&id=3015369&retmode=xml
+    MCTA-12: {status: unknown, evidence: [dataset_metadata_checked, recorded_results_checked]}
+    MCTA-13:
+      status: known
+      confidence: high
+      evidence:
+        - 'observed_in_recorded_results: 17 distinct result line(s)'
+        - 'resolved_ids: NCBI E-utilities (lookups)'
+        - 'pmc_figure_caption_match: 4 image labels in the caption (aj, mv, lm, cc); the caption names seam cells (the gold answer)'
+      article: {journal: 'J Cell Biol', year: 2000, first_author: 'Moorthy', pmc_figure_id: 'F8', figure_label: 'Figure 8'}
+      ids: {pmcid: 'PMC2174577', pmid: '10811831', doi: '10.1083/jcb.149.4.915'}
+      supplementary_files: []
+      pages:
+        article: https://pmc.ncbi.nlm.nih.gov/articles/PMC2174577/
+        figure: https://pmc.ncbi.nlm.nih.gov/articles/PMC2174577/figure/F8/
+        supplement: https://pmc.ncbi.nlm.nih.gov/articles/PMC2174577/bin/JCB9909085.f8.jpg
+        article_legacy_host: https://www.ncbi.nlm.nih.gov/pmc/articles/PMC2174577/
+        europepmc: https://europepmc.org/article/PMC/PMC2174577
+        pubmed: https://pubmed.ncbi.nlm.nih.gov/10811831/
+        doi: https://doi.org/10.1083/jcb.149.4.915
+      text:
+        - {id: item_title, field: title, flags: i, pattern: '(?:Caenorhabditis\W+elegans\W+)?(?:β|beta)?\W*G\W+spectrin\W+is\W+dispensable\W+for'}
+        - {id: item_byline, flags: i, pattern: '\bby\s+[A-Z]{1,4}\s+Moorthy\s*·\s*2000\b', also: 'spectrin'}
+        - {id: item_figure_caption, flags: i, pattern: 'RNAi\W+depletion\W+of\W+(?:β|beta)\W*G\W+spectrin\W+does\W+not\W+affect\W+the\W+ultrastructural'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'Cloning\W*of\W*C\W*elegans\W*β\W*G\W*spectrin\W*cDNAs\W*including\W*two'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'Three\W*spectrin\W*genes\W*of\W*C\W*elegans'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'β\W*G\W*spectrin\W*is\W*associated\W*with\W*the\W*plasma\W*membrane\W*at'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'Depletion\W*of\W*β\W*G\W*spectrin\W*early\W*in\W*embryogenesis\W*by\W*RNAi'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'Phenotypic\W*effects\W*of\W*α\W*β\W*G\W*and\W*β\W*H\W*spectrin'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'Depletion\W*of\W*each\W*of\W*the\W*three\W*C\W*elegans\W*spectrins\W*does'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'RNAi\W*depletion\W*of\W*β\W*G\W*spectrin\W*does\W*not\W*affect\W*the'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'β\W*G\W*spectrin\W*is\W*associated\W*with\W*multiple\W*structures\W*of\W*the'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'Depletion\W*of\W*β\W*G\W*spectrin\W*leads\W*to\W*progressive\W*perturbation\W*of'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'Depletion\W*of\W*β\W*G\W*spectrin\W*from\W*the\W*neurons\W*of\W*C'}
+      lookups:
+        - https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&term=elegans+spectrin+dispensable+epithelial+polarity%5Bti%5D+AND+Moorthy%5Bau%5D&retmax=5&retmode=json
+        - https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pubmed&id=10811831&retmode=xml
+        - https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pmc&id=2174577&retmode=xml
+    MCTA-14:
+      status: known
+      confidence: medium
+      evidence:
+        - 'dataset_metadata: identified from the item image''s own embedded metadata: its Photoshop/IPTC record names the source document ''mn 99-113_Angrisani copy new#DE2D.qxd'', and its XMP record (Photoshop CS3, modified 2010-09-29 +05:30, InstanceID suffix CBDF11AC12EC22337D332B) matches the image of MCTA-11, a JSLS article; PubMed has one JSLS article by Angrisani; its Figure 1 caption ''CT scan reveals the bowel herniated in the lower right anterior mediastinum'' states the gold answer (bowel herniation) and the item''s region description, but only semantically (the image has no labels; the gold is 2 tokens), so the token criterion is not met'
+        - 'resolved_ids: NCBI E-utilities (lookups)'
+      article: {journal: 'JSLS', year: 2000, first_author: 'Angrisani', pmc_figure_id: 'F1', figure_label: 'Figure 1'}
+      ids: {pmcid: 'PMC3015372', pmid: '10917128', doi: null}
+      supplementary_files: []
+      pages:
+        article: https://pmc.ncbi.nlm.nih.gov/articles/PMC3015372/
+        figure: https://pmc.ncbi.nlm.nih.gov/articles/PMC3015372/figure/F1/
+        supplement: https://pmc.ncbi.nlm.nih.gov/articles/PMC3015372/bin/jsls-4-2-177-g01.jpg
+        article_legacy_host: https://www.ncbi.nlm.nih.gov/pmc/articles/PMC3015372/
+        europepmc: https://europepmc.org/article/PMC/PMC3015372
+        pubmed: https://pubmed.ncbi.nlm.nih.gov/10917128/
+      text:
+        - {id: item_title, field: title, flags: i, pattern: 'Hernia\W+of\W+(?:the\W+)?foramen\W+of\W+Morgagni\W+in\W+(?:an\W+)?adult'}
+        - {id: item_byline, flags: i, pattern: '\bby\s+[A-Z]{1,4}\s+Angrisani\s*·\s*2000\b', also: 'Morgagni'}
+        - {id: item_figure_caption, flags: i, pattern: 'CT\W+scan\W+reveals\W+the\W+bowel\W+herniated'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'CT\W*scan\W*reveals\W*the\W*bowel\W*herniated\W*in\W*the\W*lower\W*right'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'Laparoscopic\W*view\W*of\W*hernia\W*of\W*the\W*foramen\W*of\W*Morgagni\W*containing'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'Colon\W*and\W*omentum\W*were\W*gently\W*pulled\W*out\W*from\W*hernial\W*defect'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'Videolaparoscopic\W*view\W*of\W*hernial\W*defect\W*after\W*reduction\W*of\W*its\W*content'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'An\W*aspirate\W*drainage\W*was\W*left\W*in\W*the\W*sac\W*before\W*closing'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'Chest\W*x\W*ray\W*done\W*after\W*operation\W*showing\W*no\W*evidence\W*of'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'Chest\W*x\W*ray\W*done\W*four\W*years\W*after\W*the\W*laparoscopic\W*repair'}
+      lookups:
+        - https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&term=Angrisani%5Bau%5D+AND+JSLS%5Bta%5D&retmax=5&retmode=json
+        - https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pubmed&id=10917128&retmode=xml
+        - https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pmc&id=3015372&retmode=xml
+    MCTA-15: {status: unknown, evidence: [dataset_metadata_checked, recorded_results_checked]}
+    MCTA-16:
+      status: known
+      confidence: high
+      evidence:
+        - 'observed_in_recorded_results: 3 distinct result line(s)'
+        - 'resolved_ids: NCBI E-utilities (lookups)'
+        - 'pmc_figure_caption_match: 3 image labels in the caption (CCR8+/+, PPD, SEA); caption: type 1 and type 2 granuloma cross-sectional areas'
+      article: {journal: 'J Exp Med', year: 2001, first_author: 'Chensue', pmc_figure_id: 'F2', figure_label: 'Figure 2'}
+      ids: {pmcid: 'PMC2193397', pmid: '11238588', doi: '10.1084/jem.193.5.573'}
+      supplementary_files: []
+      pages:
+        article: https://pmc.ncbi.nlm.nih.gov/articles/PMC2193397/
+        figure: https://pmc.ncbi.nlm.nih.gov/articles/PMC2193397/figure/F2/
+        supplement: https://pmc.ncbi.nlm.nih.gov/articles/PMC2193397/bin/JEM001512.f2a.jpg
+        article_legacy_host: https://www.ncbi.nlm.nih.gov/pmc/articles/PMC2193397/
+        europepmc: https://europepmc.org/article/PMC/PMC2193397
+        pubmed: https://pubmed.ncbi.nlm.nih.gov/11238588/
+        doi: https://doi.org/10.1084/jem.193.5.573
+      text:
+        - {id: item_title, field: title, flags: i, pattern: 'Aberrant\W+in\W+vivo\W+T\W+helper\W+type\W+2\W+cell\W+response'}
+        - {id: item_byline, flags: i, pattern: '\bby\s+[A-Z]{1,4}\s+Chensue\s*·\s*2001\b', also: 'CCR8'}
+        - {id: item_figure_caption, flags: i, pattern: 'Effect\W+of\W+CCR8\W+deletion\W+on\W+(?:\w+\W+){0,10}?secondary\W+type\W+1\W+\(PPD\)'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'Generation\W*of\W*CCR8\W*knockout\W*mice'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'Effect\W*of\W*CCR8\W*deletion\W*on\W*cytokine\W*mRNA\W*and\W*protein\W*levels'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'Effect\W*of\W*CCR8\W*deletion\W*on\W*secondary\W*type\W*1\W*PPD\W*and'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'Effect\W*of\W*CCR8\W*deletion\W*on\W*cytokine\W*profiles\W*in\W*draining\W*lymph'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'Reduced\W*eosinophil\W*accumulation\W*in\W*CCR8\W*mice\W*in\W*ovalbumin\W*allergic\W*airway'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'Reduced\W*peribronchial\W*eosinophil\W*accumulation\W*in\W*cockroach\W*allergen\W*sensitized\W*CCR8\W*mice'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'Reduced\W*cytokine\W*levels\W*in\W*the\W*lungs\W*of\W*cockroach\W*allergen\W*challenged'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'Circulating\W*eosinophils\W*lack\W*CCR8\W*mRNA\W*and\W*are\W*unresponsive\W*to\W*CCR8'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'Blood\W*and\W*bone\W*marrow\W*eosinophil\W*mobilization\W*as\W*related\W*to\W*serum'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'CCR8\W*is\W*not\W*required\W*for\W*in\W*vitro\W*development\W*of\W*Th2'}
+      lookups:
+        - https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&term=CC+chemokine+receptor+8+knockout+mice%5Bti%5D+AND+Chensue%5Bau%5D&retmax=5&retmode=json
+        - https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pubmed&id=11238588&retmode=xml
+        - https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pmc&id=2193397&retmode=xml
+    MCTA-17: {status: unknown, evidence: [dataset_metadata_checked, recorded_results_checked]}
+    MCTA-18: {status: unknown, evidence: [dataset_metadata_checked, recorded_results_checked]}
+    MCTA-19:
+      status: known
+      confidence: high
+      evidence:
+        - 'observed_in_recorded_results: 2 distinct result line(s)'
+        - 'resolved_ids: NCBI E-utilities (lookups)'
+        - 'pmc_figure_caption_match: caption shares a 12-token run with the question; image labels Control / IL-17R-/- / 0, 18, 24 hours'
+      article: {journal: 'J Exp Med', year: 2001, first_author: 'Ye', pmc_figure_id: 'F5', figure_label: 'Figure 5'}
+      ids: {pmcid: 'PMC2193502', pmid: '11514607', doi: '10.1084/jem.194.4.519'}
+      supplementary_files: []
+      pages:
+        article: https://pmc.ncbi.nlm.nih.gov/articles/PMC2193502/
+        figure: https://pmc.ncbi.nlm.nih.gov/articles/PMC2193502/figure/F5/
+        supplement: https://pmc.ncbi.nlm.nih.gov/articles/PMC2193502/bin/JEM010888.f5.jpg
+        article_legacy_host: https://www.ncbi.nlm.nih.gov/pmc/articles/PMC2193502/
+        europepmc: https://europepmc.org/article/PMC/PMC2193502
+        pubmed: https://pubmed.ncbi.nlm.nih.gov/11514607/
+        doi: https://doi.org/10.1084/jem.194.4.519
+      text:
+        - {id: item_title, field: title, flags: i, pattern: 'Requirement\W+of\W+interleukin\W+17\W+receptor\W+signaling'}
+        - {id: item_byline, flags: i, pattern: '\bby\s+[A-Z]{1,4}\s+Ye\s*·\s*2001\b', also: 'IL\W*17R\W+KO|IL\W*17\W*R\W*-/-|interleukin\W+17\W+receptor\W+signaling'}
+        - {id: item_figure_caption, flags: i, pattern: 'Representative\W+lung\W+histology\W+of\W+control\W+and\W+IL\W*17R\W+KO\W+mice'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'Generation\W*of\W*IL\W*17R\W*KO\W*mice'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'Reduced\W*survival\W*of\W*mice\W*deficient\W*in\W*IL\W*17R\W*signaling'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'K\W*pneumoniae\W*growth\W*curves\W*in\W*control\W*and\W*IL\W*17R\W*KO'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'Reduced\W*ANCs\W*in\W*the\W*blood\W*and\W*lungs\W*of\W*IL\W*17R'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'Representative\W*lung\W*histology\W*of\W*control\W*and\W*IL\W*17R\W*KO\W*mice'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'Analysis\W*of\W*lung\W*gene\W*expression\W*by\W*RPA\W*A\W*Representative\W*gel'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'BAL\W*fluid\W*levels\W*of\W*G\W*CSF\W*MIP\W*2\W*and\W*IL'}
+      lookups:
+        - https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&term=interleukin+17+receptor+signaling+neutrophil+recruitment+host+defense%5Bti%5D+AND+Ye+P%5Bau%5D&retmax=5&retmode=json
+        - https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pubmed&id=11514607&retmode=xml
+        - https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pmc&id=2193502&retmode=xml
+    MCTA-20: {status: unknown, evidence: [dataset_metadata_checked, recorded_results_checked]}
+    MCTA-21: {status: unknown, evidence: [dataset_metadata_checked, recorded_results_checked]}
+    MCTA-22: {status: unknown, evidence: [dataset_metadata_checked, recorded_results_checked]}
+    MCTA-23: {status: unknown, evidence: [dataset_metadata_checked, recorded_results_checked]}
+    MCTA-24: {status: unknown, evidence: [dataset_metadata_checked, recorded_results_checked]}
+    MCTA-25: {status: unknown, evidence: [dataset_metadata_checked, recorded_results_checked]}
+    MCTA-26: {status: unknown, evidence: [dataset_metadata_checked, recorded_results_checked]}
+    MCTA-27: {status: unknown, evidence: [dataset_metadata_checked, recorded_results_checked]}
+    MCTA-28:
+      status: known
+      confidence: high
+      evidence:
+        - 'observed_in_recorded_results: 2 distinct result line(s)'
+        - 'resolved_ids: NCBI E-utilities (lookups)'
+        - 'pmc_figure_caption_match: 3 image labels in the caption (Naive, Th1, Th2); H&E sections of naive / Th1 / Th2 recipients'
+      article: {journal: 'J Exp Med', year: 2002, first_author: 'Iqbal', pmc_figure_id: 'fig4', figure_label: 'Figure 4'}
+      ids: {pmcid: 'PMC2196021', pmid: '11781367', doi: '10.1084/jem.2001889'}
+      supplementary_files: []
+      pages:
+        article: https://pmc.ncbi.nlm.nih.gov/articles/PMC2196021/
+        figure: https://pmc.ncbi.nlm.nih.gov/articles/PMC2196021/figure/fig4/
+        supplement: https://pmc.ncbi.nlm.nih.gov/articles/PMC2196021/bin/011889f4.jpg
+        article_legacy_host: https://www.ncbi.nlm.nih.gov/pmc/articles/PMC2196021/
+        europepmc: https://europepmc.org/article/PMC/PMC2196021
+        pubmed: https://pubmed.ncbi.nlm.nih.gov/11781367/
+        doi: https://doi.org/10.1084/jem.2001889
+      text:
+        - {id: item_title, field: title, flags: i, pattern: 'T\W+helper\W+1\W+and\W+T\W+helper\W+2\W+cells\W+are\W+pathogenic'}
+        - {id: item_byline, flags: i, pattern: '\bby\s+[A-Z]{1,4}\s+Iqbal\s*·\s*2002\b', also: 'colitis|Th1|Th2|OVA'}
+        - {id: item_figure_caption, flags: i, pattern: 'Th1\W+and\W+Th2\W+reconstituted\W+mice\W+colonized\W+with\W+pnir15'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'Inducible\W*expression\W*of\W*immunogenic\W*OVA\W*by\W*pnir15\W*OVA\W*E\W*coli'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'OVA\W*expressing\W*E\W*coli\W*induce\W*clonal\W*expansion\W*of\W*DO11\W*10'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'Th1\W*and\W*Th2\W*cells\W*derived\W*from\W*DO11\W*RAG\W*2\W*mice'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'Th1\W*and\W*Th2\W*reconstituted\W*mice\W*colonized\W*with\W*pnir15\W*OVA\W*E'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'Distribution\W*of\W*large\W*intestinal\W*disease\W*mediated\W*by\W*Th1\W*and\W*Th2'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'Histological\W*analyses\W*of\W*colonic\W*tissues\W*from\W*mice\W*with\W*Th1\W*or'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'T\W*cells\W*recovered\W*from\W*colitic\W*mice\W*retain\W*a\W*polarized\W*Th1'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'DO11\W*RAG\W*2\W*RAG\W*2\W*recipients\W*fed\W*OVA\W*do\W*not'}
+      lookups:
+        - https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&term=pathogenic%5Bti%5D+AND+colitis%5Bti%5D+AND+Iqbal+N%5Bau%5D+AND+2002%5Bdp%5D&retmax=5&retmode=json
+        - https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pubmed&id=11781367&retmode=xml
+        - https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pmc&id=2196021&retmode=xml
+    MCTA-29:
+      status: known
+      confidence: high
+      evidence:
+        - 'same_article: the article established for MCTA-28 (observed in its recorded results); a cross-item check matched this item to another figure of it'
+        - 'resolved_ids: NCBI E-utilities (lookups)'
+        - 'pmc_figure_caption_match: image labels Disease score, Large intestinal tissue, Naive, Th1, Th2 in the caption: disease distribution over large intestinal regions (Cecum / Proximal / Middle / Distal) for naive / Th1 / Th2 recipients'
+      article: {journal: 'J Exp Med', year: 2002, first_author: 'Iqbal', pmc_figure_id: 'fig5', figure_label: 'Figure 5'}
+      ids: {pmcid: 'PMC2196021', pmid: '11781367', doi: '10.1084/jem.2001889'}
+      supplementary_files: []
+      pages:
+        article: https://pmc.ncbi.nlm.nih.gov/articles/PMC2196021/
+        figure: https://pmc.ncbi.nlm.nih.gov/articles/PMC2196021/figure/fig5/
+        supplement: https://pmc.ncbi.nlm.nih.gov/articles/PMC2196021/bin/011889f5.jpg
+        article_legacy_host: https://www.ncbi.nlm.nih.gov/pmc/articles/PMC2196021/
+        europepmc: https://europepmc.org/article/PMC/PMC2196021
+        pubmed: https://pubmed.ncbi.nlm.nih.gov/11781367/
+        doi: https://doi.org/10.1084/jem.2001889
+      text:
+        - {id: item_title, field: title, flags: i, pattern: 'T\W+helper\W+1\W+and\W+T\W+helper\W+2\W+cells\W+are\W+pathogenic'}
+        - {id: item_byline, flags: i, pattern: '\bby\s+[A-Z]{1,4}\s+Iqbal\s*·\s*2002\b', also: 'colitis|Th1|Th2|OVA'}
+        - {id: item_figure_caption, flags: i, pattern: 'Distribution\W+of\W+large\W+intestinal\W+disease\W+mediated\W+by\W+Th1\W+and\W+Th2'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'Inducible\W*expression\W*of\W*immunogenic\W*OVA\W*by\W*pnir15\W*OVA\W*E\W*coli'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'OVA\W*expressing\W*E\W*coli\W*induce\W*clonal\W*expansion\W*of\W*DO11\W*10'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'Th1\W*and\W*Th2\W*cells\W*derived\W*from\W*DO11\W*RAG\W*2\W*mice'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'Th1\W*and\W*Th2\W*reconstituted\W*mice\W*colonized\W*with\W*pnir15\W*OVA\W*E'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'Distribution\W*of\W*large\W*intestinal\W*disease\W*mediated\W*by\W*Th1\W*and\W*Th2'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'Histological\W*analyses\W*of\W*colonic\W*tissues\W*from\W*mice\W*with\W*Th1\W*or'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'T\W*cells\W*recovered\W*from\W*colitic\W*mice\W*retain\W*a\W*polarized\W*Th1'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'DO11\W*RAG\W*2\W*RAG\W*2\W*recipients\W*fed\W*OVA\W*do\W*not'}
+      lookups:
+        - https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&term=pathogenic%5Bti%5D+AND+colitis%5Bti%5D+AND+Iqbal+N%5Bau%5D+AND+2002%5Bdp%5D&retmax=5&retmode=json
+        - https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pubmed&id=11781367&retmode=xml
+        - https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pmc&id=2196021&retmode=xml
+    MCTA-30: {status: unknown, evidence: [dataset_metadata_checked, recorded_results_checked]}
+    MCTA-31: {status: unknown, evidence: [dataset_metadata_checked, recorded_results_checked]}
+    MCTA-32: {status: unknown, evidence: [dataset_metadata_checked, recorded_results_checked]}
+    MCTA-33: {status: unknown, evidence: [dataset_metadata_checked, recorded_results_checked]}
+    MCTA-34:
+      status: unknown
+      evidence: [dataset_metadata_checked, recorded_results_checked]
+      note: 'near miss, not blocked: searched results show cervical-neoplasia articles (e.g. Habbani 2025) but none shows the item''s annotated microdissection map (#N: CIN II / IC / Sup. Inv. labels); not established'
+    MCTA-35: {status: unknown, evidence: [dataset_metadata_checked, recorded_results_checked]}
+    MCTA-36:
+      status: known
+      confidence: high
+      evidence:
+        - 'observed_in_recorded_results: 26 distinct result line(s)'
+        - 'resolved_ids: NCBI E-utilities (lookups)'
+        - 'pmc_figure_caption_match: image labels Type and ZO-1/Laminin in the caption; whole mount / H&E / ZO-1/laminin panels of type I-III lesions'
+      article: {journal: 'J Cell Biol', year: 2002, first_author: 'Welm', pmc_figure_id: 'fig3', figure_label: 'Figure 3'}
+      ids: {pmcid: 'PMC2173854', pmid: '12011115', doi: '10.1083/jcb.200107119'}
+      supplementary_files: ['jcellbiol_jcb.200107119_index.html', 'jcellbiol_jcb.200107119_1.html', 'jcellbiol_157_4_jcb.200107119__jcb.200107119.v1.mov', 'jcellbiol_jcb.200107119_2.html', 'jcellbiol_157_4_jcb.200107119__jcb.200107119.v2.mov', 'jcellbiol_jcb.200107119_3.html', 'jcellbiol_157_4_jcb.200107119__jcb.200107119.v3.mov', 'jcellbiol_jcb.200107119_4.html', 'jcellbiol_157_4_jcb.200107119__jcb.200107119.v4.mov']
+      pages:
+        article: https://pmc.ncbi.nlm.nih.gov/articles/PMC2173854/
+        figure: https://pmc.ncbi.nlm.nih.gov/articles/PMC2173854/figure/fig3/
+        supplement: https://pmc.ncbi.nlm.nih.gov/articles/PMC2173854/bin/jcellbiol_jcb.200107119_index.html
+        article_legacy_host: https://www.ncbi.nlm.nih.gov/pmc/articles/PMC2173854/
+        europepmc: https://europepmc.org/article/PMC/PMC2173854
+        pubmed: https://pubmed.ncbi.nlm.nih.gov/12011115/
+        doi: https://doi.org/10.1083/jcb.200107119
+      text:
+        - {id: item_title, field: title, flags: i, pattern: 'Inducible\W+dimerization\W+of\W+FGFR1'}
+        - {id: item_byline, flags: i, pattern: '\bby\s+[A-Z]{1,4}\s+Welm\s*·\s*2002\b', also: 'FGFR1'}
+        - {id: item_figure_caption, flags: i, pattern: 'Histology\W+of\W+iFGFR1\W+induced\W+lesions'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'iFGFR1\W*dimerization\W*can\W*inhibit\W*apoptosis\W*and\W*induce\W*proliferation'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'iFGFR1\W*signaling\W*can\W*induce\W*lateral\W*buds\W*in\W*mammary\W*glands\W*of'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'Histology\W*of\W*iFGFR1\W*induced\W*lesions\W*in\W*the\W*mammary\W*gland'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'AP20187\W*treatment\W*of\W*transgenic\W*mice\W*induces\W*proliferation\W*and\W*altered\W*cell'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'iFGFR1\W*activation\W*can\W*regulate\W*MMPs\W*and\W*induce\W*invasive\W*lesions'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'Model\W*for\W*FGFR\W*induced\W*lateral\W*buds\W*and\W*hyperplasia\W*in\W*the'}
+      lookups:
+        - https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&term=Inducible+dimerization+of+FGFR1%5Bti%5D+AND+Welm%5Bau%5D&retmax=5&retmode=json
+        - https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pubmed&id=12011115&retmode=xml
+        - https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pmc&id=2173854&retmode=xml
+    MCTA-37:
+      status: unknown
+      evidence: [dataset_metadata_checked, recorded_results_checked]
+      note: 'near miss, not blocked: the image''s own header text reads ''PROGNOSTIC FACTORS IN ANAPLASTIC ASTROCYTOMA AND GLIOBLASTOMA MULTIFORME''; PubMed title search (lookup5.json) returns one article with a different title (PMID 10730637, ''Prognostic factors in recurrent glioblastoma multiforme and anaplastic astrocytoma treated with selective intra-arterial chemotherapy'', PMC8174969) whose PMC record has no full-text figures to check; not established'
+    MCTA-38:
+      status: unknown
+      evidence: [dataset_metadata_checked, recorded_results_checked]
+      note: 'near miss, not blocked: candidate PMC7936649 (observed as a ''PCNA and CD31 analysis'' figure page in recorded runs): the token criterion is met (CD31, PCNA) but the caption contradicts the image, whose columns are pcDNA vs Arg-1 (the article compares IL-10 KO / wild-type grafts); a different article with the same marker panel, so not this item''s source'
+    MCTA-39:
+      status: known
+      confidence: high
+      evidence:
+        - 'observed_in_recorded_results: 2 distinct result line(s)'
+        - 'resolved_ids: NCBI E-utilities (lookups)'
+        - 'pmc_figure_caption_match: image labels IL-10R and TGF-β in the caption; Hh / CD25+ T / anti-IL-10R / anti-TGF-β / IL-10-/- CD25+ T groups'
+      article: {journal: 'J Exp Med', year: 2002, first_author: 'Kullberg', pmc_figure_id: 'fig5', figure_label: 'Figure 5'}
+      ids: {pmcid: 'PMC2196050', pmid: '12186842', doi: '10.1084/jem.20020556'}
+      supplementary_files: []
+      pages:
+        article: https://pmc.ncbi.nlm.nih.gov/articles/PMC2196050/
+        figure: https://pmc.ncbi.nlm.nih.gov/articles/PMC2196050/figure/fig5/
+        supplement: https://pmc.ncbi.nlm.nih.gov/articles/PMC2196050/bin/20020556f5.jpg
+        article_legacy_host: https://www.ncbi.nlm.nih.gov/pmc/articles/PMC2196050/
+        europepmc: https://europepmc.org/article/PMC/PMC2196050
+        pubmed: https://pubmed.ncbi.nlm.nih.gov/12186842/
+        doi: https://doi.org/10.1084/jem.20020556
+      text:
+        - {id: item_title, field: title, flags: i, pattern: '(?:Bacteria\W+triggered\W+CD4\W*\+?\W*)?T\W+regulatory\W+cells\W+suppress\W+Helicobacter\W+hepaticus'}
+        - {id: item_byline, flags: i, pattern: '\bby\s+[A-Z]{1,4}\s+Kullberg\s*·\s*2002\b', also: 'hepaticus|colitis'}
+        - {id: item_figure_caption, flags: i, pattern: 'CD45RBlow\W+CD4\W*\+?\W+cells\W+from\W+infected\W+WT\W+mice\W+block\W+colitis'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'H\W*hepaticus\W*infected\W*but\W*not\W*naive\W*RAG\W*KO\W*mice\W*develop'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'CD45RBlow\W*CD4\W*cells\W*from\W*H\W*hepaticus\W*infected\W*WT\W*mice\W*protect'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'Intestinal\W*pathology\W*of\W*H\W*hepaticus\W*infected\W*RAG\W*KO\W*mice\W*receiving'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'CD25\W*CD45RBlow\W*as\W*well\W*as\W*CD25\W*CD45RBlow\W*CD4\W*cells\W*from'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'CD25\W*CD45RBlow\W*and\W*CD25\W*CD45RBlow\W*CD4\W*cells\W*from\W*infected\W*WT'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'T\W*cell\W*derived\W*IL\W*10\W*mediates\W*the\W*disease\W*protective\W*effect'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'CD45RBlow\W*CD4\W*cells\W*from\W*naive\W*WT\W*mice\W*are\W*unable\W*to'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'CD45RBlow\W*CD4\W*cells\W*from\W*infected\W*WT\W*mice\W*inhibit\W*IFN\W*γ'}
+      lookups:
+        - https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&term=T+regulatory+cells+suppress+Helicobacter+hepaticus-induced+colitis%5Bti%5D+AND+Kullberg%5Bau%5D&retmax=5&retmode=json
+        - https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pubmed&id=12186842&retmode=xml
+        - https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pmc&id=2196050&retmode=xml
+    MCTA-40:
+      status: unknown
+      evidence: [dataset_metadata_checked, recorded_results_checked]
+      note: 'near miss, not blocked: the NCBI sweep matched PMC7073068 (Fortugno 2020, observed in a recorded run) on the labels SCC / Dermis / Epidermis, but none of its figures shows the item''s SCC vs dermis vs epidermis chromatograms (its sequencing figures compare a control with the patient''s germline DNA); not established'
+    MCTA-41:
+      status: known
+      confidence: high
+      evidence:
+        - 'observed_in_recorded_results: 24 distinct result line(s)'
+        - 'resolved_ids: NCBI E-utilities (lookups)'
+        - 'pmc_figure_caption_match: image labels tgDB1 and tgDB2 in the caption; H&E sections of wt / DB-/- / DB-/-,tgDB1 / DB-/-,tgDB2 muscle'
+      article: {journal: 'J Cell Biol', year: 2003, first_author: 'Grady', pmc_figure_id: 'fig2', figure_label: 'Figure 2'}
+      ids: {pmcid: 'PMC2173352', pmid: '12604589', doi: '10.1083/jcb.200209045'}
+      supplementary_files: []
+      pages:
+        article: https://pmc.ncbi.nlm.nih.gov/articles/PMC2173352/
+        figure: https://pmc.ncbi.nlm.nih.gov/articles/PMC2173352/figure/fig2/
+        supplement: https://pmc.ncbi.nlm.nih.gov/articles/PMC2173352/bin/200209045f2.jpg
+        article_legacy_host: https://www.ncbi.nlm.nih.gov/pmc/articles/PMC2173352/
+        europepmc: https://europepmc.org/article/PMC/PMC2173352
+        pubmed: https://pubmed.ncbi.nlm.nih.gov/12604589/
+        doi: https://doi.org/10.1083/jcb.200209045
+      text:
+        - {id: item_title, field: title, flags: i, pattern: 'Tyrosine\W+phosphorylated\W+and\W+nonphosphorylated\W+isoforms\W+of'}
+        - {id: item_byline, flags: i, pattern: '\bby\s+[A-Z]{1,4}\s+Grady\s*·\s*2003\b', also: 'dystrobrevin'}
+        - {id: item_figure_caption, flags: i, pattern: '(?:α|alpha)\W*DB1\W+and\W+(?:α|alpha)\W*DB2\W+both\W+prevent\W+muscle\W+fiber\W+degeneration'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'Generation\W*of\W*transgenic\W*mice'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'αDB1\W*and\W*αDB2\W*both\W*prevent\W*muscle\W*fiber\W*degeneration\W*in\W*αDB'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'Localization\W*of\W*αDB\W*isoforms\W*in\W*αDB\W*and\W*mdx\W*mice\W*expressing'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'αDB1\W*is\W*better\W*able\W*than\W*αDB2\W*to\W*restore\W*normal\W*AChR'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'Localization\W*of\W*DGC\W*associated\W*proteins\W*in\W*αDB\W*mutant\W*and\W*transgenic'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'Impaired\W*restoration\W*of\W*postsynaptic\W*structure\W*in\W*αDB\W*muscle\W*by\W*αDB1'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'Localization\W*of\W*αDB\W*isoforms\W*at\W*the\W*MTJ\W*Sections\W*of\W*skeletal'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'MTJ\W*structure\W*is\W*abnormal\W*in\W*αDB\W*mice\W*and\W*restored\W*more'}
+      lookups:
+        - https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&term=Tyrosine-phosphorylated+and+nonphosphorylated+isoforms+of+alpha-dystrobrevin%5Bti%5D+AND+Grady%5Bau%5D&retmax=5&retmode=json
+        - https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pubmed&id=12604589&retmode=xml
+        - https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pmc&id=2173352&retmode=xml
+    MCTA-42: {status: unknown, evidence: [dataset_metadata_checked, recorded_results_checked]}
+    MCTA-43: {status: unknown, evidence: [dataset_metadata_checked, recorded_results_checked]}
+    MCTA-44: {status: unknown, evidence: [dataset_metadata_checked, recorded_results_checked]}
+    MCTA-45: {status: unknown, evidence: [dataset_metadata_checked, recorded_results_checked]}
+    MCTA-46: {status: unknown, evidence: [dataset_metadata_checked, recorded_results_checked]}
+    MCTA-47: {status: unknown, evidence: [dataset_metadata_checked, recorded_results_checked]}
+    MCTA-48: {status: unknown, evidence: [dataset_metadata_checked, recorded_results_checked]}
+    MCTA-49:
+      status: known
+      confidence: high
+      evidence:
+        - 'observed_in_recorded_results: 1 distinct result line(s)'
+        - 'resolved_ids: NCBI E-utilities (lookups)'
+        - 'pmc_figure_caption_match: 5 image labels in the caption (PT alone, EAE, optic neuritis, ...); MOG35-55 + PT / PT alone / 100 and 10 µg groups'
+      article: {journal: 'J Exp Med', year: 2003, first_author: 'Bettelli', pmc_figure_id: 'fig5', figure_label: 'Figure 5'}
+      ids: {pmcid: 'PMC2193967', pmid: '12732654', doi: '10.1084/jem.20021603'}
+      supplementary_files: []
+      pages:
+        article: https://pmc.ncbi.nlm.nih.gov/articles/PMC2193967/
+        figure: https://pmc.ncbi.nlm.nih.gov/articles/PMC2193967/figure/fig5/
+        supplement: https://pmc.ncbi.nlm.nih.gov/articles/PMC2193967/bin/20021603f5.jpg
+        article_legacy_host: https://www.ncbi.nlm.nih.gov/pmc/articles/PMC2193967/
+        europepmc: https://europepmc.org/article/PMC/PMC2193967
+        pubmed: https://pubmed.ncbi.nlm.nih.gov/12732654/
+        doi: https://doi.org/10.1084/jem.20021603
+      text:
+        - {id: item_title, field: title, flags: i, pattern: 'Myelin\W+oligodendrocyte\W+glycoprotein\W+specific\W+T\W+cell\W+receptor'}
+        - {id: item_byline, flags: i, pattern: '\bby\s+[A-Z]{1,4}\s+Bettelli\s*·\s*2003\b', also: 'optic|MOG|2D2'}
+        - {id: item_figure_caption, flags: i, pattern: 'Suboptimal\W+immunization\W+protocols\W+trigger\W+optic\W+neuritis'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'T\W*cell\W*populations\W*in\W*2D2\W*MOG\W*specific\W*TCR\W*transgenic\W*mice'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'Response\W*of\W*transgenic\W*T\W*cells\W*to\W*MOG\W*35\W*55\W*and'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'Histological\W*analysis\W*of\W*CNS\W*tissues\W*from\W*2D2\W*TCR\W*transgenic\W*mice'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'Induced\W*EAE\W*in\W*2D2\W*TCR\W*transgenic\W*mice'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'Suboptimal\W*immunization\W*protocols\W*trigger\W*optic\W*neuritis\W*but\W*not\W*EAE\W*in'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'MOG\W*is\W*more\W*expressed\W*in\W*the\W*optic\W*nerve\W*than\W*in'}
+      lookups:
+        - https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&term=Myelin+oligodendrocyte+glycoprotein-specific+T+cell+receptor+transgenic+mice+optic+neuritis%5Bti%5D+AND+Bettelli%5Bau%5D&retmax=5&retmode=json
+        - https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pubmed&id=12732654&retmode=xml
+        - https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pmc&id=2193967&retmode=xml
+    MCTA-50: {status: unknown, evidence: [dataset_metadata_checked, recorded_results_checked]}
+    MCTA-51: {status: unknown, evidence: [dataset_metadata_checked, recorded_results_checked]}
+    MCTA-52: {status: unknown, evidence: [dataset_metadata_checked, recorded_results_checked]}
+    MCTA-53: {status: unknown, evidence: [dataset_metadata_checked, recorded_results_checked]}
+    MCTA-54:
+      status: known
+      confidence: high
+      evidence:
+        - 'observed_in_recorded_results: 2 distinct result line(s)'
+        - 'resolved_ids: NCBI E-utilities (lookups)'
+        - 'pmc_figure_caption_match: caption shares a 12-token run with the gold answer; image labels H&E, CK-18, CEA, hTRT in the caption'
+      article: {journal: 'Br J Cancer', year: 2003, first_author: 'Ajisaka', pmc_figure_id: 'fig2', figure_label: 'Figure 2'}
+      ids: {pmcid: 'PMC2376932', pmid: '12915877', doi: '10.1038/sj.bjc.6601183'}
+      supplementary_files: []
+      pages:
+        article: https://pmc.ncbi.nlm.nih.gov/articles/PMC2376932/
+        figure: https://pmc.ncbi.nlm.nih.gov/articles/PMC2376932/figure/fig2/
+        supplement: https://pmc.ncbi.nlm.nih.gov/articles/PMC2376932/bin/89-6601183f2.jpg
+        article_legacy_host: https://www.ncbi.nlm.nih.gov/pmc/articles/PMC2376932/
+        europepmc: https://europepmc.org/article/PMC/PMC2376932
+        pubmed: https://pubmed.ncbi.nlm.nih.gov/12915877/
+        doi: https://doi.org/10.1038/sj.bjc.6601183
+      text:
+        - {id: item_title, field: title, flags: i, pattern: 'Micrometastases\W+in\W+sentinel\W+nodes\W+of\W+gastric\W+cancer'}
+        - {id: item_byline, flags: i, pattern: '\bby\s+[A-Z]{1,4}\s+Ajisaka\s*·\s*2003\b', also: 'sentinel|gastric'}
+        - {id: item_figure_caption, flags: i, pattern: 'Number\W+of\W+metastases\W+detected\W+by\W+conventional\W+histology'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'Sensitivities\W*of\W*RT\W*PCR\W*and\W*Southern\W*blot\W*assay\W*of\W*mRNA'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'Number\W*of\W*metastases\W*detected\W*by\W*conventional\W*histology\W*haematoxylin\W*and\W*eosin'}
+      lookups:
+        - https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&term=Micrometastases+in+sentinel+nodes+of+gastric+cancer%5Bti%5D+AND+Ajisaka%5Bau%5D&retmax=5&retmode=json
+        - https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pubmed&id=12915877&retmode=xml
+        - https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pmc&id=2376932&retmode=xml
+    MCTA-55: {status: unknown, evidence: [dataset_metadata_checked, recorded_results_checked]}
+    MCTA-56:
+      status: known
+      confidence: high
+      evidence:
+        - 'same_article: the article established for MCTA-57 (observed in its recorded results); a cross-item check matched this item to another figure of it'
+        - 'resolved_ids: NCBI E-utilities (lookups)'
+        - 'pmc_figure_caption_match: image labels PORTAL FIBROSIS, HAI 1 and 4 in the caption: ''portal fibrosis, expansile (HAI 1, left) and precirrhotic portal fibrosis (HAI 4, right)'''
+      article: {journal: 'Korean J Intern Med', year: 1992, first_author: 'Hahm', pmc_figure_id: 'f3-kjim-7-2-102-5', figure_label: 'Fig. 3'}
+      ids: {pmcid: 'PMC4532114', pmid: '1306071', doi: '10.3904/kjim.1992.7.2.102'}
+      supplementary_files: []
+      pages:
+        article: https://pmc.ncbi.nlm.nih.gov/articles/PMC4532114/
+        figure: https://pmc.ncbi.nlm.nih.gov/articles/PMC4532114/figure/f3-kjim-7-2-102-5/
+        supplement: https://pmc.ncbi.nlm.nih.gov/articles/PMC4532114/bin/kjim-7-2-102-5f3.jpg
+        article_legacy_host: https://www.ncbi.nlm.nih.gov/pmc/articles/PMC4532114/
+        europepmc: https://europepmc.org/article/PMC/PMC4532114
+        pubmed: https://pubmed.ncbi.nlm.nih.gov/1306071/
+        doi: https://doi.org/10.3904/kjim.1992.7.2.102
+      text:
+        - {id: item_title, field: title, flags: i, pattern: 'Histologic\W+study\W+of\W+chronic\W+active\W+hepatitis\W+C\b'}
+        - {id: item_byline, flags: i, pattern: '\bby\s+[A-Z]{1,4}\s+Hahm\s*·\s*1992\b', also: 'hepatitis'}
+        - {id: item_figure_caption, flags: i, pattern: 'Histopathologic\W+appearance\W+of\W+portal\W+fibrosis\W+expansile'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'Histopathologic\W*appearance\W*of\W*portal\W*inflammation\W*scattered\W*HAI\W*1\W*left\W*and'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'Histopathologic\W*appearance\W*of\W*periportal\W*necro\W*inflammation\W*spill\W*over\W*HAI\W*1'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'Histopathologic\W*appearance\W*of\W*portal\W*fibrosis\W*expansile\W*HAI\W*1\W*left\W*and'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'Histopathologic\W*appearance\W*of\W*terminal\W*hepatic\W*vein\W*fibrosis\W*perivenular\W*HAI\W*1'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'Histopathologic\W*appearance\W*of\W*focal\W*necrosis\W*vacant\W*arrow\W*and\W*acidophilic\W*body'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'Histopathologic\W*appearance\W*of\W*sinusoidal\W*lymphocytic\W*reaction\W*mild\W*to\W*moderate\W*HAI'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'Histopathologic\W*appearance\W*of\W*polyploid\W*nuclear\W*change\W*present\W*HAI\W*1'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'Histopathologic\W*appearance\W*of\W*fatty\W*change\W*moderate\W*grade\W*HAI\W*2'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'The\W*follicular\W*and\W*severe\W*portal\W*inflammations\W*above\W*fig\W*with\W*sinusoidal'}
+      lookups:
+        - https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&term=Histologic+study+of+chronic+active+hepatitis+C%5Bti%5D+AND+Hahm%5Bau%5D&retmax=5&retmode=json
+        - https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pubmed&id=1306071&retmode=xml
+        - https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pmc&id=4532114&retmode=xml
+    MCTA-57:
+      status: known
+      confidence: high
+      evidence:
+        - 'observed_in_recorded_results: 1 distinct result line(s)'
+        - 'resolved_ids: NCBI E-utilities (lookups)'
+        - 'pmc_figure_caption_match: image labels fibrosis and HAI in the caption; ''terminal hepatic vein fibrosis, perivenular (HAI 1)'' = the image''s THV FIBROSIS / HAI 1'
+      article: {journal: 'Korean J Intern Med', year: 1992, first_author: 'Hahm', pmc_figure_id: 'f4-kjim-7-2-102-5', figure_label: 'Fig. 4'}
+      ids: {pmcid: 'PMC4532114', pmid: '1306071', doi: '10.3904/kjim.1992.7.2.102'}
+      supplementary_files: []
+      pages:
+        article: https://pmc.ncbi.nlm.nih.gov/articles/PMC4532114/
+        figure: https://pmc.ncbi.nlm.nih.gov/articles/PMC4532114/figure/f4-kjim-7-2-102-5/
+        supplement: https://pmc.ncbi.nlm.nih.gov/articles/PMC4532114/bin/kjim-7-2-102-5f4.jpg
+        article_legacy_host: https://www.ncbi.nlm.nih.gov/pmc/articles/PMC4532114/
+        europepmc: https://europepmc.org/article/PMC/PMC4532114
+        pubmed: https://pubmed.ncbi.nlm.nih.gov/1306071/
+        doi: https://doi.org/10.3904/kjim.1992.7.2.102
+      text:
+        - {id: item_title, field: title, flags: i, pattern: 'Histologic\W+study\W+of\W+chronic\W+active\W+hepatitis\W+C\b'}
+        - {id: item_byline, flags: i, pattern: '\bby\s+[A-Z]{1,4}\s+Hahm\s*·\s*1992\b', also: 'hepatitis'}
+        - {id: item_figure_caption, flags: i, pattern: 'Histopathologic\W+appearance\W+of\W+terminal\W+hepatic\W+vein\W+fibrosis'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'Histopathologic\W*appearance\W*of\W*portal\W*inflammation\W*scattered\W*HAI\W*1\W*left\W*and'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'Histopathologic\W*appearance\W*of\W*periportal\W*necro\W*inflammation\W*spill\W*over\W*HAI\W*1'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'Histopathologic\W*appearance\W*of\W*portal\W*fibrosis\W*expansile\W*HAI\W*1\W*left\W*and'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'Histopathologic\W*appearance\W*of\W*terminal\W*hepatic\W*vein\W*fibrosis\W*perivenular\W*HAI\W*1'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'Histopathologic\W*appearance\W*of\W*focal\W*necrosis\W*vacant\W*arrow\W*and\W*acidophilic\W*body'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'Histopathologic\W*appearance\W*of\W*sinusoidal\W*lymphocytic\W*reaction\W*mild\W*to\W*moderate\W*HAI'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'Histopathologic\W*appearance\W*of\W*polyploid\W*nuclear\W*change\W*present\W*HAI\W*1'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'Histopathologic\W*appearance\W*of\W*fatty\W*change\W*moderate\W*grade\W*HAI\W*2'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'The\W*follicular\W*and\W*severe\W*portal\W*inflammations\W*above\W*fig\W*with\W*sinusoidal'}
+      lookups:
+        - https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&term=Histologic+study+of+chronic+active+hepatitis+C%5Bti%5D+AND+Hahm%5Bau%5D&retmax=5&retmode=json
+        - https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pubmed&id=1306071&retmode=xml
+        - https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pmc&id=4532114&retmode=xml
+    MCTA-58:
+      status: known
+      confidence: high
+      evidence:
+        - 'observed_in_recorded_results: 5 distinct result line(s)'
+        - 'resolved_ids: NCBI E-utilities (lookups)'
+        - 'pmc_figure_caption_match: 5 image labels in the caption (hist, node+, stage, US, USB); the study flow chart'
+      article: {journal: 'Br J Cancer', year: 2003, first_author: 'Damera', pmc_figure_id: 'fig1', figure_label: 'Figure 1'}
+      ids: {pmcid: 'PMC2394321', pmid: '14520465', doi: '10.1038/sj.bjc.6601290'}
+      supplementary_files: []
+      pages:
+        article: https://pmc.ncbi.nlm.nih.gov/articles/PMC2394321/
+        figure: https://pmc.ncbi.nlm.nih.gov/articles/PMC2394321/figure/fig1/
+        supplement: https://pmc.ncbi.nlm.nih.gov/articles/PMC2394321/bin/89-6601290f1.jpg
+        article_legacy_host: https://www.ncbi.nlm.nih.gov/pmc/articles/PMC2394321/
+        europepmc: https://europepmc.org/article/PMC/PMC2394321
+        pubmed: https://pubmed.ncbi.nlm.nih.gov/14520465/
+        doi: https://doi.org/10.1038/sj.bjc.6601290
+      text:
+        - {id: item_title, field: title, flags: i, pattern: 'Diagnosis\W+of\W+axillary\W+nodal\W+metastases\W+by\W+ultrasound'}
+        - {id: item_byline, flags: i, pattern: '\bby\s+[A-Z]{1,4}\s+Damera\s*·\s*2003\b', also: 'axillary'}
+        - {id: item_figure_caption, flags: i, pattern: 'Surgical\W+histology\W+and\W+preoperative\W+US\W+core\W+biopsy\W+results'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'Surgical\W*histology\W*and\W*preoperative\W*US\W*core\W*biopsy\W*results'}
+      lookups:
+        - https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&term=Diagnosis+of+axillary+nodal+metastases+by+ultrasound-guided+core+biopsy%5Bti%5D+AND+Damera%5Bau%5D&retmax=5&retmode=json
+        - https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pubmed&id=14520465&retmode=xml
+        - https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pmc&id=2394321&retmode=xml
+    MCTA-59: {status: unknown, evidence: [dataset_metadata_checked, recorded_results_checked]}
+    MCTA-60: {status: unknown, evidence: [dataset_metadata_checked, recorded_results_checked]}
+    MCTA-61: {status: unknown, evidence: [dataset_metadata_checked, recorded_results_checked]}
+    MCTA-62:
+      status: known
+      confidence: high
+      evidence:
+        - 'observed_in_recorded_results: 39 distinct result line(s)'
+        - 'resolved_ids: NCBI E-utilities (lookups)'
+        - 'pmc_figure_caption_match: 11 image labels in the caption (Epi, HS, ORS, IRS, Co, Me, Mel, Mx, DP, ...); P2 / P4 WT vs KO follicles'
+      article: {journal: 'J Cell Biol', year: 2003, first_author: 'Kobielak', pmc_figure_id: 'fig3', figure_label: 'Figure 3'}
+      ids: {pmcid: 'PMC2173651', pmid: '14610062', doi: '10.1083/jcb.200309042'}
+      supplementary_files: []
+      pages:
+        article: https://pmc.ncbi.nlm.nih.gov/articles/PMC2173651/
+        figure: https://pmc.ncbi.nlm.nih.gov/articles/PMC2173651/figure/fig3/
+        supplement: https://pmc.ncbi.nlm.nih.gov/articles/PMC2173651/bin/200309042f3.jpg
+        article_legacy_host: https://www.ncbi.nlm.nih.gov/pmc/articles/PMC2173651/
+        europepmc: https://europepmc.org/article/PMC/PMC2173651
+        pubmed: https://pubmed.ncbi.nlm.nih.gov/14610062/
+        doi: https://doi.org/10.1083/jcb.200309042
+      text:
+        - {id: item_title, field: title, flags: i, pattern: 'Defining\W+BMP\W+functions\W+in\W+the\W+hair\W+follicle'}
+        - {id: item_byline, flags: i, pattern: '\bby\s+[A-Z]{1,4}\s+Kobielak\s*·\s*2003\b', also: 'BMP|hair'}
+        - {id: item_figure_caption, flags: i, pattern: 'Histological\W+abnormalities\W+in\W+Bmpr1a\W+null\W+follicles'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'Schematic\W*of\W*the\W*hair\W*follicle\W*bulb'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'Phenotype\W*and\W*genotype\W*of\W*K14\W*Cre\W*Bmpr1a\W*fl\W*fl\W*conditional'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'Histological\W*abnormalities\W*in\W*Bmpr1a\W*null\W*follicles'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'Ultrastructural\W*abnormalities\W*in\W*Bmpr1\W*a\W*null\W*follicles'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'Defects\W*in\W*IRS\W*and\W*hair\W*shaft\W*differentiation\W*in\W*Bmpr1a\W*null'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'Defects\W*in\W*transcriptional\W*regulators\W*of\W*the\W*IRS\W*and\W*hair\W*shaft'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'Bmpr1a\W*null\W*skin\W*grafts\W*develop\W*strikingly\W*abnormal\W*hairs'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'Biochemical\W*analyses\W*of\W*cysts\W*generated\W*in\W*grafted\W*Bmpr1\W*a\W*null'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'Failure\W*to\W*activate\W*Wnt\W*responsive\W*genes\W*and\W*accumulate\W*nuclear\W*β'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'Model\W*for\W*how\W*opposing\W*signaling\W*through\W*BMPR1A\W*controls\W*Lef1\W*βcat'}
+      lookups:
+        - https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&term=Defining+BMP+functions+in+the+hair+follicle%5Bti%5D+AND+Kobielak%5Bau%5D&retmax=5&retmode=json
+        - https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pubmed&id=14610062&retmode=xml
+        - https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pmc&id=2173651&retmode=xml
+    MCTA-63:
+      status: known
+      confidence: high
+      evidence:
+        - 'observed_in_recorded_results: 1 distinct result line(s)'
+        - 'resolved_ids: NCBI E-utilities (lookups)'
+        - 'pmc_figure_caption_match: 5 image labels in the caption (adenoma, group, high-grade, low-grade, size); tumour size by clustering group'
+      article: {journal: 'Br J Cancer', year: 2004, first_author: 'Takenawa', pmc_figure_id: 'fig4', figure_label: 'Figure 4'}
+      ids: {pmcid: 'PMC2395343', pmid: '14710232', doi: '10.1038/sj.bjc.6601399'}
+      supplementary_files: []
+      pages:
+        article: https://pmc.ncbi.nlm.nih.gov/articles/PMC2395343/
+        figure: https://pmc.ncbi.nlm.nih.gov/articles/PMC2395343/figure/fig4/
+        supplement: https://pmc.ncbi.nlm.nih.gov/articles/PMC2395343/bin/90-6601399f4.jpg
+        article_legacy_host: https://www.ncbi.nlm.nih.gov/pmc/articles/PMC2395343/
+        europepmc: https://europepmc.org/article/PMC/PMC2395343
+        pubmed: https://pubmed.ncbi.nlm.nih.gov/14710232/
+        doi: https://doi.org/10.1038/sj.bjc.6601399
+      text:
+        - {id: item_title, field: title, flags: i, pattern: 'Differential\W+gene\W+expression\W+profiles\W+associated\W+with\W+(?:gastric\W+adenoma|\.\.\.|…)', also: 'Takenawa|gastric\W+adenoma'}
+        - {id: item_byline, flags: i, pattern: '\bby\s+[A-Z]{1,4}\s+Takenawa\s*·\s*2004\b', also: 'adenoma|gene'}
+        - {id: item_figure_caption, flags: i, pattern: 'Plot\W+of\W+the\W+tumour\W+size\W+according\W+to\W+groups'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'Electrophoretic\W*band\W*patterns\W*of\W*SSH\W*and\W*gene\W*overexpression\W*in\W*original'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'Expression\W*levels\W*of\W*identified\W*genes\W*in\W*32\W*cases'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'Plot\W*of\W*the\W*tumour\W*size\W*according\W*to\W*groups\W*separated\W*by'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'Plot\W*of\W*the\W*gene\W*expression\W*ratio\W*according\W*to\W*groups\W*separated'}
+      lookups:
+        - https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&term=Differential+gene-expression+profiles%5Bti%5D+AND+Takenawa%5Bau%5D&retmax=5&retmode=json
+        - https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pubmed&id=14710232&retmode=xml
+        - https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pmc&id=2395343&retmode=xml
+    MCTA-64:
+      status: known
+      confidence: high
+      evidence:
+        - 'observed_in_recorded_results: 4 distinct result line(s)'
+        - 'resolved_ids: NCBI E-utilities (lookups)'
+        - 'pmc_figure_caption_match: 7 image labels in the caption (Breast, Carcinoma, LOXL2, SDFR1, PLAUR, PLOD2, ESDN)'
+      article: {journal: 'PLoS Biol', year: 2004, first_author: 'Chang', pmc_figure_id: 'pbio-0020007-g005', figure_label: 'Figure 5'}
+      ids: {pmcid: 'PMC314300', pmid: '14737219', doi: '10.1371/journal.pbio.0020007'}
+      supplementary_files: ['pbio.0020007.sd001.doc', 'pbio.0020007.sd002.xls']
+      pages:
+        article: https://pmc.ncbi.nlm.nih.gov/articles/PMC314300/
+        figure: https://pmc.ncbi.nlm.nih.gov/articles/PMC314300/figure/pbio-0020007-g005/
+        supplement: https://pmc.ncbi.nlm.nih.gov/articles/PMC314300/bin/pbio.0020007.sd001.doc
+        article_legacy_host: https://www.ncbi.nlm.nih.gov/pmc/articles/PMC314300/
+        europepmc: https://europepmc.org/article/PMC/PMC314300
+        pubmed: https://pubmed.ncbi.nlm.nih.gov/14737219/
+        doi: https://doi.org/10.1371/journal.pbio.0020007
+      text:
+        - {id: item_title, field: title, flags: i, pattern: 'Gene\W+expression\W+signature\W+of\W+fibroblast\W+serum\W+response'}
+        - {id: item_byline, flags: i, pattern: '\bby\s+[A-Z]{1,4}\s+Chang\s*·\s*2004\b', also: 'serum\W+response|fibroblast'}
+        - {id: item_figure_caption, flags: i, pattern: 'Histological\W+Architecture\W+of\W+CSR\W+Gene\W+Expression'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'Identification\W*and\W*Annotation\W*of\W*a\W*Common\W*Serum\W*Response\W*in\W*Fibroblasts'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'Survey\W*of\W*Fibroblast\W*CSR\W*Gene\W*Expression\W*in\W*Human\W*CancersExpression\W*patterns'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'Patient–Evidence Alignment\W*Stability\W*and\W*Prognostic\W*Value\W*of\W*Fibroblast\W*CSR\W*in\W*Breast'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'Prognostic\W*Value\W*of\W*Fibroblast\W*CSR\W*in\W*Epithelial\W*TumorsKaplan\W*Meier\W*survival'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'Histological\W*Architecture\W*of\W*CSR\W*Gene\W*Expression\W*in\W*Breast\W*CancerRepresentative\W*ISH'}
+      lookups:
+        - https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&term=Gene+expression+signature+of+fibroblast+serum+response%5Bti%5D+AND+Chang+HY%5Bau%5D&retmax=5&retmode=json
+        - https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pubmed&id=14737219&retmode=xml
+        - https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pmc&id=314300&retmode=xml
+    MCTA-65: {status: unknown, evidence: [dataset_metadata_checked, recorded_results_checked]}
+    MCTA-66: {status: unknown, evidence: [dataset_metadata_checked, recorded_results_checked]}
+    MCTA-67: {status: unknown, evidence: [dataset_metadata_checked, recorded_results_checked]}
+    MCTA-68: {status: unknown, evidence: [dataset_metadata_checked, recorded_results_checked]}
+    MCTA-69: {status: unknown, evidence: [dataset_metadata_checked, recorded_results_checked]}
+    MCTA-70: {status: unknown, evidence: [dataset_metadata_checked, recorded_results_checked]}
+    MCTA-71:
+      status: known
+      confidence: high
+      evidence:
+        - 'observed_in_recorded_results: 1 distinct result line(s)'
+        - 'resolved_ids: NCBI E-utilities (lookups)'
+        - 'pmc_figure_caption_match: image labels Histologic, Prone, Supine in the caption (histologic scores among supine / prone / control groups)'
+      article: {journal: 'J Korean Med Sci', year: 2004, first_author: 'Lim', pmc_figure_id: 'F6', figure_label: 'Fig. 6'}
+      ids: {pmcid: 'PMC2822303', pmid: '15082895', doi: '10.3346/jkms.2004.19.2.223'}
+      supplementary_files: []
+      pages:
+        article: https://pmc.ncbi.nlm.nih.gov/articles/PMC2822303/
+        figure: https://pmc.ncbi.nlm.nih.gov/articles/PMC2822303/figure/F6/
+        supplement: https://pmc.ncbi.nlm.nih.gov/articles/PMC2822303/bin/jkms-19-223-g006.jpg
+        article_legacy_host: https://www.ncbi.nlm.nih.gov/pmc/articles/PMC2822303/
+        europepmc: https://europepmc.org/article/PMC/PMC2822303
+        pubmed: https://pubmed.ncbi.nlm.nih.gov/15082895/
+        doi: https://doi.org/10.3346/jkms.2004.19.2.223
+      text:
+        - {id: item_title, field: title, flags: i, pattern: 'The\W+role\W+of\W+the\W+lactate\W+dehydrogenase\W+and\W+the\W+effect'}
+        - {id: item_byline, flags: i, pattern: '\bby\s+[A-Z]{1,4}\s+Lim\s*·\s*2004\b', also: 'prone|lactate|ventilator'}
+        # no caption rule: the caption opening 'Histologic scores among the groups' is not distinctive
+        - {id: item_article_figure, field: title, flags: i, pattern: 'Representative\W*examples\W*of\W*the\W*histologic\W*scores\W*HS'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'Comparisons\W*of\W*oxygenation\W*among\W*the\W*groups'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'Comparisons\W*of\W*lactate\W*dehydrogenase\W*among\W*the\W*groups'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'Correlation\W*between\W*lactate\W*dehydrogenase\W*and\W*oxygenation'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'Wet\W*weight\W*to\W*dry\W*weight\W*WW\W*DW\W*ratios\W*among\W*the'}
+        - {id: item_article_figure, field: title, flags: i, pattern: 'Histologic\W*scores\W*among\W*the\W*groups'}
+      lookups:
+        - https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&term=lactate+dehydrogenase+prone+position%5Bti%5D+AND+Lim+SC%5Bau%5D&retmax=5&retmode=json
+        - https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pubmed&id=15082895&retmode=xml
+        - https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pmc&id=2822303&retmode=xml
+    MCTA-72: {status: unknown, evidence: [dataset_metadata_checked, recorded_results_checked]}
+    MCTA-73: {status: unknown, evidence: [dataset_metadata_checked, recorded_results_checked]}
+    MCTA-74: {status: unknown, evidence: [dataset_metadata_checked, recorded_results_checked]}
+    MCTA-75: {status: unknown, evidence: [dataset_metadata_checked, recorded_results_checked]}
+    MCTA-76: {status: unknown, evidence: [dataset_metadata_checked, recorded_results_checked]}
+    MCTA-77: {status: unknown, evidence: [dataset_metadata_checked, recorded_results_checked]}
+    MCTA-78: {status: unknown, evidence: [dataset_metadata_checked, recorded_results_checked]}
+    MCTA-79: {status: unknown, evidence: [dataset_metadata_checked, recorded_results_checked]}
+    MCTA-80: {status: unknown, evidence: [dataset_metadata_checked, recorded_results_checked]}
+    MCTA-81: {status: unknown, evidence: [dataset_metadata_checked, recorded_results_checked]}
+    MCTA-82: {status: unknown, evidence: [dataset_metadata_checked, recorded_results_checked]}
+    MCTA-83: {status: unknown, evidence: [dataset_metadata_checked, recorded_results_checked]}
+    MCTA-84: {status: unknown, evidence: [dataset_metadata_checked, recorded_results_checked]}
+    MCTA-85: {status: unknown, evidence: [dataset_metadata_checked, recorded_results_checked]}
+    MCTA-86: {status: unknown, evidence: [dataset_metadata_checked, recorded_results_checked]}
+    MCTA-87: {status: unknown, evidence: [dataset_metadata_checked, recorded_results_checked]}
+    MCTA-88: {status: unknown, evidence: [dataset_metadata_checked, recorded_results_checked]}
+    MCTA-89: {status: unknown, evidence: [dataset_metadata_checked, recorded_results_checked]}
+    MCTA-90: {status: unknown, evidence: [dataset_metadata_checked, recorded_results_checked]}
+    MCTA-91: {status: unknown, evidence: [dataset_metadata_checked, recorded_results_checked]}
+    MCTA-92: {status: unknown, evidence: [dataset_metadata_checked, recorded_results_checked]}
+    MCTA-93: {status: unknown, evidence: [dataset_metadata_checked, recorded_results_checked]}
+    MCTA-94: {status: unknown, evidence: [dataset_metadata_checked, recorded_results_checked]}
+    MCTA-95: {status: unknown, evidence: [dataset_metadata_checked, recorded_results_checked]}
+    MCTA-96: {status: unknown, evidence: [dataset_metadata_checked, recorded_results_checked]}
+    MCTA-97: {status: unknown, evidence: [dataset_metadata_checked, recorded_results_checked]}
+    MCTA-98: {status: unknown, evidence: [dataset_metadata_checked, recorded_results_checked]}
+    MCTA-99: {status: unknown, evidence: [dataset_metadata_checked, recorded_results_checked]}
+    MCTA-100: {status: unknown, evidence: [dataset_metadata_checked, recorded_results_checked]}
+    MCTA-101: {status: unknown, evidence: [dataset_metadata_checked, recorded_results_checked]}
+    MCTA-102: {status: unknown, evidence: [dataset_metadata_checked, recorded_results_checked]}
+    MCTA-103: {status: unknown, evidence: [dataset_metadata_checked, recorded_results_checked]}
+    MCTA-104: {status: unknown, evidence: [dataset_metadata_checked, recorded_results_checked]}
+    MCTA-105: {status: unknown, evidence: [dataset_metadata_checked, recorded_results_checked]}
+    MCTA-106: {status: unknown, evidence: [dataset_metadata_checked, recorded_results_checked]}
+
+# PhysicianBench: no web search, fetch or browse path exists. The agent's tools are the upstream FHIR tools against the
+# local HAPI server, get_lab_reference_range (a local table) and write_file; the harness dispatches the same tools.
+# No entries until such a path exists.
+PhysicianBench:
+  sources: []
+  refuse_query: []
+  urls: []
+  text: []
+  items: {}
+
+# HealthAdminBench: no web search, fetch or browse path to the internet exists. GuiEnvReal.navigate keeps only the path of
+# any URL and loads it under the local portal base (MH_PORTAL_BASE), so every page URL is on 127.0.0.1 / localhost.
+# No entries until such a path exists.
+HealthAdminBench:
+  sources: []
+  refuse_query: []
+  urls: []
+  text: []
+  items: {}

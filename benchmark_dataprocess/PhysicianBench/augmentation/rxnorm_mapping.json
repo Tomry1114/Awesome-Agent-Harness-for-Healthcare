@@ -1,0 +1,103 @@
+{
+ "_meta": {
+  "resolver": "RxNav",
+  "n": 19
+ },
+ "mapping": {
+  "amoxicillin": {
+   "rxcui": "723",
+   "ingredient": "amoxicillin",
+   "source": "RxNav"
+  },
+  "ampicillin": {
+   "rxcui": "733",
+   "ingredient": "ampicillin",
+   "source": "RxNav"
+  },
+  "aspirin": {
+   "rxcui": "1191",
+   "ingredient": "aspirin",
+   "source": "RxNav"
+  },
+  "atorvastatin": {
+   "rxcui": "83367",
+   "ingredient": "atorvastatin",
+   "source": "RxNav"
+  },
+  "azithromycin": {
+   "rxcui": "18631",
+   "ingredient": "azithromycin",
+   "source": "RxNav"
+  },
+  "doxycycline": {
+   "rxcui": "3640",
+   "ingredient": "doxycycline",
+   "source": "RxNav"
+  },
+  "ibuprofen": {
+   "rxcui": "5640",
+   "ingredient": "ibuprofen",
+   "source": "RxNav"
+  },
+  "ketorolac": {
+   "rxcui": "35827",
+   "ingredient": "ketorolac",
+   "source": "RxNav"
+  },
+  "levothyroxine": {
+   "rxcui": "10582",
+   "ingredient": "levothyroxine",
+   "source": "RxNav"
+  },
+  "loratadine": {
+   "rxcui": "28889",
+   "ingredient": "loratadine",
+   "source": "RxNav"
+  },
+  "metformin": {
+   "rxcui": "6809",
+   "ingredient": "metformin",
+   "source": "RxNav"
+  },
+  "methotrexate": {
+   "rxcui": "6851",
+   "ingredient": "methotrexate",
+   "source": "RxNav"
+  },
+  "naproxen": {
+   "rxcui": "7258",
+   "ingredient": "naproxen",
+   "source": "RxNav"
+  },
+  "penicillin G benzathine": {
+   "rxcui": "7982",
+   "ingredient": "penicillin G benzathine",
+   "source": "RxNav"
+  },
+  "penicillin V": {
+   "rxcui": "7984",
+   "ingredient": "penicillin V",
+   "source": "RxNav"
+  },
+  "sertraline": {
+   "rxcui": "36437",
+   "ingredient": "sertraline",
+   "source": "RxNav"
+  },
+  "sildenafil": {
+   "rxcui": "136411",
+   "ingredient": "sildenafil",
+   "source": "RxNav"
+  },
+  "sulfamethoxazole": {
+   "rxcui": "10180",
+   "ingredient": "sulfamethoxazole",
+   "source": "RxNav"
+  },
+  "tamsulosin": {
+   "rxcui": "77492",
+   "ingredient": "tamsulosin",
+   "source": "RxNav"
+  }
+ }
+}

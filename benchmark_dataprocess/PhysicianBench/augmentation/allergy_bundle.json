@@ -1,0 +1,1618 @@
+{
+ "resourceType": "Bundle",
+ "type": "transaction",
+ "entry": [
+  {
+   "resource": {
+    "resourceType": "AllergyIntolerance",
+    "id": "synth-MRN4888657619-metformin",
+    "clinicalStatus": {
+     "coding": [
+      {
+       "system": "http://terminology.hl7.org/CodeSystem/allergyintolerance-clinical",
+       "code": "active"
+      }
+     ]
+    },
+    "verificationStatus": {
+     "coding": [
+      {
+       "system": "http://terminology.hl7.org/CodeSystem/allergyintolerance-verification",
+       "code": "confirmed"
+      }
+     ]
+    },
+    "type": "allergy",
+    "category": [
+     "medication"
+    ],
+    "criticality": "high",
+    "code": {
+     "coding": [
+      {
+       "system": "http://www.nlm.nih.gov/research/umls/rxnorm",
+       "code": "6809",
+       "display": "metformin"
+      }
+     ],
+     "text": "metformin"
+    },
+    "patient": {
+     "reference": "Patient/MRN4888657619"
+    },
+    "reaction": [
+     {
+      "manifestation": [
+       {
+        "text": "rash"
+       }
+      ]
+     }
+    ],
+    "meta": {
+     "tag": [
+      {
+       "system": "http://medical-harness/tags",
+       "code": "synthetic-augmentation",
+       "display": "#2 allergy"
+      }
+     ]
+    }
+   },
+   "request": {
+    "method": "PUT",
+    "url": "AllergyIntolerance/synth-MRN4888657619-metformin"
+   }
+  },
+  {
+   "resource": {
+    "resourceType": "AllergyIntolerance",
+    "id": "synth-MRN4522690020-penicillin-v",
+    "clinicalStatus": {
+     "coding": [
+      {
+       "system": "http://terminology.hl7.org/CodeSystem/allergyintolerance-clinical",
+       "code": "active"
+      }
+     ]
+    },
+    "verificationStatus": {
+     "coding": [
+      {
+       "system": "http://terminology.hl7.org/CodeSystem/allergyintolerance-verification",
+       "code": "confirmed"
+      }
+     ]
+    },
+    "type": "allergy",
+    "category": [
+     "medication"
+    ],
+    "criticality": "low",
+    "code": {
+     "coding": [
+      {
+       "system": "http://www.nlm.nih.gov/research/umls/rxnorm",
+       "code": "7984",
+       "display": "penicillin V"
+      }
+     ],
+     "text": "penicillin V"
+    },
+    "patient": {
+     "reference": "Patient/MRN4522690020"
+    },
+    "reaction": [
+     {
+      "manifestation": [
+       {
+        "text": "hives"
+       }
+      ]
+     }
+    ],
+    "meta": {
+     "tag": [
+      {
+       "system": "http://medical-harness/tags",
+       "code": "synthetic-augmentation",
+       "display": "#2 allergy"
+      }
+     ]
+    }
+   },
+   "request": {
+    "method": "PUT",
+    "url": "AllergyIntolerance/synth-MRN4522690020-penicillin-v"
+   }
+  },
+  {
+   "resource": {
+    "resourceType": "AllergyIntolerance",
+    "id": "synth-MRN3857828509-loratadine",
+    "clinicalStatus": {
+     "coding": [
+      {
+       "system": "http://terminology.hl7.org/CodeSystem/allergyintolerance-clinical",
+       "code": "active"
+      }
+     ]
+    },
+    "verificationStatus": {
+     "coding": [
+      {
+       "system": "http://terminology.hl7.org/CodeSystem/allergyintolerance-verification",
+       "code": "confirmed"
+      }
+     ]
+    },
+    "type": "allergy",
+    "category": [
+     "medication"
+    ],
+    "criticality": "high",
+    "code": {
+     "coding": [
+      {
+       "system": "http://www.nlm.nih.gov/research/umls/rxnorm",
+       "code": "28889",
+       "display": "loratadine"
+      }
+     ],
+     "text": "loratadine"
+    },
+    "patient": {
+     "reference": "Patient/MRN3857828509"
+    },
+    "reaction": [
+     {
+      "manifestation": [
+       {
+        "text": "anaphylaxis"
+       }
+      ]
+     }
+    ],
+    "meta": {
+     "tag": [
+      {
+       "system": "http://medical-harness/tags",
+       "code": "synthetic-augmentation",
+       "display": "#2 allergy"
+      }
+     ]
+    }
+   },
+   "request": {
+    "method": "PUT",
+    "url": "AllergyIntolerance/synth-MRN3857828509-loratadine"
+   }
+  },
+  {
+   "resource": {
+    "resourceType": "AllergyIntolerance",
+    "id": "synth-MRN3694860228-sulfamethoxazole",
+    "clinicalStatus": {
+     "coding": [
+      {
+       "system": "http://terminology.hl7.org/CodeSystem/allergyintolerance-clinical",
+       "code": "active"
+      }
+     ]
+    },
+    "verificationStatus": {
+     "coding": [
+      {
+       "system": "http://terminology.hl7.org/CodeSystem/allergyintolerance-verification",
+       "code": "confirmed"
+      }
+     ]
+    },
+    "type": "allergy",
+    "category": [
+     "medication"
+    ],
+    "criticality": "high",
+    "code": {
+     "coding": [
+      {
+       "system": "http://www.nlm.nih.gov/research/umls/rxnorm",
+       "code": "10180",
+       "display": "sulfamethoxazole"
+      }
+     ],
+     "text": "sulfamethoxazole"
+    },
+    "patient": {
+     "reference": "Patient/MRN3694860228"
+    },
+    "reaction": [
+     {
+      "manifestation": [
+       {
+        "text": "angioedema"
+       }
+      ]
+     }
+    ],
+    "meta": {
+     "tag": [
+      {
+       "system": "http://medical-harness/tags",
+       "code": "synthetic-augmentation",
+       "display": "#2 allergy"
+      }
+     ]
+    }
+   },
+   "request": {
+    "method": "PUT",
+    "url": "AllergyIntolerance/synth-MRN3694860228-sulfamethoxazole"
+   }
+  },
+  {
+   "resource": {
+    "resourceType": "AllergyIntolerance",
+    "id": "synth-MRN8166025032-doxycycline",
+    "clinicalStatus": {
+     "coding": [
+      {
+       "system": "http://terminology.hl7.org/CodeSystem/allergyintolerance-clinical",
+       "code": "active"
+      }
+     ]
+    },
+    "verificationStatus": {
+     "coding": [
+      {
+       "system": "http://terminology.hl7.org/CodeSystem/allergyintolerance-verification",
+       "code": "confirmed"
+      }
+     ]
+    },
+    "type": "allergy",
+    "category": [
+     "medication"
+    ],
+    "criticality": "high",
+    "code": {
+     "coding": [
+      {
+       "system": "http://www.nlm.nih.gov/research/umls/rxnorm",
+       "code": "3640",
+       "display": "doxycycline"
+      }
+     ],
+     "text": "doxycycline"
+    },
+    "patient": {
+     "reference": "Patient/MRN8166025032"
+    },
+    "reaction": [
+     {
+      "manifestation": [
+       {
+        "text": "hives"
+       }
+      ]
+     }
+    ],
+    "meta": {
+     "tag": [
+      {
+       "system": "http://medical-harness/tags",
+       "code": "synthetic-augmentation",
+       "display": "#2 allergy"
+      }
+     ]
+    }
+   },
+   "request": {
+    "method": "PUT",
+    "url": "AllergyIntolerance/synth-MRN8166025032-doxycycline"
+   }
+  },
+  {
+   "resource": {
+    "resourceType": "AllergyIntolerance",
+    "id": "synth-MRN5386175109-levothyroxine",
+    "clinicalStatus": {
+     "coding": [
+      {
+       "system": "http://terminology.hl7.org/CodeSystem/allergyintolerance-clinical",
+       "code": "active"
+      }
+     ]
+    },
+    "verificationStatus": {
+     "coding": [
+      {
+       "system": "http://terminology.hl7.org/CodeSystem/allergyintolerance-verification",
+       "code": "confirmed"
+      }
+     ]
+    },
+    "type": "allergy",
+    "category": [
+     "medication"
+    ],
+    "criticality": "high",
+    "code": {
+     "coding": [
+      {
+       "system": "http://www.nlm.nih.gov/research/umls/rxnorm",
+       "code": "10582",
+       "display": "levothyroxine"
+      }
+     ],
+     "text": "levothyroxine"
+    },
+    "patient": {
+     "reference": "Patient/MRN5386175109"
+    },
+    "reaction": [
+     {
+      "manifestation": [
+       {
+        "text": "hives"
+       }
+      ]
+     }
+    ],
+    "meta": {
+     "tag": [
+      {
+       "system": "http://medical-harness/tags",
+       "code": "synthetic-augmentation",
+       "display": "#2 allergy"
+      }
+     ]
+    }
+   },
+   "request": {
+    "method": "PUT",
+    "url": "AllergyIntolerance/synth-MRN5386175109-levothyroxine"
+   }
+  },
+  {
+   "resource": {
+    "resourceType": "AllergyIntolerance",
+    "id": "synth-MRN2946625742-metformin",
+    "clinicalStatus": {
+     "coding": [
+      {
+       "system": "http://terminology.hl7.org/CodeSystem/allergyintolerance-clinical",
+       "code": "active"
+      }
+     ]
+    },
+    "verificationStatus": {
+     "coding": [
+      {
+       "system": "http://terminology.hl7.org/CodeSystem/allergyintolerance-verification",
+       "code": "confirmed"
+      }
+     ]
+    },
+    "type": "allergy",
+    "category": [
+     "medication"
+    ],
+    "criticality": "low",
+    "code": {
+     "coding": [
+      {
+       "system": "http://www.nlm.nih.gov/research/umls/rxnorm",
+       "code": "6809",
+       "display": "metformin"
+      }
+     ],
+     "text": "metformin"
+    },
+    "patient": {
+     "reference": "Patient/MRN2946625742"
+    },
+    "reaction": [
+     {
+      "manifestation": [
+       {
+        "text": "anaphylaxis"
+       }
+      ]
+     }
+    ],
+    "meta": {
+     "tag": [
+      {
+       "system": "http://medical-harness/tags",
+       "code": "synthetic-augmentation",
+       "display": "#2 allergy"
+      }
+     ]
+    }
+   },
+   "request": {
+    "method": "PUT",
+    "url": "AllergyIntolerance/synth-MRN2946625742-metformin"
+   }
+  },
+  {
+   "resource": {
+    "resourceType": "AllergyIntolerance",
+    "id": "synth-MRN1724700145-sertraline",
+    "clinicalStatus": {
+     "coding": [
+      {
+       "system": "http://terminology.hl7.org/CodeSystem/allergyintolerance-clinical",
+       "code": "active"
+      }
+     ]
+    },
+    "verificationStatus": {
+     "coding": [
+      {
+       "system": "http://terminology.hl7.org/CodeSystem/allergyintolerance-verification",
+       "code": "confirmed"
+      }
+     ]
+    },
+    "type": "allergy",
+    "category": [
+     "medication"
+    ],
+    "criticality": "high",
+    "code": {
+     "coding": [
+      {
+       "system": "http://www.nlm.nih.gov/research/umls/rxnorm",
+       "code": "36437",
+       "display": "sertraline"
+      }
+     ],
+     "text": "sertraline"
+    },
+    "patient": {
+     "reference": "Patient/MRN1724700145"
+    },
+    "reaction": [
+     {
+      "manifestation": [
+       {
+        "text": "anaphylaxis"
+       }
+      ]
+     }
+    ],
+    "meta": {
+     "tag": [
+      {
+       "system": "http://medical-harness/tags",
+       "code": "synthetic-augmentation",
+       "display": "#2 allergy"
+      }
+     ]
+    }
+   },
+   "request": {
+    "method": "PUT",
+    "url": "AllergyIntolerance/synth-MRN1724700145-sertraline"
+   }
+  },
+  {
+   "resource": {
+    "resourceType": "AllergyIntolerance",
+    "id": "synth-MRN4856660563-sildenafil",
+    "clinicalStatus": {
+     "coding": [
+      {
+       "system": "http://terminology.hl7.org/CodeSystem/allergyintolerance-clinical",
+       "code": "active"
+      }
+     ]
+    },
+    "verificationStatus": {
+     "coding": [
+      {
+       "system": "http://terminology.hl7.org/CodeSystem/allergyintolerance-verification",
+       "code": "confirmed"
+      }
+     ]
+    },
+    "type": "allergy",
+    "category": [
+     "medication"
+    ],
+    "criticality": "high",
+    "code": {
+     "coding": [
+      {
+       "system": "http://www.nlm.nih.gov/research/umls/rxnorm",
+       "code": "136411",
+       "display": "sildenafil"
+      }
+     ],
+     "text": "sildenafil"
+    },
+    "patient": {
+     "reference": "Patient/MRN4856660563"
+    },
+    "reaction": [
+     {
+      "manifestation": [
+       {
+        "text": "anaphylaxis"
+       }
+      ]
+     }
+    ],
+    "meta": {
+     "tag": [
+      {
+       "system": "http://medical-harness/tags",
+       "code": "synthetic-augmentation",
+       "display": "#2 allergy"
+      }
+     ]
+    }
+   },
+   "request": {
+    "method": "PUT",
+    "url": "AllergyIntolerance/synth-MRN4856660563-sildenafil"
+   }
+  },
+  {
+   "resource": {
+    "resourceType": "AllergyIntolerance",
+    "id": "synth-MRN7165315965-tamsulosin",
+    "clinicalStatus": {
+     "coding": [
+      {
+       "system": "http://terminology.hl7.org/CodeSystem/allergyintolerance-clinical",
+       "code": "active"
+      }
+     ]
+    },
+    "verificationStatus": {
+     "coding": [
+      {
+       "system": "http://terminology.hl7.org/CodeSystem/allergyintolerance-verification",
+       "code": "confirmed"
+      }
+     ]
+    },
+    "type": "allergy",
+    "category": [
+     "medication"
+    ],
+    "criticality": "high",
+    "code": {
+     "coding": [
+      {
+       "system": "http://www.nlm.nih.gov/research/umls/rxnorm",
+       "code": "77492",
+       "display": "tamsulosin"
+      }
+     ],
+     "text": "tamsulosin"
+    },
+    "patient": {
+     "reference": "Patient/MRN7165315965"
+    },
+    "reaction": [
+     {
+      "manifestation": [
+       {
+        "text": "angioedema"
+       }
+      ]
+     }
+    ],
+    "meta": {
+     "tag": [
+      {
+       "system": "http://medical-harness/tags",
+       "code": "synthetic-augmentation",
+       "display": "#2 allergy"
+      }
+     ]
+    }
+   },
+   "request": {
+    "method": "PUT",
+    "url": "AllergyIntolerance/synth-MRN7165315965-tamsulosin"
+   }
+  },
+  {
+   "resource": {
+    "resourceType": "AllergyIntolerance",
+    "id": "synth-MRN7483366056-methotrexate",
+    "clinicalStatus": {
+     "coding": [
+      {
+       "system": "http://terminology.hl7.org/CodeSystem/allergyintolerance-clinical",
+       "code": "active"
+      }
+     ]
+    },
+    "verificationStatus": {
+     "coding": [
+      {
+       "system": "http://terminology.hl7.org/CodeSystem/allergyintolerance-verification",
+       "code": "confirmed"
+      }
+     ]
+    },
+    "type": "allergy",
+    "category": [
+     "medication"
+    ],
+    "criticality": "high",
+    "code": {
+     "coding": [
+      {
+       "system": "http://www.nlm.nih.gov/research/umls/rxnorm",
+       "code": "6851",
+       "display": "methotrexate"
+      }
+     ],
+     "text": "methotrexate"
+    },
+    "patient": {
+     "reference": "Patient/MRN7483366056"
+    },
+    "reaction": [
+     {
+      "manifestation": [
+       {
+        "text": "hives"
+       }
+      ]
+     }
+    ],
+    "meta": {
+     "tag": [
+      {
+       "system": "http://medical-harness/tags",
+       "code": "synthetic-augmentation",
+       "display": "#2 allergy"
+      }
+     ]
+    }
+   },
+   "request": {
+    "method": "PUT",
+    "url": "AllergyIntolerance/synth-MRN7483366056-methotrexate"
+   }
+  },
+  {
+   "resource": {
+    "resourceType": "AllergyIntolerance",
+    "id": "synth-MRN8523280142-penicillin-v",
+    "clinicalStatus": {
+     "coding": [
+      {
+       "system": "http://terminology.hl7.org/CodeSystem/allergyintolerance-clinical",
+       "code": "active"
+      }
+     ]
+    },
+    "verificationStatus": {
+     "coding": [
+      {
+       "system": "http://terminology.hl7.org/CodeSystem/allergyintolerance-verification",
+       "code": "confirmed"
+      }
+     ]
+    },
+    "type": "allergy",
+    "category": [
+     "medication"
+    ],
+    "criticality": "high",
+    "code": {
+     "coding": [
+      {
+       "system": "http://www.nlm.nih.gov/research/umls/rxnorm",
+       "code": "7984",
+       "display": "penicillin V"
+      }
+     ],
+     "text": "penicillin V"
+    },
+    "patient": {
+     "reference": "Patient/MRN8523280142"
+    },
+    "reaction": [
+     {
+      "manifestation": [
+       {
+        "text": "nausea"
+       }
+      ]
+     }
+    ],
+    "meta": {
+     "tag": [
+      {
+       "system": "http://medical-harness/tags",
+       "code": "synthetic-augmentation",
+       "display": "#2 allergy"
+      }
+     ]
+    }
+   },
+   "request": {
+    "method": "PUT",
+    "url": "AllergyIntolerance/synth-MRN8523280142-penicillin-v"
+   }
+  },
+  {
+   "resource": {
+    "resourceType": "AllergyIntolerance",
+    "id": "synth-MRN5996775663-atorvastatin",
+    "clinicalStatus": {
+     "coding": [
+      {
+       "system": "http://terminology.hl7.org/CodeSystem/allergyintolerance-clinical",
+       "code": "active"
+      }
+     ]
+    },
+    "verificationStatus": {
+     "coding": [
+      {
+       "system": "http://terminology.hl7.org/CodeSystem/allergyintolerance-verification",
+       "code": "confirmed"
+      }
+     ]
+    },
+    "type": "allergy",
+    "category": [
+     "medication"
+    ],
+    "criticality": "high",
+    "code": {
+     "coding": [
+      {
+       "system": "http://www.nlm.nih.gov/research/umls/rxnorm",
+       "code": "83367",
+       "display": "atorvastatin"
+      }
+     ],
+     "text": "atorvastatin"
+    },
+    "patient": {
+     "reference": "Patient/MRN5996775663"
+    },
+    "reaction": [
+     {
+      "manifestation": [
+       {
+        "text": "anaphylaxis"
+       }
+      ]
+     }
+    ],
+    "meta": {
+     "tag": [
+      {
+       "system": "http://medical-harness/tags",
+       "code": "synthetic-augmentation",
+       "display": "#2 allergy"
+      }
+     ]
+    }
+   },
+   "request": {
+    "method": "PUT",
+    "url": "AllergyIntolerance/synth-MRN5996775663-atorvastatin"
+   }
+  },
+  {
+   "resource": {
+    "resourceType": "AllergyIntolerance",
+    "id": "synth-MRN5978766063-azithromycin",
+    "clinicalStatus": {
+     "coding": [
+      {
+       "system": "http://terminology.hl7.org/CodeSystem/allergyintolerance-clinical",
+       "code": "active"
+      }
+     ]
+    },
+    "verificationStatus": {
+     "coding": [
+      {
+       "system": "http://terminology.hl7.org/CodeSystem/allergyintolerance-verification",
+       "code": "confirmed"
+      }
+     ]
+    },
+    "type": "allergy",
+    "category": [
+     "medication"
+    ],
+    "criticality": "high",
+    "code": {
+     "coding": [
+      {
+       "system": "http://www.nlm.nih.gov/research/umls/rxnorm",
+       "code": "18631",
+       "display": "azithromycin"
+      }
+     ],
+     "text": "azithromycin"
+    },
+    "patient": {
+     "reference": "Patient/MRN5978766063"
+    },
+    "reaction": [
+     {
+      "manifestation": [
+       {
+        "text": "rash"
+       }
+      ]
+     }
+    ],
+    "meta": {
+     "tag": [
+      {
+       "system": "http://medical-harness/tags",
+       "code": "synthetic-augmentation",
+       "display": "#2 allergy"
+      }
+     ]
+    }
+   },
+   "request": {
+    "method": "PUT",
+    "url": "AllergyIntolerance/synth-MRN5978766063-azithromycin"
+   }
+  },
+  {
+   "resource": {
+    "resourceType": "AllergyIntolerance",
+    "id": "synth-MRN3615507143-aspirin",
+    "clinicalStatus": {
+     "coding": [
+      {
+       "system": "http://terminology.hl7.org/CodeSystem/allergyintolerance-clinical",
+       "code": "active"
+      }
+     ]
+    },
+    "verificationStatus": {
+     "coding": [
+      {
+       "system": "http://terminology.hl7.org/CodeSystem/allergyintolerance-verification",
+       "code": "confirmed"
+      }
+     ]
+    },
+    "type": "allergy",
+    "category": [
+     "medication"
+    ],
+    "criticality": "low",
+    "code": {
+     "coding": [
+      {
+       "system": "http://www.nlm.nih.gov/research/umls/rxnorm",
+       "code": "1191",
+       "display": "aspirin"
+      }
+     ],
+     "text": "aspirin"
+    },
+    "patient": {
+     "reference": "Patient/MRN3615507143"
+    },
+    "reaction": [
+     {
+      "manifestation": [
+       {
+        "text": "angioedema"
+       }
+      ]
+     }
+    ],
+    "meta": {
+     "tag": [
+      {
+       "system": "http://medical-harness/tags",
+       "code": "synthetic-augmentation",
+       "display": "#2 allergy"
+      }
+     ]
+    }
+   },
+   "request": {
+    "method": "PUT",
+    "url": "AllergyIntolerance/synth-MRN3615507143-aspirin"
+   }
+  },
+  {
+   "resource": {
+    "resourceType": "AllergyIntolerance",
+    "id": "synth-MRN8038596016-penicillin-v",
+    "clinicalStatus": {
+     "coding": [
+      {
+       "system": "http://terminology.hl7.org/CodeSystem/allergyintolerance-clinical",
+       "code": "active"
+      }
+     ]
+    },
+    "verificationStatus": {
+     "coding": [
+      {
+       "system": "http://terminology.hl7.org/CodeSystem/allergyintolerance-verification",
+       "code": "confirmed"
+      }
+     ]
+    },
+    "type": "allergy",
+    "category": [
+     "medication"
+    ],
+    "criticality": "high",
+    "code": {
+     "coding": [
+      {
+       "system": "http://www.nlm.nih.gov/research/umls/rxnorm",
+       "code": "7984",
+       "display": "penicillin V"
+      }
+     ],
+     "text": "penicillin V"
+    },
+    "patient": {
+     "reference": "Patient/MRN8038596016"
+    },
+    "reaction": [
+     {
+      "manifestation": [
+       {
+        "text": "nausea"
+       }
+      ]
+     }
+    ],
+    "meta": {
+     "tag": [
+      {
+       "system": "http://medical-harness/tags",
+       "code": "synthetic-augmentation",
+       "display": "#2 allergy"
+      }
+     ]
+    }
+   },
+   "request": {
+    "method": "PUT",
+    "url": "AllergyIntolerance/synth-MRN8038596016-penicillin-v"
+   }
+  },
+  {
+   "resource": {
+    "resourceType": "AllergyIntolerance",
+    "id": "synth-MRN6241752544-penicillin-v",
+    "clinicalStatus": {
+     "coding": [
+      {
+       "system": "http://terminology.hl7.org/CodeSystem/allergyintolerance-clinical",
+       "code": "active"
+      }
+     ]
+    },
+    "verificationStatus": {
+     "coding": [
+      {
+       "system": "http://terminology.hl7.org/CodeSystem/allergyintolerance-verification",
+       "code": "confirmed"
+      }
+     ]
+    },
+    "type": "allergy",
+    "category": [
+     "medication"
+    ],
+    "criticality": "high",
+    "code": {
+     "coding": [
+      {
+       "system": "http://www.nlm.nih.gov/research/umls/rxnorm",
+       "code": "7984",
+       "display": "penicillin V"
+      }
+     ],
+     "text": "penicillin V"
+    },
+    "patient": {
+     "reference": "Patient/MRN6241752544"
+    },
+    "reaction": [
+     {
+      "manifestation": [
+       {
+        "text": "hives"
+       }
+      ]
+     }
+    ],
+    "meta": {
+     "tag": [
+      {
+       "system": "http://medical-harness/tags",
+       "code": "synthetic-augmentation",
+       "display": "#2 allergy"
+      }
+     ]
+    }
+   },
+   "request": {
+    "method": "PUT",
+    "url": "AllergyIntolerance/synth-MRN6241752544-penicillin-v"
+   }
+  },
+  {
+   "resource": {
+    "resourceType": "AllergyIntolerance",
+    "id": "synth-MRN7497220934-doxycycline",
+    "clinicalStatus": {
+     "coding": [
+      {
+       "system": "http://terminology.hl7.org/CodeSystem/allergyintolerance-clinical",
+       "code": "active"
+      }
+     ]
+    },
+    "verificationStatus": {
+     "coding": [
+      {
+       "system": "http://terminology.hl7.org/CodeSystem/allergyintolerance-verification",
+       "code": "confirmed"
+      }
+     ]
+    },
+    "type": "allergy",
+    "category": [
+     "medication"
+    ],
+    "criticality": "high",
+    "code": {
+     "coding": [
+      {
+       "system": "http://www.nlm.nih.gov/research/umls/rxnorm",
+       "code": "3640",
+       "display": "doxycycline"
+      }
+     ],
+     "text": "doxycycline"
+    },
+    "patient": {
+     "reference": "Patient/MRN7497220934"
+    },
+    "reaction": [
+     {
+      "manifestation": [
+       {
+        "text": "angioedema"
+       }
+      ]
+     }
+    ],
+    "meta": {
+     "tag": [
+      {
+       "system": "http://medical-harness/tags",
+       "code": "synthetic-augmentation",
+       "display": "#2 allergy"
+      }
+     ]
+    }
+   },
+   "request": {
+    "method": "PUT",
+    "url": "AllergyIntolerance/synth-MRN7497220934-doxycycline"
+   }
+  },
+  {
+   "resource": {
+    "resourceType": "AllergyIntolerance",
+    "id": "synth-MRN2299051392-sertraline",
+    "clinicalStatus": {
+     "coding": [
+      {
+       "system": "http://terminology.hl7.org/CodeSystem/allergyintolerance-clinical",
+       "code": "active"
+      }
+     ]
+    },
+    "verificationStatus": {
+     "coding": [
+      {
+       "system": "http://terminology.hl7.org/CodeSystem/allergyintolerance-verification",
+       "code": "confirmed"
+      }
+     ]
+    },
+    "type": "allergy",
+    "category": [
+     "medication"
+    ],
+    "criticality": "high",
+    "code": {
+     "coding": [
+      {
+       "system": "http://www.nlm.nih.gov/research/umls/rxnorm",
+       "code": "36437",
+       "display": "sertraline"
+      }
+     ],
+     "text": "sertraline"
+    },
+    "patient": {
+     "reference": "Patient/MRN2299051392"
+    },
+    "reaction": [
+     {
+      "manifestation": [
+       {
+        "text": "nausea"
+       }
+      ]
+     }
+    ],
+    "meta": {
+     "tag": [
+      {
+       "system": "http://medical-harness/tags",
+       "code": "synthetic-augmentation",
+       "display": "#2 allergy"
+      }
+     ]
+    }
+   },
+   "request": {
+    "method": "PUT",
+    "url": "AllergyIntolerance/synth-MRN2299051392-sertraline"
+   }
+  },
+  {
+   "resource": {
+    "resourceType": "AllergyIntolerance",
+    "id": "synth-MRN1939042955-sulfamethoxazole",
+    "clinicalStatus": {
+     "coding": [
+      {
+       "system": "http://terminology.hl7.org/CodeSystem/allergyintolerance-clinical",
+       "code": "active"
+      }
+     ]
+    },
+    "verificationStatus": {
+     "coding": [
+      {
+       "system": "http://terminology.hl7.org/CodeSystem/allergyintolerance-verification",
+       "code": "confirmed"
+      }
+     ]
+    },
+    "type": "allergy",
+    "category": [
+     "medication"
+    ],
+    "criticality": "high",
+    "code": {
+     "coding": [
+      {
+       "system": "http://www.nlm.nih.gov/research/umls/rxnorm",
+       "code": "10180",
+       "display": "sulfamethoxazole"
+      }
+     ],
+     "text": "sulfamethoxazole"
+    },
+    "patient": {
+     "reference": "Patient/MRN1939042955"
+    },
+    "reaction": [
+     {
+      "manifestation": [
+       {
+        "text": "hives"
+       }
+      ]
+     }
+    ],
+    "meta": {
+     "tag": [
+      {
+       "system": "http://medical-harness/tags",
+       "code": "synthetic-augmentation",
+       "display": "#2 allergy"
+      }
+     ]
+    }
+   },
+   "request": {
+    "method": "PUT",
+    "url": "AllergyIntolerance/synth-MRN1939042955-sulfamethoxazole"
+   }
+  },
+  {
+   "resource": {
+    "resourceType": "AllergyIntolerance",
+    "id": "synth-MRN6488854841-atorvastatin",
+    "clinicalStatus": {
+     "coding": [
+      {
+       "system": "http://terminology.hl7.org/CodeSystem/allergyintolerance-clinical",
+       "code": "active"
+      }
+     ]
+    },
+    "verificationStatus": {
+     "coding": [
+      {
+       "system": "http://terminology.hl7.org/CodeSystem/allergyintolerance-verification",
+       "code": "confirmed"
+      }
+     ]
+    },
+    "type": "allergy",
+    "category": [
+     "medication"
+    ],
+    "criticality": "low",
+    "code": {
+     "coding": [
+      {
+       "system": "http://www.nlm.nih.gov/research/umls/rxnorm",
+       "code": "83367",
+       "display": "atorvastatin"
+      }
+     ],
+     "text": "atorvastatin"
+    },
+    "patient": {
+     "reference": "Patient/MRN6488854841"
+    },
+    "reaction": [
+     {
+      "manifestation": [
+       {
+        "text": "angioedema"
+       }
+      ]
+     }
+    ],
+    "meta": {
+     "tag": [
+      {
+       "system": "http://medical-harness/tags",
+       "code": "synthetic-augmentation",
+       "display": "#2 allergy"
+      }
+     ]
+    }
+   },
+   "request": {
+    "method": "PUT",
+    "url": "AllergyIntolerance/synth-MRN6488854841-atorvastatin"
+   }
+  },
+  {
+   "resource": {
+    "resourceType": "AllergyIntolerance",
+    "id": "synth-MRN1610637279-levothyroxine",
+    "clinicalStatus": {
+     "coding": [
+      {
+       "system": "http://terminology.hl7.org/CodeSystem/allergyintolerance-clinical",
+       "code": "active"
+      }
+     ]
+    },
+    "verificationStatus": {
+     "coding": [
+      {
+       "system": "http://terminology.hl7.org/CodeSystem/allergyintolerance-verification",
+       "code": "confirmed"
+      }
+     ]
+    },
+    "type": "allergy",
+    "category": [
+     "medication"
+    ],
+    "criticality": "high",
+    "code": {
+     "coding": [
+      {
+       "system": "http://www.nlm.nih.gov/research/umls/rxnorm",
+       "code": "10582",
+       "display": "levothyroxine"
+      }
+     ],
+     "text": "levothyroxine"
+    },
+    "patient": {
+     "reference": "Patient/MRN1610637279"
+    },
+    "reaction": [
+     {
+      "manifestation": [
+       {
+        "text": "anaphylaxis"
+       }
+      ]
+     }
+    ],
+    "meta": {
+     "tag": [
+      {
+       "system": "http://medical-harness/tags",
+       "code": "synthetic-augmentation",
+       "display": "#2 allergy"
+      }
+     ]
+    }
+   },
+   "request": {
+    "method": "PUT",
+    "url": "AllergyIntolerance/synth-MRN1610637279-levothyroxine"
+   }
+  },
+  {
+   "resource": {
+    "resourceType": "AllergyIntolerance",
+    "id": "synth-MRN5398432401-sertraline",
+    "clinicalStatus": {
+     "coding": [
+      {
+       "system": "http://terminology.hl7.org/CodeSystem/allergyintolerance-clinical",
+       "code": "active"
+      }
+     ]
+    },
+    "verificationStatus": {
+     "coding": [
+      {
+       "system": "http://terminology.hl7.org/CodeSystem/allergyintolerance-verification",
+       "code": "confirmed"
+      }
+     ]
+    },
+    "type": "allergy",
+    "category": [
+     "medication"
+    ],
+    "criticality": "high",
+    "code": {
+     "coding": [
+      {
+       "system": "http://www.nlm.nih.gov/research/umls/rxnorm",
+       "code": "36437",
+       "display": "sertraline"
+      }
+     ],
+     "text": "sertraline"
+    },
+    "patient": {
+     "reference": "Patient/MRN5398432401"
+    },
+    "reaction": [
+     {
+      "manifestation": [
+       {
+        "text": "rash"
+       }
+      ]
+     }
+    ],
+    "meta": {
+     "tag": [
+      {
+       "system": "http://medical-harness/tags",
+       "code": "synthetic-augmentation",
+       "display": "#2 allergy"
+      }
+     ]
+    }
+   },
+   "request": {
+    "method": "PUT",
+    "url": "AllergyIntolerance/synth-MRN5398432401-sertraline"
+   }
+  },
+  {
+   "resource": {
+    "resourceType": "AllergyIntolerance",
+    "id": "synth-MRN8235634313-sertraline",
+    "clinicalStatus": {
+     "coding": [
+      {
+       "system": "http://terminology.hl7.org/CodeSystem/allergyintolerance-clinical",
+       "code": "active"
+      }
+     ]
+    },
+    "verificationStatus": {
+     "coding": [
+      {
+       "system": "http://terminology.hl7.org/CodeSystem/allergyintolerance-verification",
+       "code": "confirmed"
+      }
+     ]
+    },
+    "type": "allergy",
+    "category": [
+     "medication"
+    ],
+    "criticality": "high",
+    "code": {
+     "coding": [
+      {
+       "system": "http://www.nlm.nih.gov/research/umls/rxnorm",
+       "code": "36437",
+       "display": "sertraline"
+      }
+     ],
+     "text": "sertraline"
+    },
+    "patient": {
+     "reference": "Patient/MRN8235634313"
+    },
+    "reaction": [
+     {
+      "manifestation": [
+       {
+        "text": "rash"
+       }
+      ]
+     }
+    ],
+    "meta": {
+     "tag": [
+      {
+       "system": "http://medical-harness/tags",
+       "code": "synthetic-augmentation",
+       "display": "#2 allergy"
+      }
+     ]
+    }
+   },
+   "request": {
+    "method": "PUT",
+    "url": "AllergyIntolerance/synth-MRN8235634313-sertraline"
+   }
+  },
+  {
+   "resource": {
+    "resourceType": "AllergyIntolerance",
+    "id": "synth-MRN7887950851-sertraline",
+    "clinicalStatus": {
+     "coding": [
+      {
+       "system": "http://terminology.hl7.org/CodeSystem/allergyintolerance-clinical",
+       "code": "active"
+      }
+     ]
+    },
+    "verificationStatus": {
+     "coding": [
+      {
+       "system": "http://terminology.hl7.org/CodeSystem/allergyintolerance-verification",
+       "code": "confirmed"
+      }
+     ]
+    },
+    "type": "allergy",
+    "category": [
+     "medication"
+    ],
+    "criticality": "low",
+    "code": {
+     "coding": [
+      {
+       "system": "http://www.nlm.nih.gov/research/umls/rxnorm",
+       "code": "36437",
+       "display": "sertraline"
+      }
+     ],
+     "text": "sertraline"
+    },
+    "patient": {
+     "reference": "Patient/MRN7887950851"
+    },
+    "reaction": [
+     {
+      "manifestation": [
+       {
+        "text": "anaphylaxis"
+       }
+      ]
+     }
+    ],
+    "meta": {
+     "tag": [
+      {
+       "system": "http://medical-harness/tags",
+       "code": "synthetic-augmentation",
+       "display": "#2 allergy"
+      }
+     ]
+    }
+   },
+   "request": {
+    "method": "PUT",
+    "url": "AllergyIntolerance/synth-MRN7887950851-sertraline"
+   }
+  },
+  {
+   "resource": {
+    "resourceType": "AllergyIntolerance",
+    "id": "synth-MRN1470939445-aspirin",
+    "clinicalStatus": {
+     "coding": [
+      {
+       "system": "http://terminology.hl7.org/CodeSystem/allergyintolerance-clinical",
+       "code": "active"
+      }
+     ]
+    },
+    "verificationStatus": {
+     "coding": [
+      {
+       "system": "http://terminology.hl7.org/CodeSystem/allergyintolerance-verification",
+       "code": "confirmed"
+      }
+     ]
+    },
+    "type": "allergy",
+    "category": [
+     "medication"
+    ],
+    "criticality": "low",
+    "code": {
+     "coding": [
+      {
+       "system": "http://www.nlm.nih.gov/research/umls/rxnorm",
+       "code": "1191",
+       "display": "aspirin"
+      }
+     ],
+     "text": "aspirin"
+    },
+    "patient": {
+     "reference": "Patient/MRN1470939445"
+    },
+    "reaction": [
+     {
+      "manifestation": [
+       {
+        "text": "hives"
+       }
+      ]
+     }
+    ],
+    "meta": {
+     "tag": [
+      {
+       "system": "http://medical-harness/tags",
+       "code": "synthetic-augmentation",
+       "display": "#2 allergy"
+      }
+     ]
+    }
+   },
+   "request": {
+    "method": "PUT",
+    "url": "AllergyIntolerance/synth-MRN1470939445-aspirin"
+   }
+  }
+ ]
+}

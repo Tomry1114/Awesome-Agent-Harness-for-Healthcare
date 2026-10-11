@@ -1,0 +1,25 @@
+# Agent models and the protocol each one is run with (read by runner/models.py).
+#
+# The protocol is a property of the model, not of the benchmark or of the harness: some models support native function
+# calling (function_calling: transport.chat_fc) and some only the <tool_call>/<answer> text protocol (text:
+# transport.chat_text). This is model configuration, like the model id. Every default (H0) workspace holds one agent
+# program per protocol (manifest agent_program / agent_program_text) and the shell runs the one for the model's protocol.
+# A model not listed here does not start.
+#
+# Keys are the model string put on the wire (MH_API_MODEL). A model that supports native function calling is
+# function_calling (result.json records provenance.fidelity.protocol_fidelity = native_function_calling); a model that
+# is driven only through the text protocol is text (recorded as canonicalized).
+models:
+  "gpt-5.5": function_calling
+  "gpt-5.4": function_calling
+  "claude-sonnet-5": function_calling
+  "gemini-3-flash-preview": function_calling
+  "[L]gemini-3-flash-preview": function_calling   # a gateway-prefixed wire id for gemini-3-flash-preview
+  "qwen3.7-plus": function_calling                # a gateway alias for qwen3.7-max (MH_MODEL_LABEL records the model behind it)
+  "qwen3.7-max": function_calling
+  "kimi-k2.7-code": function_calling
+  "MiniMax-M3": function_calling
+  "doubao-seed-2-1-pro-260628": function_calling
+  "deepseek-v4-flash": text
+  "deepseek-v4-flash-0731": text
+  "gemini-2.5-pro": text

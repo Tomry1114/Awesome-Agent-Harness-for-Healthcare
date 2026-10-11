@@ -1,0 +1,30 @@
+name: fhir_communication_create_message
+description: Create a FHIR Communication resource to send a secure message to a provider. Used for messages about referral requests in care coordination workflows.
+parameters:
+  type: object
+  properties:
+    patient_reference:
+      type: string
+      description: e.g. 'Patient/12345'
+    message_text:
+      type: string
+      description: Message content to send
+    recipient_reference:
+      type: string
+      description: e.g. 'Practitioner/67890'
+    based_on_service_request:
+      type: string
+    part_of_task:
+      type: string
+    in_response_to_communication:
+      type: string
+    encounter_reference:
+      type: string
+    sender_reference:
+      type: string
+    status:
+      type: string
+      default: in-progress
+  required:
+  - patient_reference
+  - message_text

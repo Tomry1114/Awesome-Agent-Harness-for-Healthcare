@@ -1,0 +1,28 @@
+name: fhir_observation_search_vitals
+description: Search FHIR Observation resources for vital signs. Retrieves vital sign data and flowsheet data across all encounters.
+parameters:
+  type: object
+  properties:
+    patient:
+      type: string
+      description: FHIR Patient id
+    subject:
+      type: string
+      description: FHIR subject reference
+    code:
+      type: string
+      description: LOINC code filter for vitals
+    date:
+      type: string
+      description: The date range for when the Observation was taken.
+    category:
+      type: string
+      description: e.g. 'vital-signs'
+    count:
+      type: integer
+      description: 'Page size (_count). Default: 50'
+      default: 50
+    page_limit:
+      type: integer
+      description: 'Max pages to follow via Bundle.link[rel=next]. Default: 6'
+      default: 6

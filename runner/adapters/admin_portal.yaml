@@ -1,0 +1,96 @@
+# ENVIRONMENT ADAPTER — administrative web portal (GUI). The operated object is the DISPLAYED one (read
+# from canonical_observation), not an action arg. Tool names live ONLY here.
+name: admin_portal
+substrate: interactive_gui
+clinical_modules: []        # no extra clinical rules beyond the substrate submission invariant
+
+manifest:
+  # repair_targets: writable-path equivalences so the effect verifier resolves a finding the judge
+  # mis-located. Paths target the harness state root {route, emr: full_state}. Field keywords match the
+  # finding target/required_change. This is the portal schema (adapter layer), not gold.
+  repair_targets:
+    - match: {field_keywords: [disposition]}
+      writable_paths: [emr.agentActions.selectedDisposition]
+      verification: {type: any_path_nonempty}
+    - match: {field_keywords: [note, document, reasoning, rationale, triage]}
+      writable_paths: [emr.agentActions.addedAuthNote, emr.agentActions.addedProgressNote, emr.agentActions.documentedAppealInEpic]
+      verification: {type: any_path_nonempty}
+    - match: {field_keywords: [appeal, dispute, submit]}
+      writable_paths: [emr.appealActions.submittedAppeal, emr.appealActions.submittedAttachmentNames]
+      verification: {type: any_path_nonempty}
+    - match: {field_keywords: [review, view, access, inspect, retrieve]}
+      writable_paths: [emr.agentActions.viewedDenialDetails, emr.agentActions.viewedRemittanceImage, emr.agentActions.accessedPayerPortalForDenial, emr.agentActions.viewedAuthLetter]
+      verification: {type: any_path_nonempty}
+  # recovery_effects: the COMMIT MARKER for the irreversible submit is submittedAppeal EXACT-TRUE only --
+  # NOT any appealActions path (an uploaded attachment with submittedAppeal=False is NOT a completed submit).
+  # disposition/note paths are the AUTHORITATIVE landed values the harness validates the agent commitment against.
+  recovery_effects:
+    # The COMMIT MARKER the native checkpoints actually score is documentedAppealInEpic (a decision-INDEPENDENT
+    # "record the decision in Epic" action, expected True for EVERY disposition). The harness completes ONLY this
+    # mechanical documentation of a decision the agent ALREADY made (selectedDisposition landed) -- it never
+    # chooses the disposition. full_state.agentActions == emr.agentActions (GuiEnvReal exposes full_state = emr).
+    - effect_type: decision_documentation
+      commit_marker: full_state.agentActions.documentedAppealInEpic
+      verification: exact_true
+      decision_path: full_state.agentActions.selectedDisposition
+      document_labels: [Document in Epic, Document Appeal in Epic, Document Decision, Document]
+  subject:
+    type: admin_case
+    binding: implicit_active   # the operated case is the one DISPLAYED on the page (no per-action arg)
+    from_goal_regex: '([A-Z]{2,5}-\d+)'                       # assigned case named in the task goal
+    # DECLARED projection paths into the RAW environment observation (dotted paths supported). The harness
+    # resolves the displayed case generically — NO portal field is hard-coded in the core. The full_state.*
+    # paths target the GUI env's state digest; tune to the live observation without any code change.
+    # TYPED projection: each entry yields an admin_case ref (regex extracts the id from a route). patient_id
+    # is intentionally NOT here — it is a different subject TYPE and must not be read as the case id.
+    from_observation:
+      - {path: full_state.fields.caseId, type: admin_case}
+      - {path: full_state.signals.caseId, type: admin_case}
+      - {path: full_state.fields.case_id, type: admin_case}
+      - {path: url, regex: '/(?:denied|denials|triage|cases)/([A-Za-z]{2,5}-\d+)', type: admin_case}
+      - case_identity         # plain fallback (used by unit tests / envs that expose it directly)
+  actions:
+    # FIRST MATCH WINS -- the element-discriminating rules must stay above the generic tool-name rules.
+    #
+    # On this substrate the tool name is not the semantics: every terminal commit in HAB is a `click` on a
+    # button. Classified by tool name alone it reads as a page look, and then the terminal lock, the harness
+    # action service's irreversible-commit rule and the reconcile write block never see it.
+    # The commit rule names the portal's commit buttons by their
+    # data-testid -- the control's identity, not its text: the button text is not the semantics either
+    # (the eligibility LOOKUP reads "Submit", the dashboard link "Submit Authorizations", the payer login is
+    # a type=submit button) -- AND requires the shell's one terminal-commit classifier (`classifier:
+    # hab_terminal_commit`, harness/semantics.py over adapters/hab/gui_control_model's label rules) to
+    # confirm it on the live page the click is issued on: the control is on the page, it is a button and
+    # not a link, and its label is a commit, not a hop into another system ('submit to payer/insurance/
+    # portal'). Every shell reader classifies through harness.semantics.canonicalize_on_page with that
+    # page's controls (the kernel's before_action, whose classification its after_action keeps; the harness
+    # action service; run.py's reconcile write block and read channels). Without the page the rule does not
+    # match. A login, search, lookup or navigation button is not named and stays inspect. The EMR's own
+    # "Record Appeal Submission" (also submit-appeal-button) carries no commit label and stays inspect.
+    # The observed-submission lock still recognises a commit from the composed submission obligation
+    # becoming satisfied (harness/obligation_gate.lock_inputs -> ledger.observed_submission_realized),
+    # independent of this classification.
+    - match: {tool: click, ref_pattern: '^\[?(send-fax-button|submit-auth-button|submit-appeal-button|submit-disposition-button)\]?$', classifier: hab_terminal_commit}
+      semantic_type: submit
+      effect: irreversible
+    # attaching a document to a draft is a real state change but undoable before submission
+    - match: {tool: click, ref_pattern: '^attach-doc-'}
+      semantic_type: update
+      effect: reversible
+    - match: {tool_any: [navigate, click, select]}
+      semantic_type: inspect
+      effect: none
+      produces_evidence: {source_class: interface, modality: administrative}
+    - match: {tool_any: [snapshot, scroll, back, done, download]}   # read-only navigation / page re-read
+      semantic_type: inspect
+      effect: none
+      produces_evidence: {source_class: interface, modality: administrative}
+    # `fill` is the form-entry action HAB agents emit; `type` is an alias name kept for agents/substrates
+    # that use it. Both are a single reversible field write.
+    - match: {tool_any: [fill, type, upload]}
+      semantic_type: update
+      effect: reversible
+    # kept for substrates/tasks that do expose a named submit tool; HAB itself has no such tool
+    - match: {tool_any: [submit, send_appeal, change_case_status, upload_final_document]}
+      semantic_type: submit
+      effect: irreversible

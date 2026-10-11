@@ -1,0 +1,51 @@
+name: fhir_appointment_create
+description: Create a FHIR Appointment to schedule a clinic visit or follow-up. Requires a preceding ServiceRequest or order reference via based_on when the appointment originates from a clinical order or referral.
+parameters:
+  type: object
+  properties:
+    patient_reference:
+      type: string
+      description: e.g. 'Patient/12345'
+    practitioner_reference:
+      type: string
+      description: e.g. 'Practitioner/67890'
+    description:
+      type: string
+      description: Human-readable description
+    start:
+      type: string
+      description: Start datetime ISO 8601
+    end:
+      type: string
+      description: End datetime ISO 8601
+    status:
+      type: string
+      default: booked
+    based_on:
+      type: string
+      description: Reference to the ServiceRequest that this appointment fulfills (e.g. 'ServiceRequest/123')
+    appointment_type_code:
+      type: string
+    appointment_type_display:
+      type: string
+    appointment_type_system:
+      type: string
+      default: http://terminology.hl7.org/CodeSystem/v2-0276
+    reason_code:
+      type: string
+    reason_display:
+      type: string
+    reason_system:
+      type: string
+    note_text:
+      type: string
+    service_type_code:
+      type: string
+    service_type_display:
+      type: string
+    minutes_duration:
+      type: integer
+  required:
+  - patient_reference
+  - practitioner_reference
+  - description

@@ -1,0 +1,33 @@
+# WORKSPACE POLICY MODULE (the shell composes it after the adapter's clinical modules, see
+# runner/harness/engines/policy.py). Chart review (complete-data-review before the deliverable). Reusable across ANY
+# structured-record environment. The data categories are PUBLIC clinical-workflow knowledge (standard chart
+# review: demographics / active problems / labs), scoped to this module. Each obligation is GOAL-CONDITIONAL
+# (`when: goal_mentions`) so a task only owes the categories its PUBLIC goal actually asks for — the compiler
+# evaluates `when` against the goal (an oracle-blind input; NEVER gold/checkpoints). "Required data not gathered
+# -> ACQUIRE" is expressed through the substrate-agnostic obligation machinery: an obligation is satisfied by a
+# CHECK (present OR absent) of its resource, and an unchecked one is acquired by required_context before the write.
+name: chart_review
+
+evidence_obligations:
+  - id: check_demographics
+    when: {goal_mentions: ["demographic", "date of birth", "patient profile", "comorbidity profile", "years old", "year-old"]}
+    satisfied_by: {source_class: record, resource: Patient}
+  - id: check_problem_list
+    when: {goal_mentions: ["problem list", "diagnos", "comorbid", "medical history", "conditions", "past medical"]}
+    satisfied_by: {source_class: record, resource: Condition}
+  - id: check_labs
+    when: {goal_mentions: ["lab", "laborator", "serolog", "serum", "blood work", "creatinin", "ferritin", "electrolyte", "values are now available"]}
+    satisfied_by: {source_class: record, resource: Observation}
+
+workflow_obligations:
+  - id: chart_reviewed
+    requires: [check_demographics, check_problem_list, check_labs]   # compiler prunes to the goal-active subset
+
+commit_points:
+  # before writing the deliverable (structured_record's only `update` = the scratchpad note), require the
+  # goal-relevant chart data to have been reviewed. Composed BEFORE the substrate's generic write invariant.
+  - match: {semantic_type: update}
+    risk: R1
+    requires: [chart_reviewed]
+    requires_rule: deliverable_requires_chart_review
+    postcondition: {type: state_transition}
