@@ -1,4 +1,4 @@
-![Medical Harness](assets/Gemini_Generated_Image_3sd7e23sd7e23sd7.png)
+![Medical Harness](assets/Gemini_Generated_Image_wwiqjxwwiqjxwwiq (1).jpeg)
 
 # Awesome Agent Harness for Healthcare
 
