@@ -33,6 +33,8 @@ def select_tasks(bench, args):
         dims = {c.get("dimension") for c in t.get("checkpoints", [])}
         subs = {c.get("subdimension") for c in t.get("checkpoints", [])}
         if args.task_id and t["task_id"] != args.task_id: continue
+        if getattr(args, "study_protocol", None) and (t.get("study_metadata") or {}).get("protocol") != args.study_protocol:
+            continue
         if args.has_dimension and args.has_dimension not in dims: continue
         if args.has_subdimension and args.has_subdimension not in subs: continue
         if args.governance_only and "Clinical Conduct Boundaries" not in dims: continue
@@ -96,7 +98,8 @@ def resume_plan(bench, tids, tasks_by_id, agent, workspace, binding, max_steps_o
             _path, ident = R.resolve_workspace(bench, tasks_by_id.get(tid) or {}, workspace)
         except W.WorkspaceError as e:
             raise SystemExit("REFUSING: %s" % e)
-        key = R.resume_key(tid, (ident or {}).get("digest"), binding, agent, ms, execution_mode=execution_mode)
+        key = R.resume_key(tid, (ident or {}).get("digest"), binding, agent, ms,
+                           task=tasks_by_id.get(tid), execution_mode=execution_mode)
         plan[tid] = (ms, key)
         stored = stored_result(agent_out, tid)
         if stored is not None:
@@ -304,6 +307,8 @@ def main():
     ap.add_argument("--fhir-base", default=None)
     ap.add_argument("--reset-mode", default="none", choices=["none", "restore_pristine", "per_task"])
     ap.add_argument("--task-id", default=None)
+    ap.add_argument("--study-protocol", default=None,
+                    help="filter prepared study tasks by protocol, such as free_turn")
     ap.add_argument("--offset", type=int, default=0)   # shard: skip first OFFSET tasks
     ap.add_argument("--task-ids-file", default=None)   # run EXACTLY these task_ids (one per line)
     ap.add_argument("--has-dimension", default=None)
@@ -330,11 +335,12 @@ def main():
     #                     + i, its own H2 copy), restored to pristine before every task. The comparison with runs made
     #                     serially: those restore once per batch and a task reads what earlier tasks wrote; here
     #                     every task starts pristine. Each result records its slot (run_config.fhir_slot).
-    PARALLEL_SAFE = ("MedCTA", "HealthAdminBench", "PhysicianBench")
+    PARALLEL_SAFE = ("MedCTA", "HealthAdminBench", "PhysicianBench", "MedRBench", "MeissaEval")
 
     # Default per-bench step caps (upstream values). HealthAdminBench tasks take their budget from
     # _hab_task_max_steps below; its entry here is upstream's generic limits.max_steps default.
-    NATIVE_MAX_STEPS = {"PhysicianBench": 100, "MedCTA": 10, "HealthAdminBench": 100}
+    NATIVE_MAX_STEPS = {"PhysicianBench": 100, "MedCTA": 10, "HealthAdminBench": 100,
+                        "MedCUABench": 30}
 
     def _hab_task_max_steps(task_id):
         """HAB step budget is PER TASK, not flat. Ported from the vendored upstream

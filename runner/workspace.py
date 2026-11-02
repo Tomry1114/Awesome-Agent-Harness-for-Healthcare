@@ -34,6 +34,10 @@ H0 = {"fhir": os.path.join(REPO, "workspaces", "pb", "h0"),
       "gui": os.path.join(REPO, "workspaces", "hab", "h0"),
       "tool_sandbox": os.path.join(REPO, "workspaces", "medcta", "h0")}
 
+BENCH_H0 = {name: os.path.join(REPO, "workspaces", key, "h0")
+            for name, key in (("MedRBench", "medr"), ("MeissaEval", "meissa_eval"),
+                              ("MeissaSFT", "meissa"), ("MedCUABench", "medcua"))}
+
 
 # The model protocols an agent program is written for. A workspace names one program (and its system prompt) per
 # protocol: `agent_program` / `system_prompt` for function calling, `agent_program_text` / `system_prompt_text` for

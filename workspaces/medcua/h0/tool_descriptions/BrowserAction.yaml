@@ -1,0 +1,8 @@
+name: BrowserAction
+description: Execute one native screenshot-based coordinate or keyboard action.
+parameters:
+  type: object
+  properties:
+    action: {type: string}
+  required: [action]
+  additionalProperties: false

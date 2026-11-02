@@ -1,0 +1,20 @@
+name: study_case
+substrate: perceptual
+clinical_modules: [study_grounding]
+manifest:
+  subject:
+    type: case
+    binding: implicit_active
+    id_context_keys: [case_id]
+  actions:
+    - match: {tool_any: [ReadCase, RequestTest, RequestPhysicalExam, RequestInformation]}
+      semantic_type: read
+      effect: none
+      produces_evidence: {source_class: record, modality: text}
+    - match: {tool_any: [ReadImage, ZoomInSubfigure, BioMedParseTextSeg, SegmentRegionAroundPoint]}
+      semantic_type: inspect
+      effect: none
+      produces_evidence: {source_class: perception, modality: image}
+    - match: {type: final}
+      semantic_type: answer
+      effect: irreversible

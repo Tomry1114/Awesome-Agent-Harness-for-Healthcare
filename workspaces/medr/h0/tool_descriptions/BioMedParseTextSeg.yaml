@@ -1,0 +1,14 @@
+name: BioMedParseTextSeg
+description: Retrieve a recorded segmentation for exactly this image and request;
+  no live model.
+provenance: converted
+parameters:
+  type: object
+  properties:
+    image: &id001
+      type: string
+    param: *id001
+  required:
+  - image
+  - param
+  additionalProperties: false

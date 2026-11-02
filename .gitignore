@@ -15,3 +15,19 @@ __pycache__/
 .keys/
 *.key
 benchmark_dataprocess/PhysicianBench/h2data*/
+
+# user-study upstream sources, generated tasks, runtime assets and reviews
+/user_study/MedR-Bench
+/user_study/MedCUA-BenchMark
+/user_study/Meissa-SFT
+/user_study/Meissa-Evaluation/images/
+/user_study/Meissa-Evaluation/source/data/
+/user_study/Meissa-Evaluation/*.jsonl
+/user_study/Meissa-Evaluation/*.json
+/user_study/runtime/
+/user_study/reviews/
+/user_study/seven_dim/rubric_lock.json
+/benchmark_dataprocess/MedRBench/
+/benchmark_dataprocess/MeissaEval/
+/benchmark_dataprocess/MedCUABench/
+/benchmark_dataprocess/MeissaSFT/

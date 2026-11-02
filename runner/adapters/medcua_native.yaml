@@ -1,0 +1,12 @@
+name: medcua_native
+substrate: interactive_gui
+clinical_modules: []
+manifest:
+  actions:
+    - match: {tool: BrowserAction}
+      semantic_type: other
+      effect: none  # Coarse pixel actions have no inferred clinical commit semantics.
+      produces_evidence: {source_class: interface, modality: image}
+    - match: {type: final}
+      semantic_type: answer
+      effect: none

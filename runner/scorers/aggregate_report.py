@@ -157,6 +157,7 @@ def _remap(results, bench):
 
 #: checkpoints we inject that no benchmark defines -- never part of a native rate
 NON_NATIVE_CHECKPOINT_IDS = ("cp_admin_compliance",)
+STUDY_BENCHMARKS = frozenset({"MedRBench", "MeissaSFT", "MeissaEval"})
 #: evaluator kinds whose verdict comes from a model judge
 JUDGE_EVALUATOR_KINDS = ("gateway_rubric_text", "gacc_judge", "verification_judge", "governance_4rule",
                          "multimodal_judge")
@@ -201,6 +202,12 @@ def native_checkpoints(result, bench):
     cp_admin_compliance is never native."""
     cps = [c for c in ((result or {}).get("checkpoints") or [])
            if isinstance(c, dict) and c.get("id") not in NON_NATIVE_CHECKPOINT_IDS]
+    if bench in ("MedRBench", "MeissaEval"):
+        return [c for c in cps if c.get("evaluator_kind") == "study_gt_judge"]
+    if bench == "MeissaSFT":
+        return [c for c in cps if c.get("evaluator_kind") == "study_human_review"]
+    if bench == "MedCUABench":
+        return [c for c in cps if c.get("evaluator_kind") == "medcua_native_checker"]
     if bench == "HealthAdminBench":
         return [c for c in cps if (c.get("evaluator_kind") or c.get("evaluator_type"))
                 in ("deterministic", "gateway_rubric_text", "llm_judge")]
@@ -274,6 +281,22 @@ def native_task_outcome_detail(result, bench):
                            "capability_excluded": "the environment lacks a capability the task needs"}[er],
                 "n_outcome_checkpoints": 0, "n_judge_errors": 0}
     cps = [c for c in (r.get("checkpoints") or []) if isinstance(c, dict)]
+    if bench in STUDY_BENCHMARKS:
+        if ((r.get("study_review") or {}).get("answer") or "").strip() == "API_BRAIN_ERROR":
+            return {"outcome": None, "native_strict": None, "outcome_status": "evaluation_error",
+                    "reason": "agent_gateway_failure", "n_outcome_checkpoints": 0, "n_judge_errors": 0}
+        native = native_checkpoints(r, bench)
+        if bench == "MeissaSFT" and (not native or any(c.get("skip_reason") == "human_review_pending" for c in native)):
+            return {"outcome": None, "native_strict": None, "outcome_status": "human_review_pending",
+                    "reason": "Expert outcome review has not been completed; reference agreement is only a proxy.",
+                    "n_outcome_checkpoints": len(native), "n_judge_errors": 0}
+        if not native:
+            return {"outcome": None, "native_strict": None, "outcome_status": "no_native_signal",
+                    "reason": None, "n_outcome_checkpoints": 0, "n_judge_errors": 0}
+        outcome, strict, status, reason = _decide(native)
+        return {"outcome": outcome, "native_strict": strict if outcome is not None else None,
+                "outcome_status": status, "reason": reason, "n_outcome_checkpoints": len(native),
+                "n_judge_errors": sum(is_judge_error(c) for c in native)}
     if bench == "MedCTA":
         # an errored GAcc checkpoint stored without evaluator_kind has only its type
         gacc = [c for c in cps if c.get("evaluator_kind") == "gacc_judge"
@@ -329,6 +352,9 @@ def native_task_score(result, bench):
     d = native_task_outcome_detail(result, bench)
     if d["outcome"] is None:
         return None
+    if bench in STUDY_BENCHMARKS:
+        values = [c["score"] for c in native_checkpoints(result, bench) if is_score_eligible(c)]
+        return sum(values) / len(values) if values else None
     cps = [c for c in ((result or {}).get("checkpoints") or []) if isinstance(c, dict)]
     if bench == "MedCTA":
         gs = [c.get("score") for c in cps if c.get("evaluator_kind") == "gacc_judge"
@@ -1049,7 +1075,8 @@ def _outcome_metric(results, bench=None):
     npass = ntot = 0
     for r in results:
         for c in (r.get("checkpoints") or []):
-            if c.get("dimension") == "Outcome" and c.get("checkpoint_status") in ("passed", "failed"):
+            if (c.get("dimension") == "Outcome" and c.get("checkpoint_status") in ("passed", "failed")
+                    and (bench not in STUDY_BENCHMARKS or c in native_checkpoints(r, bench))):
                 ntot += 1; npass += 1 if c.get("checkpoint_status") == "passed" else 0
     gacc = [c.get("score") for r in results for c in (r.get("checkpoints") or [])
             if c.get("evaluator_kind") == "gacc_judge" and isinstance(c.get("score"), (int, float))]
@@ -1071,14 +1098,23 @@ def _outcome_metric(results, bench=None):
         "native_task_universe": n, "native_evaluation_coverage": _eval_cov,
         "outcome_status_counts": dict(collections.Counter(native_task_outcome_detail(r, bench)["outcome_status"]
                                                           for r in results)),
-        "note": ("PB/HAB: ALL declared reportable Outcome-dimension checkpoints passed (terminal); "
-                 "MedCTA: mean GAcc>=0.5. NOT r['success'] (harness gate). Tasks with an unresolved/missing "
+        "note": ("PB/HAB: native checkpoints; MedR/MeissaEval: GT-grounded Judge; "
+                 "MedCUA: official completion and reward; MedCTA: mean GAcc>=0.5. "
+                 "NOT r['success'] (harness gate). Tasks with an unresolved/missing "
                  "Outcome are excluded from the denominator -> see native_evaluation_coverage.")}
     # harness gate success kept SEPARATE (never merged into Outcome).
     _harness_ok = sum(1 for r in results if r.get("success"))
     _harness_block = {"harness_gate_success": round(_harness_ok / n, 3) if n else None,
                       "overall_success_tasks": "%d/%d" % (_harness_ok, n),
                       "note": "harness gate (all-checkpoints-pass), NOT the source Outcome; reported separately"}
+    if bench in STUDY_BENCHMARKS:
+        metric = "gt_judged_task_success" if bench in ("MedRBench", "MeissaEval") else "expert_reviewed_task_success"
+        return {"score": round(_native_ok / _native_n, 3) if _native_n else None,
+                "metric": metric, "n_tasks": _native_n, "native_task_universe": n,
+                "native_evaluation_coverage": _eval_cov, "native_task_success": _native_block,
+                "harness_gate": _harness_block,
+                "outcome_diagnostics": {"checkpoint_pass_rate": round(npass / ntot, 3) if ntot else None,
+                                        "n_outcome_checkpoints": ntot}}
     # HEADLINE Outcome = dataset NATIVE task accuracy (did the agent complete the dataset task), NOT the
     # per-Outcome-checkpoint pass rate and NOT the harness gate. The checkpoint pass rate is a DIAGNOSTIC.
     if _native_n:
@@ -1201,7 +1237,23 @@ def build(agent_dir, bench, task_ids=None):
                    "and are NEVER listed as strict). Strictness is read from the FINAL harness_seven blocks, "
                    "NOT the legacy checkpoint_diagnostics. Check per-dim evidence_tier / zero_variance / "
                    "informativeness before averaging. Never report '7/7' as strict.")}
+    study_extensions = {}
+    if bench in STUDY_BENCHMARKS or bench == "MedCUABench":
+        from process_evaluation import aggregate as process_aggregate
+        from seven_profile import aggregate as seven_aggregate
+        profile = seven_aggregate(agent_dir, bench, task_ids)
+        study_extensions = {
+            "process_evaluation": process_aggregate(agent_dir, bench, task_ids),
+            "unified_seven_profile": profile,
+            "formal_comparison": {
+                "n_admitted": profile["n_admitted"], "n_total": len(results),
+                "dimensions": profile["formal_dimensions"],
+                "outcome": _outcome_metric([r for r in results if r.get("task_id") in {
+                    item["task_id"] for item in profile["tasks"]
+                    if item["admission"]["formal_analysis_eligible"]}], bench),
+                "note": "Formal statistics include only complete frozen seven-dimensional assessments."}}
     return {
+        **study_extensions,
         "source": agent_dir,
         "bench": bench,
         "n_tasks": len(results),
@@ -1637,6 +1689,10 @@ def compare_models(agent_dir_a, agent_dir_b, bench, label_a=None, label_b=None, 
 
 def _guess_bench(agent_dir, results):
     ids = " ".join(os.path.basename(os.path.dirname(p)) for p in glob.glob(os.path.join(agent_dir, "*", "result.json")))
+    for prefix, bench in (("MEDR-", "MedRBench"), ("MEDCUA-", "MedCUABench"),
+                          ("MEISSAEVAL-", "MeissaEval"), ("MEISSA-", "MeissaSFT")):
+        if prefix in ids:
+            return bench
     if "PB-" in ids:
         return "PhysicianBench"
     if "MCTA-" in ids or "MedCTA" in ids:

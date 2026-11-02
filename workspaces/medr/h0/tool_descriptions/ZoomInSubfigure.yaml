@@ -1,0 +1,13 @@
+name: ZoomInSubfigure
+description: "Crop an available image. param is [x1,y1,x2,y2] in 0\u20131000 coordinates."
+provenance: converted
+parameters:
+  type: object
+  properties:
+    image: &id001
+      type: string
+    param: *id001
+  required:
+  - image
+  - param
+  additionalProperties: false

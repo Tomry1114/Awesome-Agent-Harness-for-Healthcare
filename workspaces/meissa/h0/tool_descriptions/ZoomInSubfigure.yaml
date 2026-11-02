@@ -1,0 +1,20 @@
+name: ZoomInSubfigure
+description: Crop a rectangle. param must be a JSON-encoded string "[x1,y1,x2,y2]",
+  e.g. "[250,250,750,750]", in 0–1000 coordinates; x1<x2 and y1<y2. Do not use point
+  syntax "x=500 y=500" (SAM2 only). Live mode adds 10% padding and returns JPEG; replay
+  returns PNG.
+provenance: converted
+parameters:
+  type: object
+  properties:
+    image:
+      type: string
+    param:
+      type: string
+      description: 'JSON string of four bbox numbers in [0,1000], ordered x1,y1,x2,y2.
+        Example: "[250,250,750,750]". A point string is invalid.'
+      pattern: ^\s*\[\s*-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?\s*,\s*-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?\s*,\s*-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?\s*,\s*-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?\s*\]\s*$
+  required:
+  - image
+  - param
+  additionalProperties: false

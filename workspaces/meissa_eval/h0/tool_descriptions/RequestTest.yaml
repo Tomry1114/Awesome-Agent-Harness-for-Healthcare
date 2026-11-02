@@ -1,0 +1,11 @@
+name: RequestTest
+description: Retrieve a recorded test result. Unrecorded results are unavailable.
+provenance: converted
+parameters:
+  type: object
+  properties:
+    test:
+      type: string
+  required:
+  - test
+  additionalProperties: false

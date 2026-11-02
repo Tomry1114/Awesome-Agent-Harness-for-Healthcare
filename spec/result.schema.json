@@ -25,6 +25,7 @@
         "proxy_partial",
         "proxy_only",
         "not_evaluated",
+        "infrastructure_error",
         "error"
       ],
       "description": "complete=all strict evaluated; partial=some skipped; proxy_partial=strict+proxy; proxy_only=only proxy; not_evaluated=nothing; error=an error checkpoint"

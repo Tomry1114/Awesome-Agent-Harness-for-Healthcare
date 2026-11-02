@@ -653,6 +653,8 @@ def _expected_subject(task, base_policy, plugin=None):
             _rv = None
         if isinstance(_rv, dict) and _rv.get("id"):
             return {"type": _rv.get("type") or "Subject", "id": str(_rv["id"])}
+        if isinstance(_rv, dict) and "id" in _rv and _rv["id"] is None:
+            return {"type": None, "id": None, "selection_applicable": False}
     # 4. plugin/base default
     pes = (base_policy or {}).get("expected_subject")
     if isinstance(pes, dict) and pes.get("id"):

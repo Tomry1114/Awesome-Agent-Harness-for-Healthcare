@@ -1,0 +1,33 @@
+benchmark: MedRBench
+env_type: study_case
+agent_program: agent.py
+system_prompt: system_prompt.md
+agent_program_text: agent_text.py
+system_prompt_text: system_prompt_text.md
+tool_descriptions: tool_descriptions
+middleware:
+- middleware/answer_candidate.py:AnswerCandidate
+kernel_middleware:
+- middleware/answer_repair.py:AnswerRepair
+- middleware/goal_alignment.py:GoalAlignment
+semantic_budget:
+  pools:
+    reserve:
+      share: 0.5
+      min: 1
+      max: 5
+    general:
+      rest: true
+  draws:
+    final_verification:
+    - reserve
+    - general
+    goal_spec:
+    - general
+    kernel_middleware:
+    - general
+    middleware:
+    - general
+  rounds:
+    acquire: 2
+    revise: 2

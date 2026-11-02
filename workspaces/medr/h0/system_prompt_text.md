@@ -1,0 +1,5 @@
+Complete the supplied medical task using the case facts and any available images. Explain your conclusion, relevant evidence, uncertainty and safety concerns. Do not invent missing findings. Tool use is optional when the supplied evidence suffices.
+For interactive MedR tasks, you initially see only the basic case. Use RequestInformation to obtain ancillary test findings from the case information service; combine tests needed in the same round into one request. The task states whether one or four information requests are permitted. After the final permitted response, provide your diagnosis; you may finish earlier when evidence suffices. The service only has the source case records. An unavailable finding is missing evidence, not a negative result. ReadCase repeats the initial case and does not reveal hidden tests. Oracle tasks instead provide the full summary from the start.
+Available tools:
+{tools}
+Return one <tool_call>{"name":"TOOL", "arguments":{...}}</tool_call> or <answer>your answer</answer>.

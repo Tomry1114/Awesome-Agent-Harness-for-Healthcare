@@ -1,0 +1,11 @@
+name: RequestPhysicalExam
+description: Retrieve a recorded examination. Unrecorded findings are unavailable.
+provenance: converted
+parameters:
+  type: object
+  properties:
+    exam:
+      type: string
+  required:
+  - exam
+  additionalProperties: false

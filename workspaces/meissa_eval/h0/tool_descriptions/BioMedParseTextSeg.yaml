@@ -1,0 +1,15 @@
+name: BioMedParseTextSeg
+description: 'Segment an available image using the backend identified in the initial
+  observation: a live worker, or an exact-request recorded observation in replay mode.
+  Missing results are unavailable.'
+provenance: converted
+parameters:
+  type: object
+  properties:
+    image: &id001
+      type: string
+    param: *id001
+  required:
+  - image
+  - param
+  additionalProperties: false

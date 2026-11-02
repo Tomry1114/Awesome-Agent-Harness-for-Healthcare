@@ -1,0 +1,14 @@
+name: RequestInformation
+description: Request additional diagnostic information from the MedR case service.
+  Group all tests needed this round in one request. Only source case findings are
+  available.
+provenance: converted
+parameters:
+  type: object
+  properties:
+    request:
+      type: string
+      minLength: 1
+  required:
+  - request
+  additionalProperties: false

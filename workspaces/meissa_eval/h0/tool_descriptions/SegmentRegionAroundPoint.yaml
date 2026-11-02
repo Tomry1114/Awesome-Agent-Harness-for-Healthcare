@@ -1,0 +1,17 @@
+name: SegmentRegionAroundPoint
+description: "Segment an available image using the backend identified in the initial\
+  \ observation: a live worker, or an exact-request recorded observation in replay\
+  \ mode. Missing results are unavailable. For a live SAM2 worker, param must be a\
+  \ string such as x=500 y=500 in 0\u20131000 image coordinates; JSON coordinate arrays\
+  \ are not accepted."
+provenance: converted
+parameters:
+  type: object
+  properties:
+    image: &id001
+      type: string
+    param: *id001
+  required:
+  - image
+  - param
+  additionalProperties: false

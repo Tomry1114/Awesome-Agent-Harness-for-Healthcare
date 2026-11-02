@@ -1,0 +1,72 @@
+{
+  "repo": "flaviagiammarino/path-vqa",
+  "kind": "dataset",
+  "revision": "1685832883334b5bb5beaf4e4b333fdeecaa4ad9",
+  "files": [
+    {
+      "path": "data/test-00000-of-00003-e9adadb4799f44d3.parquet",
+      "sha256": "533175be08e87b9ccf2fc06e2f82e58bb2e9bf2299a4a138cf5311f1d26ac157",
+      "size": 41249416
+    },
+    {
+      "path": "data/test-00001-of-00003-7ea98873fc919813.parquet",
+      "sha256": "84bde926245c4b136de6ef48b197a0f3f177b3fbcb03b7f3cbfcfcb212f20c50",
+      "size": 45340847
+    },
+    {
+      "path": "data/test-00002-of-00003-1628308435019820.parquet",
+      "sha256": "ae676f41a7ddfc85be8503a731c719e1608da37ddc981de42a10dd2d55a8ee87",
+      "size": 69806564
+    },
+    {
+      "path": "data/train-00000-of-00007-f2d0e9ef9f022d38.parquet",
+      "sha256": "fa75b76f6498a22223f2fe081529cb835042047259519e509f46c91d49731c1b",
+      "size": 42779735
+    },
+    {
+      "path": "data/train-00001-of-00007-47d8e0220bf6c933.parquet",
+      "sha256": "5c6ed7602cc83a5a992e7da699b2b269b873779515cd84d35ee58e104858221d",
+      "size": 81047201
+    },
+    {
+      "path": "data/train-00002-of-00007-7fb5037c4c5da7be.parquet",
+      "sha256": "ceda7a0f84de7271821ce62a05106f2655990e8737557a623426030e78f98acc",
+      "size": 104271162
+    },
+    {
+      "path": "data/train-00003-of-00007-74b9b7b81cc55f90.parquet",
+      "sha256": "d252ad1ad205df77a72b64c99f34e30f1992c5a3f0212ec8c738ad9a4701467e",
+      "size": 89988001
+    },
+    {
+      "path": "data/train-00004-of-00007-77eea90af4a55dce.parquet",
+      "sha256": "900989f212e1efb3f0c93f48307d547fb01caa19c8a8129028de53cafdff31f3",
+      "size": 46128500
+    },
+    {
+      "path": "data/train-00005-of-00007-5332ec423be520bd.parquet",
+      "sha256": "72c19236d378815270cb0fd55d8a1a9be74a3a032048e8090f563662265f30b4",
+      "size": 55813048
+    },
+    {
+      "path": "data/train-00006-of-00007-637a58c700b604af.parquet",
+      "sha256": "3e171b2cbc3b6bc07152f59e41e7a05e2d43fd2949e6c92bddacbeecdd75127b",
+      "size": 57264408
+    },
+    {
+      "path": "data/validation-00000-of-00003-90a5518d26493b67.parquet",
+      "sha256": "6c66b6ba7c330ae7b6919a8b9445087786f3640d90fdec503c445ddc86dfd907",
+      "size": 41316863
+    },
+    {
+      "path": "data/validation-00001-of-00003-cbfe947a3418595c.parquet",
+      "sha256": "55b197f29ce6f8f003b416558068e5ae4a051a11554263fa4c76003686c9126e",
+      "size": 45717902
+    },
+    {
+      "path": "data/validation-00002-of-00003-9ec816895bd3bc20.parquet",
+      "sha256": "02048acb3b8e159a6881108225f82cf474fc9d252fa0ded9b4f3f0f4e3fce19d",
+      "size": 64691305
+    }
+  ]
+}

@@ -96,6 +96,22 @@ def build_kernel(task, env_type=None, observed=None, *, workspace,
     return kernel
 
 
+def build_process_judge():
+    """Post-run multimodal seven-dimension assessment using the configured Harness judge route."""
+    import judges
+    import gateway
+    spec = judges.spec('process_profile')
+
+    def judge(messages, schema=None):
+        extra = {'temperature': 0}
+        if schema is not None:
+            extra['response_format'] = {'type': 'json_schema', 'json_schema': {
+                'name': 'medical_seven_process', 'strict': True, 'schema': schema}}
+        return gateway.chat(messages, model=spec['model'], judge=True,
+                            max_tokens=spec['max_tokens'], extra=extra)
+    return judge, spec
+
+
 def _build_judge():
     """The harness's semantic judge, bound from configuration (runner/judges.py role `harness`:
     MH_HARNESS_JUDGE_MODEL, MH_HARNESS_JUDGE_MAX_TOKENS). Routed through the gateway as a JUDGE call

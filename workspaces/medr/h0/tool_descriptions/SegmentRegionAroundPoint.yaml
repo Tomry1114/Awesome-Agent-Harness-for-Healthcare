@@ -1,0 +1,13 @@
+name: SegmentRegionAroundPoint
+description: Retrieve a recorded point segmentation for exactly this image and request.
+provenance: converted
+parameters:
+  type: object
+  properties:
+    image: &id001
+      type: string
+    param: *id001
+  required:
+  - image
+  - param
+  additionalProperties: false

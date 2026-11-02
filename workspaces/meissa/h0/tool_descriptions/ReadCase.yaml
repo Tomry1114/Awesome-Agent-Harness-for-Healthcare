@@ -1,0 +1,8 @@
+name: ReadCase
+description: Read the supplied case facts; this does not reveal a reference answer.
+provenance: converted
+parameters:
+  type: object
+  properties: {}
+  required: []
+  additionalProperties: false

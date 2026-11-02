@@ -923,8 +923,8 @@ def test_plugins_extracted_into_package_not_core():
     import inspect, importlib, substrate as sub
     # the package exists, importing substrate alone registered all three
     plugins_pkg = importlib.import_module("plugins")
-    assert sub.list_plugins() == ["HealthAdminBench", "MedCTA", "PhysicianBench"], sub.list_plugins()
-    assert len(sub.list_plugins()) == 3
+    assert sub.list_plugins() == ["HealthAdminBench", "MedCTA", "MedCUABench", "MedRBench", "MeissaEval", "MeissaSFT", "PhysicianBench"], sub.list_plugins()
+    assert len(sub.list_plugins()) == 7
     # one module per benchmark
     for modname in ("plugins.medcta", "plugins.physicianbench", "plugins.healthadminbench"):
         m = importlib.import_module(modname)
@@ -967,7 +967,7 @@ def test_fourth_dataset_adds_file_without_core_edit():
         sub._PLUGINS.pop("FourthBenchmark", None)   # leave the registry as the other tests expect (3)
     after = hashlib.sha1(open(spath, "rb").read()).hexdigest()
     assert before == after, "registering a 4th plugin must not edit substrate.py"
-    assert sub.list_plugins() == ["HealthAdminBench", "MedCTA", "PhysicianBench"]
+    assert sub.list_plugins() == ["HealthAdminBench", "MedCTA", "MedCUABench", "MedRBench", "MeissaEval", "MeissaSFT", "PhysicianBench"]
 
 
 def test_result_schema_roundtrip_matches_real_output():
@@ -1152,7 +1152,7 @@ def test_item3_plugins_autodiscovered_dropfile():
     for hard in ("from . import medcta", "from . import physicianbench", "from . import healthadminbench"):
         assert hard not in src, "auto-discovery must not hardcode %r" % hard
     assert "iter_modules" in src and "import_module" in src, "auto-discovery must use pkgutil + importlib"
-    assert sub.list_plugins() == ["HealthAdminBench", "MedCTA", "PhysicianBench"]
+    assert sub.list_plugins() == ["HealthAdminBench", "MedCTA", "MedCUABench", "MedRBench", "MeissaEval", "MeissaSFT", "PhysicianBench"]
 
     pkg_dir = os.path.dirname(pkg.__file__)
     drop = os.path.join(pkg_dir, "zz_item3_probe.py")
@@ -1187,7 +1187,7 @@ def test_item3_plugins_autodiscovered_dropfile():
             sys.modules.pop(m, None)
         importlib.invalidate_caches()
         importlib.import_module("plugins")
-    assert sub.list_plugins() == ["HealthAdminBench", "MedCTA", "PhysicianBench"], sub.list_plugins()
+    assert sub.list_plugins() == ["HealthAdminBench", "MedCTA", "MedCUABench", "MedRBench", "MeissaEval", "MeissaSFT", "PhysicianBench"], sub.list_plugins()
 
 
 def _sev(role, status="success", ob=None, ms=None, pt=None, terminal=None, attr=None):
@@ -1308,8 +1308,8 @@ def test_substrate_import_safe_single_registry():
     list_plugins() == 3 must hold."""
     import importlib, substrate as sub
     importlib.import_module("plugins")                       # idempotent; must not double-register
-    assert sub.list_plugins() == ["HealthAdminBench", "MedCTA", "PhysicianBench"], sub.list_plugins()
-    assert len(sub.list_plugins()) == 3
+    assert sub.list_plugins() == ["HealthAdminBench", "MedCTA", "MedCUABench", "MedRBench", "MeissaEval", "MeissaSFT", "PhysicianBench"], sub.list_plugins()
+    assert len(sub.list_plugins()) == 7
 
 
 

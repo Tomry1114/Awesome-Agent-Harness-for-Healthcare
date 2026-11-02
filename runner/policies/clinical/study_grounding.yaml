@@ -1,0 +1,9 @@
+name: study_grounding
+evidence_obligations: []
+workflow_obligations: []
+commit_points:
+  - match: {semantic_type: answer}
+    risk: R2
+    requires: []
+    postcondition:
+      type: claim_supported_by_evidence

@@ -44,9 +44,31 @@ class MedctaAdapter(HarnessAdapter):
     manifest_yaml = "runner/adapters/image_tool_sandbox.yaml"
 
 
+class MedRAdapter(HarnessAdapter):
+    env_type = "study_case"
+    name = "MedRBench"
+    manifest_yaml = "runner/adapters/study_case.yaml"
+
+
+class MeissaEvalAdapter(MedRAdapter):
+    name = "MeissaEval"
+
+
+class MeissaSFTAdapter(MedRAdapter):
+    name = "MeissaSFT"
+
+
+class MedCUAAdapter(HarnessAdapter):
+    env_type = "medcua_native"
+    name = "MedCUABench"
+    manifest_yaml = "runner/adapters/medcua_native.yaml"
+
+
 # -- registry -------------------------------------------------------------------------------------
-_BY_ENV = {FHIR: PBAdapter, GUI: HABAdapter, TOOL_SANDBOX: MedctaAdapter}
-_BY_BENCH = {cls.name: cls for cls in (PBAdapter, HABAdapter, MedctaAdapter)}
+_BY_ENV = {FHIR: PBAdapter, GUI: HABAdapter, TOOL_SANDBOX: MedctaAdapter,
+           "study_case": MedRAdapter, "medcua_native": MedCUAAdapter}
+_BY_BENCH = {cls.name: cls for cls in (PBAdapter, HABAdapter, MedctaAdapter,
+                                        MedRAdapter, MeissaEvalAdapter, MeissaSFTAdapter, MedCUAAdapter)}
 
 
 def get_adapter(env_type=None, bench=None):
@@ -62,4 +84,4 @@ def get_adapter(env_type=None, bench=None):
 
 def all_adapters():
     """One instance of every registered dataset adapter (registration order = PB, HAB, MedCTA)."""
-    return [PBAdapter(), HABAdapter(), MedctaAdapter()]
+    return [cls() for cls in _BY_BENCH.values()]

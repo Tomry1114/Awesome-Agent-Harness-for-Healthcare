@@ -1,0 +1,11 @@
+name: ReadImage
+description: View an already available image by ID.
+provenance: converted
+parameters:
+  type: object
+  properties:
+    image:
+      type: string
+  required:
+  - image
+  additionalProperties: false
