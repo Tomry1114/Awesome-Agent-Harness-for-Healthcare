@@ -10,6 +10,7 @@
 # function_calling (result.json records provenance.fidelity.protocol_fidelity = native_function_calling); a model that
 # is driven only through the text protocol is text (recorded as canonicalized).
 models:
+  "gpt-6-sol": function_calling
   "gpt-5.5": function_calling
   "gpt-5.4": function_calling
   "claude-sonnet-5": function_calling

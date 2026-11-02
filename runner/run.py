@@ -187,7 +187,7 @@ def resolve_workspace(bench, task, workspace=None):
     return os.path.abspath(path), W.identity(path, bench, env_type)
 
 
-def resume_key(task_id, workspace_digest, binding, agent_name, max_steps):
+def resume_key(task_id, workspace_digest, binding, agent_name, max_steps, execution_mode="harness"):
     """The key a stored result may be reused under: task id, workspace digest, the bound judge configuration (the
     sha256 of runner/judges.py signature(binding)), agent model, protocol and max_steps.
     run_task records it in result.json; run_batch reuses a stored result only when the key it records equals this key
@@ -201,13 +201,16 @@ def resume_key(task_id, workspace_digest, binding, agent_name, max_steps):
     else:
         model, protocol = agent_name, None
     sig = json.dumps(_J.signature(binding), sort_keys=True)
-    return {"task_id": task_id, "workspace_digest": workspace_digest,
+    key = {"task_id": task_id, "workspace_digest": workspace_digest,
             "judge_config_digest": "sha256:" + hashlib.sha256(sig.encode("utf-8")).hexdigest(),
             "agent_model": model, "protocol": protocol, "max_steps": max_steps}
+    if execution_mode != "harness":
+        key["execution_mode"] = execution_mode
+    return key
 
 
 def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, job_dir=None, cleanup=True,
-             workspace=None):
+             workspace=None, execution_mode="harness"):
     """Run one task and return its result. Three guarantees wrap the episode (_run_task):
 
     * JUDGES FIRST. Every judge the benchmark needs (runner/judges.py, harness judge included) is bound from
@@ -220,14 +223,17 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
     * A CRASH IS A RESULT. An exception out of the episode (a workspace hook, the kernel, the loop, the scorer)
       returns a result with end_reason=harness_error, outcome_status=harness_error, no checkpoints and a
       traceback digest (crash_result.py), instead of propagating and leaving the task with no result.json."""
+    if execution_mode not in ("harness", "native"):
+        raise ValueError("execution_mode must be harness or native")
     import judges as _J
     _binding = _J.require(bench)
     _ws_path, _ws = resolve_workspace(bench, load_task(bench, task_id), workspace)
-    _key = resume_key(task_id, (_ws or {}).get("digest"), _binding, agent_name, max_steps)
+    _key = resume_key(task_id, (_ws or {}).get("digest"), _binding, agent_name, max_steps,
+                      execution_mode=execution_mode)
     _partial = {}
     try:
         result = _run_task(bench, task_id, agent_name, fhir_base, max_steps, job_dir, cleanup, _partial=_partial,
-                           workspace=_ws_path)
+                           workspace=_ws_path, execution_mode=execution_mode)
     except (Exception, environments.BrowserPageCrashed) as _exc:   # the latter is a BaseException (environments.py)
         import crash_result as _CR
         _env = _partial.get("env")
@@ -238,6 +244,9 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
                 pass
         result = _CR.crash_result(bench, task_id, _exc, agent_name=agent_name, max_steps=max_steps,
                                   trajectory=_partial.get("trajectory"), git_sha=_resolve_git_sha())
+        if execution_mode == "native":
+            result["harness"] = {"mode": "off", "requested_mode": "off", "effective_mode": "off",
+                                 "status": "disabled", "runtime_errors": []}
         result["_job_dir"] = _partial.get("job_dir")
         print("HARNESS_ERROR %s: %s: %s" % (task_id, type(_exc).__name__, str(_exc)[:300]), flush=True)
     else:
@@ -248,7 +257,9 @@ def run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, jo
             result["outcome_status_reason"] = _d["reason"]
     result["run_config"] = dict(result.get("run_config") or {}, judges=_J.run_record(_binding, result),
                                 workspace_digest=(_ws or {}).get("digest"),
-                                scored=os.environ.get(UNSCORED_VAR) != "1")
+                                scored=os.environ.get(UNSCORED_VAR) != "1",
+                                execution_mode=execution_mode,
+                                harness_mode="off" if execution_mode == "native" else "enforce")
     result["workspace"] = _ws
     result["resume_key"] = _key
     return result
@@ -298,7 +309,7 @@ def pb_judge_env():
 
 
 def _run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, job_dir=None, cleanup=True,
-              _partial=None, *, workspace):
+              _partial=None, *, workspace, execution_mode="harness"):
     # NOTE: in PhysicianBench the FHIR Patient.id == MRN, so context.patient_ref (an MRN) is also a
     # valid resource id and Patient/{patient_ref} resolves. If a future bench uses non-MRN ids,
     # split into patient_ref (resource id) + patient_identifier (MRN) before reusing this.
@@ -335,31 +346,32 @@ def _run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, j
     from instrumentation import Instrumentation, record_components
     _instr = Instrumentation()   # what ran from the workspace; written beside the trajectory, not into it
 
-    # ---- Clinical Process Harness (Part 2). It always runs, in its one mode (enforce). A kernel that fails to
+    # ---- Clinical Process Harness (Part 2). The default H0 arm builds its enforcing kernel. A kernel that fails to
     #      build fails the run closed: no agent action is taken (_harness_infra_error below).
     _harness = None
     _harness_runtime_errors = []        # build/hook errors — surfaced in result["harness"]["runtime_errors"]
     _harness_build_failed = False
-    try:
-        import harness as _Harness
-        # substrate from env_type; a specific environment ADAPTER may be named per-task (two datasets of
-        # the same substrate with different tool names) — task.environment.adapter, else the default.
-        _adapter = (task.get("environment") or {}).get("adapter") if isinstance(task, dict) else None
-        _tool_model = None
-        if env_type == "tool_sandbox":   # perception tool backend (VLM) -> the ACTUAL model the tools call
-            try:
-                import adapters.medcta.vlm_backend as _vb
-                _bk = _vb.get_backend()
-                _tool_model = getattr(_bk, "model", None) or getattr(_bk, "model_path", None)
-            except Exception:
-                _tool_model = None
-        _harness = _Harness.build_kernel(task, env_type=env_type, adapter=_adapter, workspace=workspace,
-                                         agent_model=getattr(agent, "model", None), tool_model=_tool_model,
-                                         instrumentation=_instr)
-    except Exception as _he:
-        _harness = None
-        _harness_build_failed = True
-        _harness_runtime_errors.append("build_kernel: %r" % _he)
+    if execution_mode == "harness":
+        try:
+            import harness as _Harness
+            # substrate from env_type; a specific environment ADAPTER may be named per-task (two datasets of
+            # the same substrate with different tool names) — task.environment.adapter, else the default.
+            _adapter = (task.get("environment") or {}).get("adapter") if isinstance(task, dict) else None
+            _tool_model = None
+            if env_type == "tool_sandbox":   # perception tool backend (VLM) -> the ACTUAL model the tools call
+                try:
+                    import adapters.medcta.vlm_backend as _vb
+                    _bk = _vb.get_backend()
+                    _tool_model = getattr(_bk, "model", None) or getattr(_bk, "model_path", None)
+                except Exception:
+                    _tool_model = None
+            _harness = _Harness.build_kernel(task, env_type=env_type, adapter=_adapter, workspace=workspace,
+                                             agent_model=getattr(agent, "model", None), tool_model=_tool_model,
+                                             instrumentation=_instr)
+        except Exception as _he:
+            _harness = None
+            _harness_build_failed = True
+            _harness_runtime_errors.append("build_kernel: %r" % _he)
     # A GUI run records the portal state a replay cannot rebuild, per env call (observation only, size-bounded;
     # runner/portal_state_record.py). Attached before the first judge call so every judge response is in it.
     import portal_state_record as _PSR
@@ -431,7 +443,7 @@ def _run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, j
     _deliv_writes_used = 0   # at most ONE reserved over-budget deliverable write (off/enforce budget parity)
     # The workspace's middleware (empty where a substrate has no workspace yet). It decides; the shell applies.
     from middleware_host import load_middleware, MiddlewareContext, forced_deliverable_write
-    _mw = load_middleware(workspace, task, instrumentation=_instr)
+    _mw = load_middleware(workspace if execution_mode == "harness" else None, task, instrumentation=_instr)
     try:
         record_components(_instr, agent, _mw, _harness if hasattr(_harness, "capabilities") else None, workspace)
     except Exception as _ie:   # measurement must never break a run
@@ -478,20 +490,20 @@ def _run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, j
                                                 if _harness is not None else None),
                                  errors=_harness_runtime_errors, forced_deliverable_write=forced, shell=_shell)
     # is a public-obligation model available for THIS bench at all? The terminal lock and ctx.obligations() read it
-    _oblig_status = _ds_adapter.applies("obligation_gate")
+    _oblig_status = execution_mode == "harness" and _ds_adapter.applies("obligation_gate")
     from harness.obligation_gate import lock_inputs   # (None, None) without an obligation model
     if _oblig_status:
         from harness.obligation_gate import obligation_snapshot
     _ob_before = None                  # conjunction truth BEFORE the action about to run
     _observed_text = []   # running record of what the agent OBSERVES, so the collection nudge can check code coverage
-    _coll_on = _ds_adapter.applies("collection_nudge")  # remind, never fill
+    _coll_on = execution_mode == "harness" and _ds_adapter.applies("collection_nudge")  # remind, never fill
     # On a substrate whose adapter grants harness actions a reserve (HAB), the harness action service may act past the
     # agent's budget by an ADDITIVE slice (max_steps // RECOVERY_RESERVE_DIVISOR), so recovery can actually ACT after the
     # agent spends its share; 0 elsewhere (PB/MedCTA). The agent keeps the full native budget it has without the harness,
     # and recovery is granted a slice ON TOP: carving recovery's slice out of the agent's ceiling would measure a shorter
     # agent rather than the harness. A run with the harness therefore has a LARGER total action ceiling than the same run
     # without it; that is recorded in provenance (harness_extra_action_budget) and must be reported with the numbers.
-    _reserve_granted = bool(_ds_adapter.applies("harness_action_reserve"))
+    _reserve_granted = execution_mode == "harness" and bool(_ds_adapter.applies("harness_action_reserve"))
     _action_reserve = (max_steps // _RECOVERY_RESERVE_DIVISOR) if _reserve_granted else 0
     _nudges = [0]                         # Nudges the shell applied this episode (capped by middleware_host.MAX_NUDGES_PER_EPISODE)
     _revisions = [0]                      # Revisions / Repairs the shell applied (capped by middleware_host.MAX_REVISIONS_PER_EPISODE)
@@ -1442,6 +1454,9 @@ def _run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, j
                                  "requested_mode": "enforce",
                                  "effective_mode": getattr(_harness, "mode", "enforce"),
                                  "status": "degraded", "runtime_errors": _harness_runtime_errors}
+    elif execution_mode == "native":
+        result["harness"] = {"mode": "off", "requested_mode": "off", "effective_mode": "off",
+                             "status": "disabled", "runtime_errors": []}
     else:
         # the kernel failed to build -> report it, never silently 'off'.
         result["harness"] = {"mode": "off", "requested_mode": "enforce",
@@ -1512,10 +1527,12 @@ def main():
     ap.add_argument("--unsafe-no-reset", action="store_true", help="skip per-task stub-resource cleanup")
     ap.add_argument("--out", default=None)
     ap.add_argument("--workspace", default=None, help="the workspace directory to run (default: the substrate's H0)")
+    ap.add_argument("--execution-mode", choices=("harness", "native"), default="harness")
     args = ap.parse_args()
     reset_fhir(args.reset_mode)
     result = run_task(args.bench, args.task, args.agent, args.fhir_base, args.max_steps, args.job_dir,
-                      cleanup=not args.unsafe_no_reset, workspace=args.workspace)
+                      cleanup=not args.unsafe_no_reset, workspace=args.workspace,
+                      execution_mode=args.execution_mode)
     if result.get("_warning"): print("WARNING:", result["_warning"])
     print(json.dumps({"task": result["task_id"], "success": result["success"],
                       "evaluation_status": result["evaluation_status"],

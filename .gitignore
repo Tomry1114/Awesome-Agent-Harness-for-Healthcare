@@ -11,5 +11,7 @@ __pycache__/
 *.pyc
 .pytest_cache/
 .env
+.env.*
+.keys/
 *.key
 benchmark_dataprocess/PhysicianBench/h2data*/

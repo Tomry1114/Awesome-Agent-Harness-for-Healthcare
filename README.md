@@ -31,6 +31,15 @@ export LLM_JUDGE_MODEL="gpt-5.4"
 
 Agent models and their tool-call protocols are listed in [runner/models.yaml](runner/models.yaml). `--agent gpt5` selects the API agent; `MH_API_MODEL` selects its model. The judge must use a different model from the agent and tool backend.
 
+For a native-agent versus Base Harness comparison, run the same task IDs twice with separate output directories. `native` keeps the same agent program, tools, environment and outcome scorer, but disables the Harness kernel and workspace middleware. `harness` is the default and runs the Base Harness (H0). Both results record `run_config.execution_mode`; a batch refuses to overwrite a result from the other mode. See [the comparison protocol](docs/NATIVE_BASELINE.md).
+
+```bash
+python3 runner/run_batch.py --bench MedCTA --task-ids-file selected_ids.txt \
+  --agent gpt5 --execution-mode native --out results/native/
+python3 runner/run_batch.py --bench MedCTA --task-ids-file selected_ids.txt \
+  --agent gpt5 --execution-mode harness --out results/h0/
+```
+
 With PhysicianBench's FHIR server running on port 38080:
 
 ```bash

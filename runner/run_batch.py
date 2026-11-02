@@ -84,7 +84,7 @@ def stored_result(agent_out, tid):
     return res if isinstance(res, dict) else None
 
 
-def resume_plan(bench, tids, tasks_by_id, agent, workspace, binding, max_steps_of, agent_out):
+def resume_plan(bench, tids, tasks_by_id, agent, workspace, binding, max_steps_of, agent_out, execution_mode="harness"):
     """-> ({task id: (max_steps, resume key)}, {task id: stored result reused}). Resolves the workspace for every task
     first, so a workspace the run would refuse stops the batch before anything runs (SystemExit). A stored result is
     reused only when the key it records equals the key of the run that would replace it."""
@@ -96,9 +96,14 @@ def resume_plan(bench, tids, tasks_by_id, agent, workspace, binding, max_steps_o
             _path, ident = R.resolve_workspace(bench, tasks_by_id.get(tid) or {}, workspace)
         except W.WorkspaceError as e:
             raise SystemExit("REFUSING: %s" % e)
-        key = R.resume_key(tid, (ident or {}).get("digest"), binding, agent, ms)
+        key = R.resume_key(tid, (ident or {}).get("digest"), binding, agent, ms, execution_mode=execution_mode)
         plan[tid] = (ms, key)
         stored = stored_result(agent_out, tid)
+        if stored is not None:
+            old_mode = (stored.get("run_config") or {}).get("execution_mode", "harness")
+            if old_mode != execution_mode:
+                raise SystemExit("REFUSING: %s has %s result in %s; use a separate --out for %s"
+                                 % (tid, old_mode, agent_out, execution_mode))
         if stored is not None and stored.get("resume_key") == key:
             reuse[tid] = stored
     return plan, reuse
@@ -181,7 +186,7 @@ def stop_fhir(port):
                    "| xargs -r kill -9" % int(port), shell=True, check=False)
 
 
-def _run_one(bench, tid, agent, fhir_base, max_steps, workspace, agent_out, task, slot=None):
+def _run_one(bench, tid, agent, fhir_base, max_steps, workspace, agent_out, task, slot=None, execution_mode="harness"):
     """One episode in its own process: run it and write its bundle. Returns the result the parent aggregates.
 
     Module level, because a worker process must be able to call it. It touches nothing the other workers touch: one
@@ -198,7 +203,8 @@ def _run_one(bench, tid, agent, fhir_base, max_steps, workspace, agent_out, task
             os.makedirs(slot["env"]["MH_H2_PARENT"], exist_ok=True)
             fhir_base = slot["base"]
             R.reset_fhir("per_task")
-        res = R.run_task(bench, tid, agent, fhir_base, max_steps=max_steps, workspace=workspace)
+        _mode_kw = {"execution_mode": execution_mode} if execution_mode != "harness" else {}
+        res = R.run_task(bench, tid, agent, fhir_base, max_steps=max_steps, workspace=workspace, **_mode_kw)
         if slot is not None and isinstance(res, dict):
             res.setdefault("run_config", {})["fhir_slot"] = {"port": slot["port"], "reset": "pristine before this task"}
     except Exception as e:
@@ -208,9 +214,9 @@ def _run_one(bench, tid, agent, fhir_base, max_steps, workspace, agent_out, task
     return res
 
 
-def _worker(results, bench, tid, agent, fhir_base, max_steps, workspace, agent_out, task, slot=None):
+def _worker(results, bench, tid, agent, fhir_base, max_steps, workspace, agent_out, task, slot=None, execution_mode="harness"):
     """A worker process: one episode, its bundle, then the result back to the parent through the queue."""
-    results.put((tid, _run_one(bench, tid, agent, fhir_base, max_steps, workspace, agent_out, task, slot)))
+    results.put((tid, _run_one(bench, tid, agent, fhir_base, max_steps, workspace, agent_out, task, slot, execution_mode)))
 
 
 # A process that exited may still have its result in flight on the queue, so a task is only called crashed this
@@ -218,7 +224,7 @@ def _worker(results, bench, tid, agent, fhir_base, max_steps, workspace, agent_o
 WORKER_EXIT_GRACE = 5.0
 
 
-def run_concurrently(bench, todo, agent, fhir_base, plan, workspace, agent_out, tasks_by_id, workers, slots=None):
+def run_concurrently(bench, todo, agent, fhir_base, plan, workspace, agent_out, tasks_by_id, workers, slots=None, execution_mode="harness"):
     """Run these tasks at once, at most `workers` of them, each in its own process. Returns {task_id: result}.
 
     A process, not a thread: run.py keeps module-level state per episode, so two episodes in one interpreter would
@@ -249,7 +255,7 @@ def run_concurrently(bench, todo, agent, fhir_base, plan, workspace, agent_out, 
             si = free.pop(0) if free is not None else None
             proc = ctx.Process(target=_worker, args=(results, bench, t, agent, fhir_base, plan[t][0], workspace,
                                                      agent_out, tasks_by_id.get(t, {}),
-                                                     slots[si] if si is not None else None))
+                                                     slots[si] if si is not None else None, execution_mode))
             proc.start()
             running[t] = proc
             if si is not None:
@@ -305,6 +311,7 @@ def main():
     ap.add_argument("--governance-only", action="store_true")
     ap.add_argument("--out", default="results/")
     ap.add_argument("--max-steps", type=int, default=0)  # 0 = use NATIVE_MAX_STEPS per bench
+    ap.add_argument("--execution-mode", choices=("harness", "native"), default="harness")
     ap.add_argument("--workspace", default=None,
                     help="the workspace directory every task runs (default: the substrate's H0)")
     ap.add_argument("--no-report", action="store_true",
@@ -391,7 +398,7 @@ def main():
         return args.max_steps or (_hab_task_max_steps(tid) if args.bench == "HealthAdminBench"
                                   else NATIVE_MAX_STEPS.get(args.bench, 12))
     _plan, _reuse = resume_plan(args.bench, tids, tasks_by_id, args.agent, args.workspace, _binding, _max_steps_of,
-                                agent_out)
+                                agent_out, execution_mode=args.execution_mode)
     if _reuse:
         print("[resume] %d/%d tasks reuse a stored result whose resume key matches; the rest run"
               % (len(_reuse), len(tids)), flush=True)
@@ -414,7 +421,7 @@ def main():
     if args.workers > 1:
         todo = [t for t in tids if t not in _reuse and _cap_precheck(tasks_by_id.get(t, {}), args.bench).get("ok")]
         _done = run_concurrently(args.bench, todo, args.agent, args.fhir_base, _plan, args.workspace, agent_out,
-                                 tasks_by_id, args.workers, slots=_pb_slots)
+                                 tasks_by_id, args.workers, slots=_pb_slots, execution_mode=args.execution_mode)
     for tid in tids:
         # Skip tasks whose required capabilities the env lacks (e.g. HAB file upload/download)
         # -> not_exercised_due_to_missing_capability, NOT an agent failure.
@@ -442,7 +449,7 @@ def main():
         else:
             if args.reset_mode == "per_task": R.reset_fhir("per_task")
             try:
-                res = R.run_task(args.bench, tid, args.agent, args.fhir_base, max_steps=_ms, workspace=args.workspace)
+                res = R.run_task(args.bench, tid, args.agent, args.fhir_base, max_steps=_ms, workspace=args.workspace, execution_mode=args.execution_mode)
             except Exception as e:
                 # run_task returns a crash result for an exception inside the episode; what reaches here failed
                 # around it. Still a result, still in the denominator. It records no resume key: it runs again.
@@ -479,6 +486,7 @@ def main():
 
     summary = {"bench": args.bench, "agent": args.agent, "n_tasks": len(tids),
                "n_results_written": len(rows), "n_reused": len(_reuse), "workspace": args.workspace,
+               "execution_mode": args.execution_mode,
                "filters": {"has_dimension": args.has_dimension, "has_subdimension": args.has_subdimension,
                            "governance_only": args.governance_only},
                "schema_valid": f"{schema_ok}/{len(tids)}",

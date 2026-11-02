@@ -20,7 +20,7 @@ def _env(name):
     return v or None
 
 
-def snapshot():
+def snapshot(execution_mode="harness"):
     """The conditions of THIS process, as plain data."""
     import os
 
@@ -41,7 +41,8 @@ def snapshot():
     out["agent_model"] = _env("MH_API_MODEL") or _env("MH_TARGET_MODEL")
 
     # --- how the run was bounded --------------------------------------------------------------------
-    out["harness_mode"] = "enforce"   # the harness's one mode
+    out["harness_mode"] = "off" if execution_mode == "native" else "enforce"
+    out["execution_mode"] = execution_mode
     out["pid"] = os.getpid()
     return out
 
