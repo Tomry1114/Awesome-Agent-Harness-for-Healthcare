@@ -12,7 +12,7 @@ import seven_specs as R
 import process_evaluation as P
 import harness
 import gateway
-from adapters.user_study import conversion as C
+from adapters.external_data import conversion as C
 
 
 def verdict(profile,evidence,score=1):

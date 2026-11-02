@@ -54,15 +54,15 @@ ROLES = {
                    "runs": HAB_RUBRIC_RUNS_DEFAULT, "max_tokens": HAB_RUBRIC_MAX_TOKENS},
     "medcta_gacc": {"model_var": "MH_GACC_MODEL", "runs": 1, "max_tokens": MEDCTA_GACC_MAX_TOKENS},
     "medcta_checkpoint": {"model_var": "MH_JUDGE_MODEL", "runs": 1, "max_tokens": MEDCTA_CHECKPOINT_MAX_TOKENS},
-    "study_gt_outcome": {"model_var": "MH_JUDGE_MODEL", "runs": 1, "max_tokens": 1024, "temperature": 0},
+    "external_gt_outcome": {"model_var": "MH_JUDGE_MODEL", "runs": 1, "max_tokens": 1024, "temperature": 0},
 }
 
 BENCH_ROLES = {
     "PhysicianBench": ("harness", "pb_content"),
     "HealthAdminBench": ("harness", "hab_rubric"),
     "MedCTA": ("harness", "medcta_gacc", "medcta_checkpoint"),
-    "MedRBench": ("harness", "study_gt_outcome"),
-    "MeissaEval": ("harness", "study_gt_outcome"),
+    "MedRBench": ("harness", "external_gt_outcome"),
+    "MeissaEval": ("harness", "external_gt_outcome"),
 }
 
 SIGNATURE_FIELDS = {
@@ -72,7 +72,7 @@ SIGNATURE_FIELDS = {
     "hab_rubric": ("model", "runs"),
     "medcta_gacc": ("model",),
     "medcta_checkpoint": ("model",),
-    "study_gt_outcome": ("model", "max_tokens", "runs", "temperature"),
+    "external_gt_outcome": ("model", "max_tokens", "runs", "temperature"),
 }
 
 JUDGE_VARS = tuple(sorted({v for r in ROLES.values() for k, v in r.items() if k.endswith("_var")}))

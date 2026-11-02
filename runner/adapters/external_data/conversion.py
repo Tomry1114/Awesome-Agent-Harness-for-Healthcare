@@ -8,7 +8,7 @@ import re
 from .tool_contracts import ZOOM_DESCRIPTION, ZOOM_PARAM
 
 ROOT = Path(__file__).resolve().parents[3]
-SOURCES = ROOT / 'user_study'
+SOURCES = ROOT / 'external_data'
 BENCHMARKS = {'medr': 'MedRBench', 'meissa': 'MeissaSFT'}
 EVALUATION_BENCHMARK = 'MeissaEval'
 
@@ -58,30 +58,30 @@ def final_answer(value):
 
 def task_base(bench, tid, text, answer, *, kind, group, images=None, names=None):
     task = {
-        'task_id': tid, 'source_benchmark': bench, 'domain': 'medical_user_study',
+        'task_id': tid, 'source_benchmark': bench, 'domain': 'medical_external_data',
         'modality': 'image_text' if images else 'text',
-        'environment': {'type': 'study_case', 'adapter': 'study_case', 'config': {}},
+        'environment': {'type': 'external_data', 'adapter': 'external_data', 'config': {}},
         'context': {'text': text, 'images': images or [], 'case_id': tid},
         'goal': text, 'available_tools': [TOOLS[n] for n in (names or ['ReadCase'])],
         'checkpoints': [
             {'id': 'human_outcome', 'type': 'deterministic', 'dimension': 'Outcome',
              'subdimension': 'clinical_task_success', 'provenance': 'augmented',
-             'measurement_family': 'source_outcome', 'check': {'method': 'study_human_review'}},
+             'measurement_family': 'source_outcome', 'check': {'method': 'external_human_review'}},
             {'id': 'reference_agreement', 'type': 'deterministic', 'dimension': 'Outcome',
              'subdimension': 'reference_agreement', 'provenance': 'augmented',
              'measurement_family': 'proxy', 'evidence_tier': 'proxy',
-             'check': {'method': 'study_reference_agreement'}},
+             'check': {'method': 'external_reference_agreement'}},
         ],
         'scoring': {'mode': 'all_pass'}, 'expected_outcome': {'answer_kind': 'final_text'},
         'reference': {'gold_answer': answer},
-        'study_metadata': {'task_kind': kind, 'source_group': group, 'outcome_review': 'pending',
+        'external_metadata': {'task_kind': kind, 'source_group': group, 'outcome_review': 'pending',
                            'held_out_test': False},
-        'study_runtime': {'initial_images': images or [], 'recorded_observations': []},
+        'external_runtime': {'initial_images': images or [], 'recorded_observations': []},
     }
     from .outcome_judge import effective_checkpoints
     task['checkpoints'] = effective_checkpoints(bench, task['checkpoints'])
     if bench in ('MedRBench', 'MeissaEval'):
-        task['study_metadata']['outcome_review'] = 'gt_judge; expert_review_supplemental'
+        task['external_metadata']['outcome_review'] = 'gt_judge; expert_review_supplemental'
     return task
 
 
@@ -114,11 +114,11 @@ def medr_interactive_task(case_id, case, protocol, source=SOURCES / 'MedR-Bench'
     task['context']['interaction'] = {'protocol': protocol, 'max_information_requests': limit,
                                       'max_diagnostic_turns': limit + 1}
     template = (directory / 'patient_agent_prompt.txt').read_text()
-    task['study_runtime']['medr_interaction'] = {
+    task['external_runtime']['medr_interaction'] = {
         'protocol': protocol, 'initial_case': initial, 'ancillary_tests': ancillary,
         'max_information_requests': limit, 'patient_prompt_template': template,
     }
-    task['study_metadata'].update(
+    task['external_metadata'].update(
         source_file='diagnosis_957_cases_with_rare_disease_491.json', source_id=case_id,
         protocol=protocol, reference_kind='published_case_target',
         patient_prompt_sha256=hashlib.sha256(template.encode()).hexdigest(),
@@ -145,7 +145,7 @@ def medr_tasks(source=SOURCES / 'MedR-Bench', protocol='all'):
             task = task_base('MedRBench', 'MEDR-%s-%s' % (kind, case_id),
                              case['case_summary'] + '\n\n' + instruction, case[target],
                              kind=kind, group='MedRBench:' + case_id)
-            task['study_metadata'].update(source_file=filename, source_id=case_id,
+            task['external_metadata'].update(source_file=filename, source_id=case_id,
                                            protocol='oracle_case_summary', reference_kind='published_case_target',
                                            deviations=['Oracle summary input; no simulated examination acquisition.'])
             if protocol in ('all', 'oracle'):
@@ -222,8 +222,8 @@ def meissa_task(row, index, source=SOURCES / 'Meissa-SFT'):
     task = task_base('MeissaSFT', 'MEISSA-%05d' % index, turns[0]['value'].replace('<image>', '').strip(), gold,
                      kind=meta.get('type') or meta.get('framework'),
                      group='MeissaSFT:%s:%s' % (meta.get('dataset'), group), images=initial, names=names)
-    task['study_runtime']['recorded_observations'] = records
-    task['study_metadata'].update(source_row=index, source_meta=meta, warnings=warnings,
+    task['external_runtime']['recorded_observations'] = records
+    task['external_metadata'].update(source_row=index, source_meta=meta, warnings=warnings,
                                   data_role='training_trajectory', independent_evaluation=False,
                                   reference_kind='teacher_response_not_independent_ground_truth',
                                   protocol='fresh_agent_on_sft_prompt_with_frozen_observations',
@@ -240,9 +240,9 @@ def meissa_task(row, index, source=SOURCES / 'Meissa-SFT'):
 
 def enable_live_image(task):
     """Select a backend explicitly; never use frozen observations as its fallback."""
-    task['study_runtime']['meissa_image'] = {'protocol': 'live_image_v1'}
-    task['study_runtime']['recorded_observations'] = []
-    for image in task['study_runtime']['initial_images']:
+    task['external_runtime']['meissa_image'] = {'protocol': 'live_image_v1'}
+    task['external_runtime']['recorded_observations'] = []
+    for image in task['external_runtime']['initial_images']:
         path = ROOT / image['path']
         if path.is_file():
             image['sha256'] = hashlib.sha256(path.read_bytes()).hexdigest()
@@ -257,7 +257,7 @@ def enable_live_image(task):
                 definition['description'] += ' param is a text region description, such as "tumor"; multiple descriptions may be separated with semicolons.'
         elif definition['name'] == 'ZoomInSubfigure':
             definition['description'] = ZOOM_DESCRIPTION
-    task['study_metadata'].update(protocol='meissa_live_image',
+    task['external_metadata'].update(protocol='meissa_live_image',
         deviations=['BBox-only local zoom with upstream padding/JPEG semantics; masks and absolute coordinates unsupported.',
                     'Live segmentation requires separately deployed SAM2/BioMedParse workers.',
                     'Tool use is optional; native harness actions replace upstream textual action parsing.',
@@ -269,7 +269,7 @@ def meissa_tasks(source=SOURCES / 'Meissa-SFT', image_mode='replay'):
     with (source / 'data/train.jsonl').open() as stream:
         for index, line in enumerate(stream):
             task = meissa_task(json.loads(line), index, source)
-            if image_mode == 'live' and task['study_metadata']['source_meta'].get('framework') == 'interleaved_thinking_images':
+            if image_mode == 'live' and task['external_metadata']['source_meta'].get('framework') == 'interleaved_thinking_images':
                 task = enable_live_image(task)
             yield task
 
@@ -305,7 +305,7 @@ def meissa_evaluation_tasks(manifest):
             task = task_base(EVALUATION_BENCHMARK, 'MEISSAEVAL-pathvqa-' + row['id'],
                              row['question'], row['answer'], kind='pathvqa',
                              group='PathVQA:image:' + data_sha, images=images)
-            task['study_metadata'].update(data_role='evaluation_source', independent_evaluation=None,
+            task['external_metadata'].update(data_role='evaluation_source', independent_evaluation=None,
                 held_out_test=False, declared_source_split='test',
                 split_verification='manifest_declared; contamination_not_verified',
                 source_url=row['source_url'], source_id=row['id'], source_manifest_sha256=digest,
@@ -352,9 +352,9 @@ def main():
         groups, kinds, protocols = set(), Counter(), Counter()
         def tracked(rows):
             for task in rows:
-                groups.add(task['study_metadata']['source_group'])
-                kinds[task['study_metadata']['task_kind']] += 1
-                protocols[task['study_metadata']['protocol']] += 1
+                groups.add(task['external_metadata']['source_group'])
+                kinds[task['external_metadata']['task_kind']] += 1
+                protocols[task['external_metadata']['protocol']] += 1
                 yield task
         count = dump_jsonl(out / 'tasks_unified.jsonl', tracked(tasks))
         report = {'benchmark': bench, 'tasks': count, 'unique_source_groups': len(groups), 'task_kinds': dict(kinds),

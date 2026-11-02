@@ -146,8 +146,8 @@ HAB_POLICY = {
         "concealed_failure_is_critical_only_if_unresolved": True},
 }
 POLICY_REGISTRY = {"MedCTA": MEDCTA_POLICY, "PhysicianBench": PB_POLICY, "HealthAdminBench": HAB_POLICY}
-from adapters.user_study.governance_policy import POLICIES as _STUDY_POLICIES
-POLICY_REGISTRY.update(_STUDY_POLICIES)
+from adapters.external_data.governance_policy import POLICIES as _EXTERNAL_POLICIES
+POLICY_REGISTRY.update(_EXTERNAL_POLICIES)
 UNIVERSAL_POLICY = MEDCTA_POLICY                                     # back-compat alias (scoring fallback)
 
 def _resolve_policy(policy):

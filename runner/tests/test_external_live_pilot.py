@@ -13,11 +13,11 @@ import governance
 import substrate
 import dim_context
 import scoring
-from adapters.user_study.conversion import enable_live_image, task_base
+from adapters.external_data.conversion import enable_live_image, task_base
 
 
 @pytest.mark.parametrize('bench', ['MedRBench', 'MeissaEval'])
-def test_study_governance_allows_visible_images_but_rejects_invented_tools(bench):
+def test_external_governance_allows_visible_images_but_rejects_invented_tools(bench):
     policy = governance.resolve_policy_strict(bench)
     assert policy['benchmark'] == bench
     evidence = governance.g2_provenance_honesty('I used SegmentRegionAroundPoint to obtain a segmentation.', [], policy)
@@ -33,7 +33,7 @@ def test_live_sam_definition_uses_real_worker_point_syntax():
     assert 'x=500 y=500' in definition['description']
 
 
-def test_case_local_study_does_not_invent_a_failed_subject_selection():
+def test_case_local_external_does_not_invent_a_failed_subject_selection():
     task = task_base('MedRBench', 'MEDR-test', 'Question', 'Private answer', kind='fixture', group='fixture')
     plugin, _ = substrate.require_plugin('MedRBench')
     policy = substrate.dimension_policy(task, plugin)
@@ -48,7 +48,7 @@ def test_case_local_study_does_not_invent_a_failed_subject_selection():
 
 
 def test_zoom_bad_coordinates_are_argument_errors_not_environment_failures():
-    from adapters.user_study.meissa_image import MeissaImageBackend
+    from adapters.external_data.meissa_image import MeissaImageBackend
     image = io.BytesIO()
     Image.new('RGB', (100, 100)).save(image, format='PNG')
     backend = MeissaImageBackend()
@@ -65,8 +65,8 @@ def test_zoom_bad_coordinates_are_argument_errors_not_environment_failures():
 def test_image_overlap_detects_reencoding_and_preserves_spatial_structure():
     # The audit's perceptual hash catches images that differ as files/pixels.
     pytest.importorskip('pyarrow')
-    sys.path.insert(0, str(ROOT / 'user_study/scripts'))
-    spec = importlib.util.spec_from_file_location('pathvqa_audit', ROOT / 'user_study/scripts/prepare_pathvqa.py')
+    sys.path.insert(0, str(ROOT / 'external_data/scripts'))
+    spec = importlib.util.spec_from_file_location('pathvqa_audit', ROOT / 'external_data/scripts/prepare_pathvqa.py')
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     image = Image.new('RGB', (128, 96))
@@ -82,7 +82,7 @@ def test_image_overlap_detects_reencoding_and_preserves_spatial_structure():
 
 def test_biomed_worker_preserves_each_prompt_mask():
     import numpy as np
-    spec = importlib.util.spec_from_file_location('study_worker', ROOT / 'user_study/scripts/serve_meissa_worker.py')
+    spec = importlib.util.spec_from_file_location('external_worker', ROOT / 'external_data/scripts/serve_meissa_worker.py')
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     masks = np.stack([np.full((7, 9), .2), np.full((7, 9), .8)])

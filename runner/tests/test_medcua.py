@@ -18,13 +18,13 @@ import substrate
 
 def task():
     return {'task_id': 'MEDCUA-fixture.intent', 'source_benchmark': 'MedCUABench',
-            'domain': 'medical_user_study', 'modality': 'gui_web',
+            'domain': 'medical_external_data', 'modality': 'gui_web',
             'environment': {'type': 'medcua_native'}, 'goal': 'Use the visible browser.',
             'context': {'text': 'Use the visible browser.', 'action_reference': 'mouse_click(x, y)'},
             'available_tools': [TOOL], 'reference': {'expected_values': 'PRIVATE_GT'},
             'native_runtime': {'env_id': 'medgym.fixture.intent', 'seed': 42, 'max_steps': 30,
                                'source_tree_sha256': 'fixture'},
-            'study_metadata': {'source_commit': 'fixture', 'scored': True}}
+            'external_metadata': {'source_commit': 'fixture', 'scored': True}}
 
 
 @pytest.mark.parametrize('action', ["page.locator('button').click()", "__import__('os')", "mouse_click(1+2, 3)",
@@ -56,7 +56,7 @@ def test_workspace_images_and_terminal_boundary(protocol):
         calls.append(copy.deepcopy(messages))
         return {'content':'done'} if protocol=='function_calling' else '<answer>done</answer>'
     public=W.public_task(t)
-    assert not {'reference','native_runtime','study_metadata'} & public.keys()
+    assert not {'reference','native_runtime','external_metadata'} & public.keys()
     program=ws.program_class()(public,ws,chat)
     for i in range(2):
         obs={'output':{'images':[{'image_id':'screen_'+str(i),'sha256':str(i),'url':'data:image/png;base64,fixture'+str(i)}]}}

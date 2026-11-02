@@ -19,8 +19,8 @@ import harness
 import run
 import workspace as W
 import aggregate_report as AR
-from adapters.user_study import conversion as C
-from adapters.user_study.meissa_image import MeissaImageBackend, settings, zoom
+from adapters.external_data import conversion as C
+from adapters.external_data.meissa_image import MeissaImageBackend, settings, zoom
 
 
 def png(color='red'):
@@ -31,7 +31,7 @@ def png(color='red'):
 
 @pytest.fixture(autouse=True)
 def clear_config(monkeypatch):
-    from adapters.user_study import outcome_judge as J
+    from adapters.external_data import outcome_judge as J
     monkeypatch.setenv("MH_JUDGE_MODEL", "fixture-judge")
     monkeypatch.setattr(J, "call_judge", lambda *a: {"ok": True, "content": json.dumps({"verdict": "Wrong", "reason": "Offline fixture"})})
     for key in ('TOOL_SERVER', 'SAM_URL', 'BIOMEDPARSE_URL', 'SAM_REVISION', 'BIOMEDPARSE_REVISION', 'TOOL_TIMEOUT', 'RUNTIME_CONFIG', 'TOOL_PROXY'):
@@ -66,7 +66,7 @@ def server():
 def live_task(bench='MeissaEval'):
     t = C.task_base(bench, 'MEISSAEVAL-fixture', 'Inspect the supplied image.', 'PRIVATE_REFERENCE',
                     kind='pathvqa', group='fixture', images=[{'asset_id': 'img_original', 'path': 'fixture.png'}])
-    t['study_metadata']['reference_kind'] = 'synthetic_fixture'
+    t['external_metadata']['reference_kind'] = 'synthetic_fixture'
     return C.enable_live_image(t)
 
 
@@ -105,11 +105,11 @@ def test_backend_failures_are_not_evidence(monkeypatch, server, response):
 
 def test_no_backend_never_replays_teacher(monkeypatch):
     t = live_task()
-    t['study_runtime']['recorded_observations'] = [
+    t['external_runtime']['recorded_observations'] = [
         {'tool': 'BioMedParseTextSeg', 'args': {'image': 'img_original', 'param': 'lung'},
          'text': 'PRIVATE_TEACHER', 'images': []}]
-    monkeypatch.setattr(environments.UserStudyEnv, '_asset', staticmethod(lambda path: (png(), 'image/png')))
-    env = environments.UserStudyEnv(t)
+    monkeypatch.setattr(environments.ExternalDataEnv, '_asset', staticmethod(lambda path: (png(), 'image/png')))
+    env = environments.ExternalDataEnv(t)
     env.reset()
     assert env.capabilities()['BioMedParseTextSeg']['available'] is False
     result = env.call_tool('BioMedParseTextSeg', {'image': 'img_original', 'param': 'lung'})
@@ -120,8 +120,8 @@ def test_no_backend_never_replays_teacher(monkeypatch):
 
 def test_failed_service_can_recover_without_publishing_failure_image(monkeypatch, server):
     monkeypatch.setenv('MH_MEISSA_SAM_URL', server['url'])
-    monkeypatch.setattr(environments.UserStudyEnv, '_asset', staticmethod(lambda path: (png(), 'image/png')))
-    env = environments.UserStudyEnv(live_task())
+    monkeypatch.setattr(environments.ExternalDataEnv, '_asset', staticmethod(lambda path: (png(), 'image/png')))
+    env = environments.ExternalDataEnv(live_task())
     env.reset()
     server['status'] = 503
     result = env.call_tool('SegmentRegionAroundPoint', {'image': 'img_last', 'param': '[[500,500]]'})
@@ -135,10 +135,10 @@ def test_failed_service_can_recover_without_publishing_failure_image(monkeypatch
 
 def test_changed_source_image_is_rejected(monkeypatch):
     t = live_task()
-    t['study_runtime']['initial_images'][0]['sha256'] = 'wrong'
-    monkeypatch.setattr(environments.UserStudyEnv, '_asset', staticmethod(lambda path: (png(), 'image/png')))
+    t['external_runtime']['initial_images'][0]['sha256'] = 'wrong'
+    monkeypatch.setattr(environments.ExternalDataEnv, '_asset', staticmethod(lambda path: (png(), 'image/png')))
     with pytest.raises(ValueError, match='changed after task preparation'):
-        environments.UserStudyEnv(t).reset()
+        environments.ExternalDataEnv(t).reset()
 
 
 def test_zoom_upstream_bbox_semantics():
@@ -157,7 +157,7 @@ def test_real_runner_image_loop_and_seven_dimensions(monkeypatch, tmp_path, serv
     monkeypatch.setenv('MH_MEISSA_TOOL_SERVER', server['url'])
     monkeypatch.setenv('MH_HARNESS_JUDGE_MODEL', 'fixture-judge')
     monkeypatch.setattr(harness, '_build_judge', lambda: (None, None))
-    monkeypatch.setattr(environments.UserStudyEnv, '_asset', staticmethod(lambda path: (png(), 'image/png')))
+    monkeypatch.setattr(environments.ExternalDataEnv, '_asset', staticmethod(lambda path: (png(), 'image/png')))
     t = live_task()
     monkeypatch.setattr(run, 'load_task', lambda *args: copy.deepcopy(t))
     ws = W.Workspace(W.BENCH_H0['MeissaEval'], protocol)
@@ -188,7 +188,7 @@ def test_real_runner_image_loop_and_seven_dimensions(monkeypatch, tmp_path, serv
     assert result['schema_validation']['valid'], result['schema_validation']
     provenance = result['provenance']['fidelity']
     assert provenance['environment_fidelity'] == 'meissa_live_image_tools'
-    events = provenance['study_environment']['execution']
+    events = provenance['external_environment']['execution']
     assert len(events) == 3 and all(x['status'] == 'success' for x in events)
     assert events[0]['output_sha256'] == events[1]['input_sha256']
     assert events[1]['output_sha256'] == events[2]['input_sha256']
@@ -209,7 +209,7 @@ def test_real_runner_image_loop_and_seven_dimensions(monkeypatch, tmp_path, serv
 
 def test_eval_manifest_split_paths_and_answer_boundary(monkeypatch, tmp_path):
     monkeypatch.setattr(C, 'ROOT', tmp_path)
-    monkeypatch.setattr(C, 'SOURCES', tmp_path / 'user_study')
+    monkeypatch.setattr(C, 'SOURCES', tmp_path / 'external_data')
     image = C.SOURCES / 'Meissa-Evaluation/images/sample.png'
     image.parent.mkdir(parents=True)
     image.write_bytes(png())
@@ -222,10 +222,10 @@ def test_eval_manifest_split_paths_and_answer_boundary(monkeypatch, tmp_path):
     t = convert()[0]
     assert 'PRIVATE_REFERENCE' not in json.dumps(W.public_task(t))
     assert t['source_benchmark'] == 'MeissaEval'
-    assert t['study_metadata']['declared_source_split'] == 'test'
-    assert t['study_metadata']['held_out_test'] is False
-    assert t['study_metadata']['independent_evaluation'] is None
-    assert t['study_runtime']['recorded_observations'] == []
+    assert t['external_metadata']['declared_source_split'] == 'test'
+    assert t['external_metadata']['held_out_test'] is False
+    assert t['external_metadata']['independent_evaluation'] is None
+    assert t['external_runtime']['recorded_observations'] == []
     output = tmp_path / 'prepared'
     monkeypatch.setattr(sys, 'argv', ['prepare.py', '--dataset', 'meissa-eval',
                         '--meissa-eval-manifest', str(manifest), '--output-root', str(output)])
@@ -246,12 +246,12 @@ def test_eval_manifest_split_paths_and_answer_boundary(monkeypatch, tmp_path):
                     reason='Meissa-SFT source is not installed')
 def test_sft_live_remains_training_data():
     t = next(C.meissa_tasks(image_mode='live'))
-    assert t['study_metadata']['protocol'] == 'meissa_live_image'
-    assert t['study_metadata']['data_role'] == 'training_trajectory'
-    assert not t['study_metadata']['held_out_test']
-    assert not t['study_metadata']['independent_evaluation']
-    assert t['study_runtime']['recorded_observations'] == []
-    env = environments.UserStudyEnv(t)
+    assert t['external_metadata']['protocol'] == 'meissa_live_image'
+    assert t['external_metadata']['data_role'] == 'training_trajectory'
+    assert not t['external_metadata']['held_out_test']
+    assert not t['external_metadata']['independent_evaluation']
+    assert t['external_runtime']['recorded_observations'] == []
+    env = environments.ExternalDataEnv(t)
     env.reset()
     result = env.call_tool('ZoomInSubfigure', {'image': 'img_original', 'param': '[250,250,750,750]'})
     assert result['mode'] == 'meissa_live_image' and 'output' in result
@@ -316,8 +316,8 @@ def test_runtime_proxy_override_and_resume(monkeypatch, tmp_path):
 @pytest.mark.parametrize('value', ['x=500 y=500', '[500,500]', [0,0,1000,1000],
                                     '[0,0,1001,1000]', '[500,0,100,1000]'])
 def test_zoom_invalid_arguments_leave_image_unchanged(monkeypatch, value):
-    monkeypatch.setattr(environments.UserStudyEnv, '_asset', staticmethod(lambda path: (png(), 'image/png')))
-    env = environments.UserStudyEnv(live_task())
+    monkeypatch.setattr(environments.ExternalDataEnv, '_asset', staticmethod(lambda path: (png(), 'image/png')))
+    env = environments.ExternalDataEnv(live_task())
     env.reset()
     result = env.call_tool('ZoomInSubfigure', {'image': 'img_original', 'param': value})
     assert result['error_type'] == 'invalid_arguments' and result['environment_failure'] is False

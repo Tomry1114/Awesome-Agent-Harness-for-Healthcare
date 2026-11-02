@@ -29,15 +29,15 @@ Return only a JSON object with verdict ("Correct" or "Wrong") and a concise reas
 def checkpoint():
     return {'id': 'gt_outcome', 'type': 'llm_judge', 'dimension': 'Outcome',
             'subdimension': 'gt_answer_correctness', 'provenance': 'augmented',
-            'measurement_family': 'source_outcome', 'check': {'method': 'study_gt_judge'}}
+            'measurement_family': 'source_outcome', 'check': {'method': 'external_gt_judge'}}
 
 
 def effective_checkpoints(bench, checkpoints):
     """Upgrade old prepared tasks at final scoring, without changing their inputs or hashes."""
     if bench not in BENCHMARKS or not checkpoints:
         return checkpoints
-    retained = [c for c in checkpoints if (c.get('check') or {}).get('method') != 'study_human_review']
-    if not any((c.get('check') or {}).get('method') == 'study_gt_judge' for c in retained):
+    retained = [c for c in checkpoints if (c.get('check') or {}).get('method') != 'external_human_review']
+    if not any((c.get('check') or {}).get('method') == 'external_gt_judge' for c in retained):
         retained.insert(0, checkpoint())
     return retained
 
@@ -51,7 +51,7 @@ def settings():
 
 
 def messages_for(task, answer):
-    meta = task.get('study_metadata') or {}
+    meta = task.get('external_metadata') or {}
     bench, kind = task.get('source_benchmark'), meta.get('task_kind')
     if meta.get('reference_kind') == 'teacher_response_not_independent_ground_truth':
         raise ValueError('teacher_response_is_not_ground_truth')
@@ -89,7 +89,7 @@ def score(cp, ctx, base):
     detail = {'version': VERSION, 'task_sha256': fingerprint(task, answer)[0],
               'answer_sha256': fingerprint(task, answer)[1], 'config': config,
               'threshold': 0.5, 'scope': 'GT answer correctness; not process or segmentation quality'}
-    result = dict(base, evaluator_kind='study_gt_judge', score=None, score_eligible=False,
+    result = dict(base, evaluator_kind='external_gt_judge', score=None, score_eligible=False,
                   judge_backend=config['model'], detail=detail,
                   judge={'model': config['model'], 'runs': 1, 'calls': 0, 'independence': 'not_established'})
     if any(t.strip() == 'API_BRAIN_ERROR' for t in ctx.get('final_texts') or []):
@@ -146,14 +146,14 @@ def merge_checkpoint(result, cp):
     merged = copy.deepcopy(result)
     cp = copy.deepcopy(cp)
     old = merged.get('checkpoints') or []
-    merged['expert_review'] = [c for c in old if c.get('evaluator_kind') == 'study_human_review']
-    merged['checkpoints'] = [c for c in old if c.get('evaluator_kind') not in ('study_gt_judge', 'study_human_review')]
+    merged['expert_review'] = [c for c in old if c.get('evaluator_kind') == 'external_human_review']
+    merged['checkpoints'] = [c for c in old if c.get('evaluator_kind') not in ('external_gt_judge', 'external_human_review')]
     merged['checkpoints'].append(cp)
     from scorers.aggregate_report import native_task_outcome_detail
     bench = (merged.get('provenance') or {}).get('fidelity', {}).get('source_benchmark')
     detail = native_task_outcome_detail(merged, bench)
-    merged.update(outcome_status=detail['outcome_status'], outcome_status_reason=detail['reason'], study_outcome=detail)
-    merged.setdefault('provenance', {})['study_outcome_judge'] = cp.get('detail', {}).get('config')
+    merged.update(outcome_status=detail['outcome_status'], outcome_status_reason=detail['reason'], external_outcome=detail)
+    merged.setdefault('provenance', {})['external_outcome_judge'] = cp.get('detail', {}).get('config')
     model = cp.get('judge_backend')
     agent_model = merged['provenance'].get('api_model_string') or str(
         merged['provenance'].get('agent_model') or '').split(' (')[0].strip()
@@ -161,8 +161,8 @@ def merge_checkpoint(result, cp):
     independence = ('shared_model_with_agent_or_tool' if model in (agent_model, tool_model) else 'not_established')
     cp.setdefault('judge', {})['independence'] = independence
     merged['provenance'].setdefault('judges', {})['outcome'] = {
-        'model': model, 'tier': 'study_gt_judge', 'independence': independence}
-    merged['provenance'].update(judge_model=model, judge_tier='study_gt_judge', judge_independence=independence)
+        'model': model, 'tier': 'external_gt_judge', 'independence': independence}
+    merged['provenance'].update(judge_model=model, judge_tier='external_gt_judge', judge_independence=independence)
     merged['provenance'].setdefault('fidelity', {})['metric_definition'] = 'gt_judged_outcome_plus_harness; expert_review_supplemental'
     # Recompute the harness checkpoint gate, without rebuilding seven-dimensional scores.
     from scorers.scoring import is_score_eligible
@@ -182,15 +182,15 @@ def overlay_result(result, bundle):
         return result
     artifact = json.loads(path.read_text())
     task = json.loads((Path(bundle) / 'task.json').read_text())
-    answer = (result.get('study_review') or {}).get('answer', '')
+    answer = (result.get('external_review') or {}).get('answer', '')
     th, ah = fingerprint(task, answer)
-    binding = result.get('study_review') or {}
+    binding = result.get('external_review') or {}
     saved = artifact['outcome_rescore']
     if (task.get('source_benchmark') not in BENCHMARKS or artifact.get('task_id') != result.get('task_id')
             or (th, ah) != (binding.get('task_sha256'), binding.get('answer_sha256'))
             or (th, ah) != (saved.get('task_sha256'), saved.get('answer_sha256'))):
         raise ValueError('GT judgement belongs to another task, reference or answer')
-    cps = [c for c in artifact.get('checkpoints', []) if c.get('evaluator_kind') == 'study_gt_judge']
+    cps = [c for c in artifact.get('checkpoints', []) if c.get('evaluator_kind') == 'external_gt_judge']
     if len(cps) != 1 or (th, ah) != (cps[0]['detail'].get('task_sha256'), cps[0]['detail'].get('answer_sha256')):
         raise ValueError('GT checkpoint binding is invalid')
     return merge_checkpoint(result, cps[0])

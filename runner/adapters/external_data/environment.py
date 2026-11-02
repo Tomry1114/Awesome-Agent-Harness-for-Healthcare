@@ -9,14 +9,14 @@ from environment_base import EnvironmentAdapter
 from .conversion import ROOT, TOOLS
 
 
-class UserStudyEnv(EnvironmentAdapter):
-    type = 'study_case'
+class ExternalDataEnv(EnvironmentAdapter):
+    type = 'external_data'
     IMPLEMENTED_TOOLS = tuple(TOOLS)
     BACKEND_DESCRIPTION = 'source_case; live_pixel_crop; frozen_exact_request_observations'
 
     def __init__(self, task, **kwargs):
         super().__init__(task)
-        self.runtime = task.get('study_runtime') or {}
+        self.runtime = task.get('external_runtime') or {}
         self.images = {}
         self.last_image = None
         self.serial = 0
@@ -35,11 +35,11 @@ class UserStudyEnv(EnvironmentAdapter):
     @staticmethod
     def _asset(path):
         path = (ROOT / path).resolve()
-        roots = [ROOT / 'user_study/Meissa-SFT/images', ROOT / 'user_study/Meissa-Evaluation/images']
+        roots = [ROOT / 'external_data/Meissa-SFT/images', ROOT / 'external_data/Meissa-Evaluation/images']
         if not any(root.resolve() in path.parents for root in roots):
-            raise ValueError('Study image is outside the permitted asset directories')
+            raise ValueError('External image is outside the permitted asset directories')
         if not path.is_file():
-            raise ValueError('Missing study image')
+            raise ValueError('Missing external image')
         return path.read_bytes(), 'image/png' if path.suffix.lower() == '.png' else 'image/jpeg'
 
     def _load_images(self, items):
@@ -47,7 +47,7 @@ class UserStudyEnv(EnvironmentAdapter):
         for item in items:
             data, mime = self._asset(item['path'])
             if item.get('sha256') and hashlib.sha256(data).hexdigest() != item['sha256']:
-                raise ValueError('Study image changed after task preparation')
+                raise ValueError('External image changed after task preparation')
             image_id = item['asset_id']
             self.images[image_id] = (data, mime)
             self.last_image = image_id
@@ -85,7 +85,7 @@ class UserStudyEnv(EnvironmentAdapter):
                     for name in ('SegmentRegionAroundPoint', 'BioMedParseTextSeg')}}
         return observation
 
-    def study_provenance(self):
+    def external_provenance(self):
         if self.image_backend:
             return self.image_backend.provenance()
         return self.patient.provenance() if self.patient else None

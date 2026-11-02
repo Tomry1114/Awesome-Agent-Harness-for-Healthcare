@@ -9,8 +9,8 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path[:0] = [str(ROOT / 'runner'), str(ROOT / 'runner/scorers')]
 import aggregate_report
 import scoring
-from adapters.user_study import outcome_judge as J
-from adapters.user_study.scoring import fingerprint
+from adapters.external_data import outcome_judge as J
+from adapters.external_data.scoring import fingerprint
 
 
 def rescore(bundle):
@@ -22,7 +22,7 @@ def rescore(bundle):
     task = json.loads((bundle / 'task.json').read_text())
     if task.get('source_benchmark') not in J.BENCHMARKS:
         raise ValueError('Only MedRBench and MeissaEval have GT outcome protocols')
-    binding = result['study_review']
+    binding = result['external_review']
     answer = binding['answer']
     th, ah = fingerprint(task, answer)
     if (th, ah) != (binding['task_sha256'], binding['answer_sha256']) or task['task_id'] != result['task_id']:
@@ -30,7 +30,7 @@ def rescore(bundle):
     if (bundle / 'result.outcome.json').exists():
         raise FileExistsError('A judgement already exists; archive it explicitly before rejudging')
     import judges
-    judges.spec('study_gt_outcome')  # Same explicit Judge model binding as a normal run.
+    judges.spec('external_gt_outcome')  # Same explicit Judge model binding as a normal run.
     cp = scoring.run_checkpoint(J.checkpoint(), {'task': task, 'reference': task['reference'], 'final_texts': [answer]})
     # Use normal serialization, including error_class and all evaluator provenance.
     cp = scoring.build_result(task, [], [cp], {})['checkpoints'][0]
@@ -55,7 +55,7 @@ def main():
         report = aggregate_report.build(str(args.bundle.parent), bench, task_ids=[result['task_id']])
         with args.report.open('x') as stream:
             json.dump(report, stream, indent=2, ensure_ascii=False)
-    print(json.dumps({'result': str(path), 'outcome': result['study_outcome']}, ensure_ascii=False))
+    print(json.dumps({'result': str(path), 'outcome': result['external_outcome']}, ensure_ascii=False))
 
 
 if __name__ == '__main__':

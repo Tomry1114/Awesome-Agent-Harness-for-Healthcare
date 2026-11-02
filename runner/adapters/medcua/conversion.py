@@ -16,7 +16,7 @@ def prepare(output_root=None):
     for entry in catalog['tasks']:
         goal = entry['goal']
         rows.append({'task_id': 'MEDCUA-' + entry['env_id'][len('medgym.'):] ,
-                     'source_benchmark': 'MedCUABench', 'domain': 'medical_user_study', 'modality': 'gui_web',
+                     'source_benchmark': 'MedCUABench', 'domain': 'medical_external_data', 'modality': 'gui_web',
                      'environment': {'type': 'medcua_native', 'adapter': 'medcua_native', 'config': {}},
                      'goal': goal, 'context': {'text': goal, 'action_reference': catalog['action_description']},
                      'available_tools': [TOOL],
@@ -26,7 +26,7 @@ def prepare(output_root=None):
                                       'provenance': 'native', 'measurement_family': 'source_outcome',
                                       'check': {'method': 'medcua_native'}}],
                      'scoring': {'mode': 'all_pass'}, 'expected_outcome': {'answer_kind': 'browser_state_and_chat'},
-                     'study_metadata': {**{k: entry[k] for k in ('scenario', 'setting', 'backend', 'difficulty', 'scored')},
+                     'external_metadata': {**{k: entry[k] for k in ('scenario', 'setting', 'backend', 'difficulty', 'scored')},
                                         'source_group': entry['base_task_id'], 'protocol': 'screenshot_only',
                                         'source_commit': pin['commit'], 'source_tree_sha256': pin['tree_sha256'],
                                         'deviations': ['Native checker feedback chat and rewards are hidden from the agent.',
@@ -34,7 +34,7 @@ def prepare(output_root=None):
                                                        'Final prose is not submitted to the native checker; use send_msg_to_user.']},
                      'native_runtime': {'env_id': entry['env_id'], 'seed': 42, 'max_steps': 30,
                                         'source_tree_sha256': pin['tree_sha256']}})
-    if len(rows) != 432 or len({x['study_metadata']['source_group'] for x in rows}) != 216:
+    if len(rows) != 432 or len({x['external_metadata']['source_group'] for x in rows}) != 216:
         raise ValueError('Unexpected MedCUA release task universe')
     out = (output_root or ROOT / 'benchmark_dataprocess') / 'MedCUABench'
     out.mkdir(parents=True, exist_ok=True)
@@ -44,7 +44,7 @@ def prepare(output_root=None):
     report = {'benchmark': 'MedCUABench', 'base_tasks': 216, 'task_variants': len(rows),
               'settings': ['intent', 'step'], 'source_commit': pin['commit'], 'source_tree_sha256': pin['tree_sha256'],
               'native_checker': True, 'native_safety_dimensions': 5, 'native_safety_is_harness_seven': False,
-              'backend_tasks': {b: sum(x['study_metadata']['backend'] == b for x in rows) for b in ('html', 'openemr', 'ohif')},
+              'backend_tasks': {b: sum(x['external_metadata']['backend'] == b for x in rows) for b in ('html', 'openemr', 'ohif')},
               'readiness': 'HTML requires installed Chromium; OpenEMR/OHIF require additional services. Imported does not mean agent-evaluated.'}
     (out / 'conversion_report.json').write_text(json.dumps(report, indent=2) + '\n')
     print(json.dumps(report))

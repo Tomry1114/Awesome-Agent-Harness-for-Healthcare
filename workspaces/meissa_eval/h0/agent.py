@@ -215,30 +215,30 @@ class BaseAgentProgram(object):
 class AgentProgram(BaseAgentProgram):
     """Use the established conversation loop, delivering images as multimodal content."""
     def __init__(self, task, workspace, chat):
-        self._study_images = []
-        self._study_seen = set()
+        self._external_images = []
+        self._external_seen = set()
         def image_chat(messages, *args, **kwargs):
-            if self._study_images:
-                messages.append({'role': 'user', 'content': self._study_images})
-                self._study_images = []
+            if self._external_images:
+                messages.append({'role': 'user', 'content': self._external_images})
+                self._external_images = []
             return chat(messages, *args, **kwargs)
         self.initialize_base(task, workspace, image_chat)
 
-    def _study_clean(self, value):
+    def _external_clean(self, value):
         if isinstance(value, dict):
             url = value.get('url')
             if isinstance(url, str) and url.startswith('data:image/'):
                 key = (value.get('image_id'), value.get('sha256'))
-                if key not in self._study_seen:
-                    self._study_seen.add(key)
-                    self._study_images.extend([
+                if key not in self._external_seen:
+                    self._external_seen.add(key)
+                    self._external_images.extend([
                         {'type': 'text', 'text': 'Available image ID: ' + str(value.get('image_id'))},
                         {'type': 'image_url', 'image_url': {'url': url}}])
                 return {k: v for k, v in value.items() if k != 'url'}
-            return {k: self._study_clean(v) for k, v in value.items()}
+            return {k: self._external_clean(v) for k, v in value.items()}
         if isinstance(value, list):
-            return [self._study_clean(v) for v in value]
+            return [self._external_clean(v) for v in value]
         return value
 
     def act(self, state):
-        return BaseAgentProgram.act(self, self._study_clean(state))
+        return BaseAgentProgram.act(self, self._external_clean(state))

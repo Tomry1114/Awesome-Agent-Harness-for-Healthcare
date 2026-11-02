@@ -1,5 +1,5 @@
 benchmark: MeissaEval
-env_type: study_case
+env_type: external_data
 agent_program: agent.py
 system_prompt: system_prompt.md
 agent_program_text: agent_text.py

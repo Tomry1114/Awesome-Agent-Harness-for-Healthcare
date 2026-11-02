@@ -905,11 +905,11 @@ def _canon_fhir_tool(tool, args):
 # (agent/tool_registry.py + tools/fhir_api_functions.py + tools/file_tools.py) so the agent gets the
 # FAITHFUL tool surface: full JSON schemas (code/date/count/page_limit filters), real Bundle.link[next]
 # pagination, and structured create helpers. It is the only env registered for "fhir".
-from adapters.user_study.environment import UserStudyEnv
+from adapters.external_data.environment import ExternalDataEnv
 from adapters.medcua.environment import MedCUAEnv
 
 ENV_REGISTRY = {"fhir": PbNativeEnv, "gui": GuiEnvReal, "tool_sandbox": ToolSandboxEnv,
-                "study_case": UserStudyEnv, "medcua_native": MedCUAEnv}
+                "external_data": ExternalDataEnv, "medcua_native": MedCUAEnv}
 
 def make_env(task, **kw):
     et = (task.get("environment") or {}).get("type")

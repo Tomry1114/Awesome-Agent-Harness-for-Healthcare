@@ -33,7 +33,7 @@ def select_tasks(bench, args):
         dims = {c.get("dimension") for c in t.get("checkpoints", [])}
         subs = {c.get("subdimension") for c in t.get("checkpoints", [])}
         if args.task_id and t["task_id"] != args.task_id: continue
-        if getattr(args, "study_protocol", None) and (t.get("study_metadata") or {}).get("protocol") != args.study_protocol:
+        if getattr(args, "external_protocol", None) and (t.get("external_metadata") or {}).get("protocol") != args.external_protocol:
             continue
         if args.has_dimension and args.has_dimension not in dims: continue
         if args.has_subdimension and args.has_subdimension not in subs: continue
@@ -307,8 +307,8 @@ def main():
     ap.add_argument("--fhir-base", default=None)
     ap.add_argument("--reset-mode", default="none", choices=["none", "restore_pristine", "per_task"])
     ap.add_argument("--task-id", default=None)
-    ap.add_argument("--study-protocol", default=None,
-                    help="filter prepared study tasks by protocol, such as free_turn")
+    ap.add_argument("--external-protocol", default=None,
+                    help="filter prepared external-data tasks by protocol, such as free_turn")
     ap.add_argument("--offset", type=int, default=0)   # shard: skip first OFFSET tasks
     ap.add_argument("--task-ids-file", default=None)   # run EXACTLY these task_ids (one per line)
     ap.add_argument("--has-dimension", default=None)

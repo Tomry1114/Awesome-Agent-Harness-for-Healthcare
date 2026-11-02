@@ -26,33 +26,33 @@
     },
     "MedRBench": {
       "prefix": "MEDR",
-      "domain": "medical_user_study",
+      "domain": "medical_external_data",
       "modalities": [
         "text",
         "image_text"
       ],
-      "environment": "study_case"
+      "environment": "external_data"
     },
     "MeissaEval": {
       "prefix": "MEISSAEVAL",
-      "domain": "medical_user_study",
+      "domain": "medical_external_data",
       "modalities": [
         "image_text"
       ],
-      "environment": "study_case"
+      "environment": "external_data"
     },
     "MeissaSFT": {
       "prefix": "MEISSA",
-      "domain": "medical_user_study",
+      "domain": "medical_external_data",
       "modalities": [
         "text",
         "image_text"
       ],
-      "environment": "study_case"
+      "environment": "external_data"
     },
     "MedCUABench": {
       "prefix": "MEDCUA",
-      "domain": "medical_user_study",
+      "domain": "medical_external_data",
       "modalities": [
         "gui_web"
       ],
@@ -63,7 +63,7 @@
     "fhir",
     "gui",
     "tool_sandbox",
-    "study_case",
+    "external_data",
     "medcua_native"
   ],
   "_doc": "Supported benchmarks/adapters. A new dataset adds an entry here (prefix + domain + modalities + environment); the JSON Schema stays open. validate_tasks.py enforces registry membership."

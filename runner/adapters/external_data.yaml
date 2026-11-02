@@ -1,6 +1,6 @@
-name: study_case
+name: external_data
 substrate: perceptual
-clinical_modules: [study_grounding]
+clinical_modules: [external_grounding]
 manifest:
   subject:
     type: case

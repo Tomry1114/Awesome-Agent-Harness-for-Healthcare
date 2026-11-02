@@ -207,14 +207,14 @@ def resume_key(task_id, workspace_digest, binding, agent_name, max_steps, task=N
     if execution_mode != "harness":
         key["execution_mode"] = execution_mode
     if (task or {}).get('source_benchmark') in ('MedRBench', 'MeissaEval'):
-        from adapters.user_study.outcome_judge import settings
-        key['study_outcome_judge'] = settings()
-    if ((task or {}).get('study_runtime') or {}).get('medr_interaction'):
-        from adapters.user_study.medr_patient import patient_settings
+        from adapters.external_data.outcome_judge import settings
+        key['external_outcome_judge'] = settings()
+    if ((task or {}).get('external_runtime') or {}).get('medr_interaction'):
+        from adapters.external_data.medr_patient import patient_settings
         key['medr_patient_service'] = patient_settings()
         key['task_sha256'] = hashlib.sha256(json.dumps(task, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
-    if ((task or {}).get('study_runtime') or {}).get('meissa_image'):
-        from adapters.user_study.meissa_image import settings
+    if ((task or {}).get('external_runtime') or {}).get('meissa_image'):
+        from adapters.external_data.meissa_image import settings
         key['meissa_image_service'] = settings()
         key['task_sha256'] = hashlib.sha256(json.dumps(task, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
     if (task or {}).get('native_runtime'):
@@ -293,8 +293,8 @@ def score_checkpoints(checkpoints, ctx, env_type):
     a task's wall time; PhysicianBench's native pytest checkpoints are separate processes that only READ the FHIR store
     and the job dir (the upstream tests make GET requests; pytest's cache is off, each has its own judge log).
     HealthAdminBench (gui) keeps one at a time."""
-    if env_type == 'study_case':
-        from adapters.user_study.outcome_judge import effective_checkpoints
+    if env_type == 'external_data':
+        from adapters.external_data.outcome_judge import effective_checkpoints
         checkpoints = effective_checkpoints((ctx.get('task') or {}).get('source_benchmark'), checkpoints)
     if env_type not in ("tool_sandbox", "fhir") or len(checkpoints) < 2:
         return [scoring.run_checkpoint(cp, ctx) for cp in checkpoints]
@@ -1391,17 +1391,17 @@ def _run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, j
                 "protocol_fidelity": _protocol_fidelity,
                 "environment_fidelity": _env_fidelity,
                 "metric_definition": "native_plus_harness"}
-    if env_type == "study_case":
+    if env_type == "external_data":
         fidelity.update(environment_fidelity="source_case_with_limited_recorded_tools",
-                        prompt_fidelity=(task.get("study_metadata") or {}).get("protocol"),
+                        prompt_fidelity=(task.get("external_metadata") or {}).get("protocol"),
                         metric_definition=("gt_judged_outcome_plus_harness; expert_review_supplemental"
                                            if _bench_name in ("MedRBench", "MeissaEval") else
                                            "expert_review_outcome_plus_harness; reference_agreement_proxy_only"),
-                        study_metadata=task.get("study_metadata"))
-        study_env = env.study_provenance()
-        if study_env:
-            fidelity.update(environment_fidelity=study_env.get("environment_fidelity", "source_case"),
-                            study_environment=study_env)
+                        external_metadata=task.get("external_metadata"))
+        external_env = env.external_provenance()
+        if external_env:
+            fidelity.update(environment_fidelity=external_env.get("environment_fidelity", "source_case"),
+                            external_environment=external_env)
     provenance = {"agent_model": agent_model,
                   # the literal model string sent to the gateway; equals agent_model unless
                   # MH_MODEL_LABEL was set to name a different backend the alias maps to.
@@ -1419,14 +1419,14 @@ def _run_task(bench, task_id, agent_name="stub", fhir_base=None, max_steps=12, j
                   "prompt_provenance": _prompt_prov, "git_sha": _resolve_git_sha()}
     result = scoring.build_result(task, trajectory, results, provenance)
     for cp in result["checkpoints"]:
-        if cp.get("evaluator_kind") == "study_gt_judge":
-            result["provenance"]["study_outcome_judge"] = (cp.get("detail") or {}).get("config")
+        if cp.get("evaluator_kind") == "external_gt_judge":
+            result["provenance"]["external_outcome_judge"] = (cp.get("detail") or {}).get("config")
             cp.setdefault("judge", {})["independence"] = _outc.get("independence", "not_established")
-    if env_type == "study_case":
-        from adapters.user_study.scoring import fingerprint, review_key
+    if env_type == "external_data":
+        from adapters.external_data.scoring import fingerprint, review_key
         answer = "\n".join(final_texts)
         task_hash, answer_hash = fingerprint(task, answer)
-        result["study_review"] = {"answer": answer, "task_sha256": task_hash,
+        result["external_review"] = {"answer": answer, "task_sha256": task_hash,
                                   "answer_sha256": answer_hash, "review_key": review_key(task, answer)}
     # agent vs harness credit beside the native score: per-origin counts, the final's author, harness-written files and
     # persisted fields, per-checkpoint credit, native and agent-credited outcome (runner/scorers/credit.py). A
@@ -1585,7 +1585,7 @@ def main():
     if args.out:
         r = {k: v for k, v in result.items() if not k.startswith("_")}
         json.dump(r, open(args.out, "w"), indent=1, ensure_ascii=False); print("wrote", args.out)
-        if result.get("study_review"):
+        if result.get("external_review"):
             with open(os.path.join(os.path.dirname(os.path.abspath(args.out)), "task.json"), "w") as task_file:
                 json.dump(load_task(args.bench, args.task), task_file, ensure_ascii=False, indent=2)
         try:

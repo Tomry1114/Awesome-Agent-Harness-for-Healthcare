@@ -157,7 +157,7 @@ def _remap(results, bench):
 
 #: checkpoints we inject that no benchmark defines -- never part of a native rate
 NON_NATIVE_CHECKPOINT_IDS = ("cp_admin_compliance",)
-STUDY_BENCHMARKS = frozenset({"MedRBench", "MeissaSFT", "MeissaEval"})
+EXTERNAL_BENCHMARKS = frozenset({"MedRBench", "MeissaSFT", "MeissaEval"})
 #: evaluator kinds whose verdict comes from a model judge
 JUDGE_EVALUATOR_KINDS = ("gateway_rubric_text", "gacc_judge", "verification_judge", "governance_4rule",
                          "multimodal_judge")
@@ -203,9 +203,9 @@ def native_checkpoints(result, bench):
     cps = [c for c in ((result or {}).get("checkpoints") or [])
            if isinstance(c, dict) and c.get("id") not in NON_NATIVE_CHECKPOINT_IDS]
     if bench in ("MedRBench", "MeissaEval"):
-        return [c for c in cps if c.get("evaluator_kind") == "study_gt_judge"]
+        return [c for c in cps if c.get("evaluator_kind") == "external_gt_judge"]
     if bench == "MeissaSFT":
-        return [c for c in cps if c.get("evaluator_kind") == "study_human_review"]
+        return [c for c in cps if c.get("evaluator_kind") == "external_human_review"]
     if bench == "MedCUABench":
         return [c for c in cps if c.get("evaluator_kind") == "medcua_native_checker"]
     if bench == "HealthAdminBench":
@@ -281,8 +281,8 @@ def native_task_outcome_detail(result, bench):
                            "capability_excluded": "the environment lacks a capability the task needs"}[er],
                 "n_outcome_checkpoints": 0, "n_judge_errors": 0}
     cps = [c for c in (r.get("checkpoints") or []) if isinstance(c, dict)]
-    if bench in STUDY_BENCHMARKS:
-        if ((r.get("study_review") or {}).get("answer") or "").strip() == "API_BRAIN_ERROR":
+    if bench in EXTERNAL_BENCHMARKS:
+        if ((r.get("external_review") or {}).get("answer") or "").strip() == "API_BRAIN_ERROR":
             return {"outcome": None, "native_strict": None, "outcome_status": "evaluation_error",
                     "reason": "agent_gateway_failure", "n_outcome_checkpoints": 0, "n_judge_errors": 0}
         native = native_checkpoints(r, bench)
@@ -352,7 +352,7 @@ def native_task_score(result, bench):
     d = native_task_outcome_detail(result, bench)
     if d["outcome"] is None:
         return None
-    if bench in STUDY_BENCHMARKS:
+    if bench in EXTERNAL_BENCHMARKS:
         values = [c["score"] for c in native_checkpoints(result, bench) if is_score_eligible(c)]
         return sum(values) / len(values) if values else None
     cps = [c for c in ((result or {}).get("checkpoints") or []) if isinstance(c, dict)]
@@ -1076,7 +1076,7 @@ def _outcome_metric(results, bench=None):
     for r in results:
         for c in (r.get("checkpoints") or []):
             if (c.get("dimension") == "Outcome" and c.get("checkpoint_status") in ("passed", "failed")
-                    and (bench not in STUDY_BENCHMARKS or c in native_checkpoints(r, bench))):
+                    and (bench not in EXTERNAL_BENCHMARKS or c in native_checkpoints(r, bench))):
                 ntot += 1; npass += 1 if c.get("checkpoint_status") == "passed" else 0
     gacc = [c.get("score") for r in results for c in (r.get("checkpoints") or [])
             if c.get("evaluator_kind") == "gacc_judge" and isinstance(c.get("score"), (int, float))]
@@ -1107,7 +1107,7 @@ def _outcome_metric(results, bench=None):
     _harness_block = {"harness_gate_success": round(_harness_ok / n, 3) if n else None,
                       "overall_success_tasks": "%d/%d" % (_harness_ok, n),
                       "note": "harness gate (all-checkpoints-pass), NOT the source Outcome; reported separately"}
-    if bench in STUDY_BENCHMARKS:
+    if bench in EXTERNAL_BENCHMARKS:
         metric = "gt_judged_task_success" if bench in ("MedRBench", "MeissaEval") else "expert_reviewed_task_success"
         return {"score": round(_native_ok / _native_n, 3) if _native_n else None,
                 "metric": metric, "n_tasks": _native_n, "native_task_universe": n,
@@ -1237,12 +1237,12 @@ def build(agent_dir, bench, task_ids=None):
                    "and are NEVER listed as strict). Strictness is read from the FINAL harness_seven blocks, "
                    "NOT the legacy checkpoint_diagnostics. Check per-dim evidence_tier / zero_variance / "
                    "informativeness before averaging. Never report '7/7' as strict.")}
-    study_extensions = {}
-    if bench in STUDY_BENCHMARKS or bench == "MedCUABench":
+    external_extensions = {}
+    if bench in EXTERNAL_BENCHMARKS or bench == "MedCUABench":
         from process_evaluation import aggregate as process_aggregate
         from seven_profile import aggregate as seven_aggregate
         profile = seven_aggregate(agent_dir, bench, task_ids)
-        study_extensions = {
+        external_extensions = {
             "process_evaluation": process_aggregate(agent_dir, bench, task_ids),
             "unified_seven_profile": profile,
             "formal_comparison": {
@@ -1253,7 +1253,7 @@ def build(agent_dir, bench, task_ids=None):
                     if item["admission"]["formal_analysis_eligible"]}], bench),
                 "note": "Formal statistics include only complete frozen seven-dimensional assessments."}}
     return {
-        **study_extensions,
+        **external_extensions,
         "source": agent_dir,
         "bench": bench,
         "n_tasks": len(results),

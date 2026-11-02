@@ -33,9 +33,9 @@ _CLINICAL_DIR = os.path.join(_RUNNER_DIR, "policies", "clinical")
 # env_type -> DEFAULT adapter (and the substrate it implies). env_type is a convenience selector, NOT an
 # identity: override the adapter to run another dataset of the same class.
 _DEFAULT_ADAPTER_BY_ENV = {"fhir": "hapi_fhir", "gui": "admin_portal", "tool_sandbox": "image_tool_sandbox",
-                           "study_case": "study_case", "medcua_native": "medcua_native"}
+                           "external_data": "external_data", "medcua_native": "medcua_native"}
 _SUBSTRATE_BY_ENV = {"fhir": "structured_record", "gui": "interactive_gui", "tool_sandbox": "perceptual",
-                     "study_case": "perceptual", "medcua_native": "interactive_gui"}
+                     "external_data": "perceptual", "medcua_native": "interactive_gui"}
 
 
 def _read(dirpath, name):

@@ -21,20 +21,20 @@ def review_key(task, answer):
 def reviewed_result(result, bundle):
     """Overlay expert outcomes on the process-score bundle, binding to its exact run input."""
     path = Path(bundle) / 'result.reviewed.json'
-    if not result.get('study_review') or not path.is_file():
+    if not result.get('external_review') or not path.is_file():
         return result
     reviewed = json.loads(path.read_text())
-    if reviewed.get('task_id') != result.get('task_id') or reviewed.get('study_review') != result['study_review']:
+    if reviewed.get('task_id') != result.get('task_id') or reviewed.get('external_review') != result['external_review']:
         raise ValueError('Expert result belongs to another task or answer')
     merged = dict(result)
     bench = (result.get('provenance') or {}).get('fidelity', {}).get('source_benchmark')
     if bench in ('MedRBench', 'MeissaEval'):
         merged['expert_review'] = [c for c in reviewed.get('checkpoints', [])
-                                   if c.get('evaluator_kind') == 'study_human_review']
+                                   if c.get('evaluator_kind') == 'external_human_review']
         merged['review_rescore'] = reviewed.get('review_rescore')
         return merged
     for key in ('checkpoints', 'success', 'evaluation_status', 'outcome_status', 'outcome_status_reason',
-                'study_outcome', 'review_rescore'):
+                'external_outcome', 'review_rescore'):
         merged[key] = reviewed[key]
     return merged
 
@@ -45,23 +45,23 @@ def score(cp, ctx, base):
     method = cp['check']['method']
     if any(text.strip() == 'API_BRAIN_ERROR' for text in (ctx.get('final_texts') or [])):
         return dict(base, checkpoint_status='error', failure_mode='environment_error', score_eligible=False,
-                    evaluator_kind='study_human_review' if method == 'study_human_review' else 'study_reference_proxy',
+                    evaluator_kind='external_human_review' if method == 'external_human_review' else 'external_reference_proxy',
                     detail={'error': 'agent_gateway_failure; no evaluable answer'})
-    if method == 'study_reference_agreement':
+    if method == 'external_reference_agreement':
         target = str((ctx.get('reference') or {}).get('gold_answer') or '')
         normalize = lambda s: re.sub(r'\s+', ' ', s).strip().casefold()
         if not target.strip() or not answer.strip():
             return dict(base, checkpoint_status='skipped', failure_mode=None, score_eligible=False,
-                        skip_reason='missing_answer_or_reference', evaluator_kind='study_reference_proxy')
+                        skip_reason='missing_answer_or_reference', evaluator_kind='external_reference_proxy')
         equal = normalize(answer) == normalize(target)
         return dict(base, checkpoint_status='passed' if equal else 'failed', score=float(equal),
-                    failure_mode=None, score_eligible=False, evaluator_kind='study_reference_proxy',
+                    failure_mode=None, score_eligible=False, evaluator_kind='external_reference_proxy',
                     detail={'meaning': 'normalized exact reference agreement; not clinical correctness'})
-    folder = os.environ.get('MH_STUDY_REVIEWS_DIR')
+    folder = os.environ.get('MH_EXTERNAL_REVIEWS_DIR')
     path = Path(folder) / (review_key(task, answer) + '.json') if folder else None
     if path is None or not path.is_file():
         return dict(base, checkpoint_status='skipped', failure_mode=None, score_eligible=False,
-                    skip_reason='human_review_pending', evaluator_kind='study_human_review')
+                    skip_reason='human_review_pending', evaluator_kind='external_human_review')
     try:
         review = json.loads(path.read_text())
         if not isinstance(review, dict):
@@ -78,8 +78,8 @@ def score(cp, ctx, base):
         passed = value >= 0.5
         return dict(base, checkpoint_status='passed' if passed else 'failed', score=value,
                     failure_mode=None if passed else 'agent_failure', score_eligible=True,
-                    evaluator_kind='study_human_review', detail={'reviewer': review['reviewer'],
+                    evaluator_kind='external_human_review', detail={'reviewer': review['reviewer'],
                     'reviewer_role': review['reviewer_role'], 'threshold': 0.5, 'review_key': path.stem})
     except (ValueError, OSError) as error:
         return dict(base, checkpoint_status='error', failure_mode='verifier_error', score_eligible=False,
-                    evaluator_kind='study_human_review', detail={'error': str(error)})
+                    evaluator_kind='external_human_review', detail={'error': str(error)})

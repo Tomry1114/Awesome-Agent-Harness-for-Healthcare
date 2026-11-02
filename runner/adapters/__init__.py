@@ -45,9 +45,9 @@ class MedctaAdapter(HarnessAdapter):
 
 
 class MedRAdapter(HarnessAdapter):
-    env_type = "study_case"
+    env_type = "external_data"
     name = "MedRBench"
-    manifest_yaml = "runner/adapters/study_case.yaml"
+    manifest_yaml = "runner/adapters/external_data.yaml"
 
 
 class MeissaEvalAdapter(MedRAdapter):
@@ -66,7 +66,7 @@ class MedCUAAdapter(HarnessAdapter):
 
 # -- registry -------------------------------------------------------------------------------------
 _BY_ENV = {FHIR: PBAdapter, GUI: HABAdapter, TOOL_SANDBOX: MedctaAdapter,
-           "study_case": MedRAdapter, "medcua_native": MedCUAAdapter}
+           "external_data": MedRAdapter, "medcua_native": MedCUAAdapter}
 _BY_BENCH = {cls.name: cls for cls in (PBAdapter, HABAdapter, MedctaAdapter,
                                         MedRAdapter, MeissaEvalAdapter, MeissaSFTAdapter, MedCUAAdapter)}
 

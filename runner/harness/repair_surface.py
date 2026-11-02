@@ -123,7 +123,7 @@ class FhirRepairSurface(RepairSurface):     # FHIR resource path / planned actio
 
 class AnswerRepairSurface(RepairSurface):   # claims / observations / evidence spans in a single-shot answer
     name = "answer"
-    env_types = ("tool_sandbox", "study_case")
+    env_types = ("tool_sandbox", "external_data")
 
     def root(self, state, candidate):
         # the answer is the candidate (before_final), not env state

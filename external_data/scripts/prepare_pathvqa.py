@@ -14,8 +14,8 @@ import pyarrow.parquet as pq
 from hub_download import sha256
 
 ROOT = Path(__file__).resolve().parents[2]
-DEST = ROOT / 'user_study/Meissa-Evaluation'
-SFT = ROOT / 'user_study/Meissa-SFT'
+DEST = ROOT / 'external_data/Meissa-Evaluation'
+SFT = ROOT / 'external_data/Meissa-SFT'
 
 
 def normalized(text):

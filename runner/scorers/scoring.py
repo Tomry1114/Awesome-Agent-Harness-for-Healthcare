@@ -148,8 +148,8 @@ def _ev_deterministic(cp, ctx, base):
     if chk.get("method") == "medcua_native":
         from adapters.medcua.scoring import score
         return score(cp, ctx, base)
-    if chk.get("method") in ("study_human_review", "study_reference_agreement"):
-        from adapters.user_study.scoring import score
+    if chk.get("method") in ("external_human_review", "external_reference_agreement"):
+        from adapters.external_data.scoring import score
         return score(cp, ctx, base)
     if chk.get("method") in ("toolset_contains", "toolset_match"):  # tool-SELECTION (3-class: required/optional/alternative)
         # Do NOT treat reference.sufficient_tools as MANDATORY. They are SUFFICIENT/ALTERNATIVE
@@ -452,8 +452,8 @@ _LEGACY_LLM_SUBDIM = {"context_grounding", "safety_governance", "evidence_verifi
 
 def _ev_llm_judge(cp, ctx, base):
     chk = cp.get("check") or {}
-    if chk.get("method") == "study_gt_judge":
-        from adapters.user_study.outcome_judge import score
+    if chk.get("method") == "external_gt_judge":
+        from adapters.external_data.outcome_judge import score
         return score(cp, ctx, base)
     if chk.get("method") == "medcua_native":
         from adapters.medcua.scoring import score

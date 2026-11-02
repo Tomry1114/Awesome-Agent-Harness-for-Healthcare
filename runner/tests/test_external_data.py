@@ -17,8 +17,8 @@ import run
 import harness
 import scoring
 import aggregate_report as AR
-from adapters.user_study import conversion as C
-from adapters.user_study.scoring import fingerprint, review_key
+from adapters.external_data import conversion as C
+from adapters.external_data.scoring import fingerprint, review_key
 
 
 def task(bench='MeissaSFT'):
@@ -27,15 +27,15 @@ def task(bench='MeissaSFT'):
                        kind='fixture', group='fixture', names=list(C.TOOLS))
 
 
-@pytest.mark.skipif(not (ROOT / 'user_study/MedR-Bench/data/MedRBench').is_dir() or
-                    not (ROOT / 'user_study/Meissa-SFT/data/train.jsonl').is_file(),
+@pytest.mark.skipif(not (ROOT / 'external_data/MedR-Bench/data/MedRBench').is_dir() or
+                    not (ROOT / 'external_data/Meissa-SFT/data/train.jsonl').is_file(),
                     reason='Pinned upstream study sources are not installed')
 def test_real_conversion_public_boundary():
     medr = next(C.medr_tasks())
-    assert medr['study_metadata']['protocol'] == 'oracle_case_summary'
+    assert medr['external_metadata']['protocol'] == 'oracle_case_summary'
     for t in [medr, next(C.meissa_tasks())]:
         public = W.public_task(t)
-        assert not {'reference', 'study_runtime', 'study_metadata', 'checkpoints'} & public.keys()
+        assert not {'reference', 'external_runtime', 'external_metadata', 'checkpoints'} & public.keys()
         assert '<think>' not in t['reference']['gold_answer']
         assert set(public) <= {'task_id', 'goal', 'context', 'environment', 'available_tools', 'domain', 'modality'}
 
@@ -47,11 +47,11 @@ def test_image_crop_and_frozen_request_binding(monkeypatch):
     def asset(path):
         assert path == 'initial.png'
         return original, 'image/png'
-    monkeypatch.setattr(environments.UserStudyEnv, '_asset', staticmethod(asset))
-    t['study_runtime'].update(initial_images=[{'asset_id': 'img_0', 'path': 'initial.png'}], recorded_observations=[
+    monkeypatch.setattr(environments.ExternalDataEnv, '_asset', staticmethod(asset))
+    t['external_runtime'].update(initial_images=[{'asset_id': 'img_0', 'path': 'initial.png'}], recorded_observations=[
         {'tool': 'BioMedParseTextSeg', 'args': {'image': 'img_0', 'param': 'lung'},
          'input_image_path': 'initial.png', 'text': 'Recorded region.', 'images': []}])
-    env = environments.UserStudyEnv(t); env.reset()
+    env = environments.ExternalDataEnv(t); env.reset()
     assert env.initial_observation()['output']['images'][0]['url'].startswith('data:image/png;base64,')
     assert env.call_tool('RequestTest', {'test': 'unrecorded'})['unavailable_request']
     assert env.call_tool('BioMedParseTextSeg', {'image': 'img_0', 'param': 'lung'})['output']['text'] == 'Recorded region.'
@@ -66,7 +66,7 @@ def test_image_crop_and_frozen_request_binding(monkeypatch):
 
 def test_asset_path_cannot_escape():
     with pytest.raises(ValueError):
-        environments.UserStudyEnv._asset('/etc/passwd')
+        environments.ExternalDataEnv._asset('/etc/passwd')
 
 
 @pytest.mark.parametrize('bench', C.BENCHMARKS.values())
@@ -92,7 +92,7 @@ def test_workspace_delivers_images_without_oracle(bench, protocol):
 def test_expert_review_binding_and_proxy_exclusion(monkeypatch, tmp_path):
     t = task(); answer = 'REFERENCE SECRET'
     ctx = {'task': t, 'reference': t['reference'], 'final_texts': [answer]}
-    monkeypatch.setenv('MH_STUDY_REVIEWS_DIR', str(tmp_path))
+    monkeypatch.setenv('MH_EXTERNAL_REVIEWS_DIR', str(tmp_path))
     def evaluate():
         cps = [scoring.run_checkpoint(cp, ctx) for cp in t['checkpoints']]
         return scoring.build_result(t, [], cps, {})
@@ -115,7 +115,7 @@ def test_expert_review_binding_and_proxy_exclusion(monkeypatch, tmp_path):
 
 
 @pytest.mark.parametrize('bench', C.BENCHMARKS.values())
-def test_real_runner_study_adapters(monkeypatch, tmp_path, bench):
+def test_real_runner_external_adapters(monkeypatch, tmp_path, bench):
     t = task(bench)
     def no_network(*args, **kwargs):
         raise AssertionError('Offline study tests must not connect to the network')
@@ -130,7 +130,7 @@ def test_real_runner_study_adapters(monkeypatch, tmp_path, bench):
     assert result.get('end_reason') != 'harness_error', result.get('harness_error')
     assert result['schema_validation']['valid'], result['schema_validation']
     assert result['outcome_status'] == ('evaluation_error' if bench == 'MedRBench' else 'human_review_pending')
-    assert result['study_review']['task_sha256'] == fingerprint(t, result['study_review']['answer'])[0]
+    assert result['external_review']['task_sha256'] == fingerprint(t, result['external_review']['answer'])[0]
     assert any(e.get('tool') == 'ReadCase' for e in result['_trajectory'])
     assert result['workspace']['path'].endswith('/h0')
     assert result['harness']['effective_mode'] == 'enforce'
@@ -143,25 +143,25 @@ def test_real_runner_study_adapters(monkeypatch, tmp_path, bench):
     assert report['outcome']['score'] is None
 
 
-@pytest.mark.skipif(not (ROOT / 'user_study/Meissa-SFT/data/train.jsonl').is_file(),
+@pytest.mark.skipif(not (ROOT / 'external_data/Meissa-SFT/data/train.jsonl').is_file(),
                     reason='Meissa-SFT source is not installed')
 def test_downloaded_meissa_image_and_clinical_record():
     first_image = first_clinical = None
     for t in C.meissa_tasks():
-        if first_image is None and t['study_runtime']['initial_images']:
+        if first_image is None and t['external_runtime']['initial_images']:
             first_image = t
-        if first_clinical is None and t['study_metadata']['task_kind'] == 'clinical_simulation':
+        if first_clinical is None and t['external_metadata']['task_kind'] == 'clinical_simulation':
             first_clinical = t
         if first_image and first_clinical:
             break
-    env = environments.UserStudyEnv(first_image); env.reset()
+    env = environments.ExternalDataEnv(first_image); env.reset()
     assert len(env.initial_observation()['output']['images']) == len(first_image['context']['images'])
     crop = env.call_tool('ZoomInSubfigure', {'image': 'img_last', 'param': '[0,0,500,500]'})
     assert crop['mode'] == 'deterministic_pixel_crop'
     env.teardown()
 
-    env = environments.UserStudyEnv(first_clinical); env.reset()
-    recorded = next(r for r in first_clinical['study_runtime']['recorded_observations'] if r['tool'] == 'RequestTest')
+    env = environments.ExternalDataEnv(first_clinical); env.reset()
+    recorded = next(r for r in first_clinical['external_runtime']['recorded_observations'] if r['tool'] == 'RequestTest')
     result = env.call_tool(recorded['tool'], recorded['args'])
     assert result['output']['text'] == recorded['text']
     assert first_clinical['reference']['gold_answer'] not in json.dumps(env.initial_observation())
@@ -170,16 +170,16 @@ def test_downloaded_meissa_image_and_clinical_record():
 
 def test_review_export_and_rescore_cli(monkeypatch, tmp_path):
     import importlib.util
-    spec = importlib.util.spec_from_file_location('study_review_cli', ROOT / 'user_study/scripts/review.py')
+    spec = importlib.util.spec_from_file_location('external_review_cli', ROOT / 'external_data/scripts/review.py')
     review = importlib.util.module_from_spec(spec); spec.loader.exec_module(review)
-    t = task(); t['study_metadata']['reference_kind'] = 'synthetic_fixture'
+    t = task(); t['external_metadata']['reference_kind'] = 'synthetic_fixture'
     answer = 'A synthetic answer.'
     ctx = {'task': t, 'reference': t['reference'], 'final_texts': [answer]}
-    monkeypatch.setenv('MH_STUDY_REVIEWS_DIR', str(tmp_path / 'reviews'))
+    monkeypatch.setenv('MH_EXTERNAL_REVIEWS_DIR', str(tmp_path / 'reviews'))
     result = scoring.build_result(t, [], [scoring.run_checkpoint(cp, ctx) for cp in t['checkpoints']],
                                   {'fidelity': {'source_benchmark': 'MeissaSFT'}})
     th, ah = fingerprint(t, answer)
-    result['study_review'] = dict(answer=answer, task_sha256=th, answer_sha256=ah, review_key=review_key(t, answer))
+    result['external_review'] = dict(answer=answer, task_sha256=th, answer_sha256=ah, review_key=review_key(t, answer))
     output = tmp_path / 'result.json'; output.write_text(json.dumps(result))
     C.dump_jsonl(tmp_path / 'benchmark_dataprocess/MeissaSFT/tasks_unified.jsonl', [t])
     monkeypatch.setattr(review, 'ROOT', tmp_path)
@@ -195,9 +195,9 @@ def test_review_export_and_rescore_cli(monkeypatch, tmp_path):
     form_path.write_text(json.dumps(form))
     argv[1] = 'rescore'; review.main()
     rescored = json.loads(output.with_name('result.reviewed.json').read_text())
-    assert rescored['study_outcome']['outcome'] is True
+    assert rescored['external_outcome']['outcome'] is True
     assert json.loads(output.read_text()) == result
-    from adapters.user_study.scoring import reviewed_result
+    from adapters.external_data.scoring import reviewed_result
     result['Governance'] = {'score': 0.6}
     merged = reviewed_result(result, tmp_path)
     assert merged['Governance'] == result['Governance']

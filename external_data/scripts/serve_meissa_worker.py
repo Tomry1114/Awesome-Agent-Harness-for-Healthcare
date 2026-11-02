@@ -52,10 +52,10 @@ def main():
     checkpoint = args.checkpoint.resolve(strict=True)
     checkpoint_sha = digest(checkpoint)
     os.environ['MPLBACKEND'] = 'Agg'
-    os.environ.setdefault('HF_HOME', str(ROOT / 'user_study/runtime/hf'))
+    os.environ.setdefault('HF_HOME', str(ROOT / 'external_data/runtime/hf'))
     os.environ.setdefault('HF_DATASETS_OFFLINE', '0')
     os.environ.setdefault('TRANSFORMERS_OFFLINE', '0')
-    os.environ.setdefault('NLTK_DATA', str(ROOT / 'user_study/runtime/nltk'))
+    os.environ.setdefault('NLTK_DATA', str(ROOT / 'external_data/runtime/nltk'))
     upstream = ROOT / 'references/Meissa/environments/interleaved_thinking_images'
     sys.path.insert(0, str(upstream))
     # Keep the read-only upstream checkout free of worker-created logs.

@@ -1,4 +1,4 @@
-"""Explicit study policies: direct images are authorized and missing facts stay missing."""
+"""Explicit external-data policies: direct images are authorized and missing facts stay missing."""
 from .conversion import TOOLS
 
 

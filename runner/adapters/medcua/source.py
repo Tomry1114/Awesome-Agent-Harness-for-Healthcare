@@ -6,13 +6,13 @@ from pathlib import Path
 import subprocess
 
 ROOT = Path(__file__).resolve().parents[3]
-SOURCE = ROOT / 'user_study/MedCUA-BenchMark'
-PIN = ROOT / 'user_study/config/medcua_source.json'
+SOURCE = ROOT / 'external_data/MedCUA-BenchMark'
+PIN = ROOT / 'external_data/config/medcua_source.json'
 WORKER = Path(__file__).with_name('worker.py')
 
 
 def python():
-    return os.environ.get('MH_MEDCUA_PYTHON', str(ROOT / 'user_study/runtime/medcua_env/bin/python'))
+    return os.environ.get('MH_MEDCUA_PYTHON', str(ROOT / 'external_data/runtime/medcua_env/bin/python'))
 
 
 def source_identity():

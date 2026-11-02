@@ -17,7 +17,7 @@ from urllib.request import Request, ProxyHandler, build_opener
 UPSTREAM_COMMIT = 'eb119115d2f5dfcfae772ba5f2466b4c603fac90'
 SEGMENTATION = ('SegmentRegionAroundPoint', 'BioMedParseTextSeg')
 MAX_RESPONSE = 32 * 1024 * 1024
-RUNTIME_CONFIG = Path(__file__).resolve().parents[3] / 'user_study/config/meissa_runtime.json'
+RUNTIME_CONFIG = Path(__file__).resolve().parents[3] / 'external_data/config/meissa_runtime.json'
 
 
 def settings():

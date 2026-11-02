@@ -16,7 +16,7 @@ from process_evaluation import DIMENSIONS, Bundle, digest, discover_profiles
 from seven_specs import DEFINITIONS, SYSTEM, VERSION
 
 ROOT = Path(__file__).resolve().parents[2]
-LOCK = ROOT / 'user_study/seven_dim/rubric_lock.json'
+LOCK = ROOT / 'external_data/seven_dim/rubric_lock.json'
 ARTIFACT = 'seven_profile.json'
 FILES = ('task.json', 'trajectory.jsonl', 'result.json', 'model_requests.jsonl',
          'workspace/output/medcua_native_history.jsonl')
@@ -97,7 +97,7 @@ def _walk_images(value):
 def evidence_packet(bundle):
     task = bundle.task
     bench = task.get('source_benchmark')
-    kind = (task.get('study_metadata') or {}).get('task_kind')
+    kind = (task.get('external_metadata') or {}).get('task_kind')
     if ((bench == 'MedRBench' and kind not in ('diagnosis', 'treatment'))
             or (bench == 'MeissaEval' and kind != 'pathvqa')
             or (bench == 'MedCUABench' and 'record_vitals.' not in task.get('native_runtime', {}).get('env_id', ''))):

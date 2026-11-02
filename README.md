@@ -11,20 +11,11 @@ Medical agents must carry out multi-step tasks while keeping evidence tied to th
 | [PhysicianBench](benchmark_dataprocess/PhysicianBench/README.md) | 100 | FHIR API tools |
 | [HealthAdminBench](benchmark_dataprocess/HealthAdminBench/README.md) | 135 | Web portals controlled with Playwright |
 | [MedCTA](benchmark_dataprocess/MedCTA/README.md) | 107 | Image description, region description, OCR, search, and calculator tools |
-| [MedRBench](user_study/README.md) | 3,367 prepared variants from 1,453 source cases | Clinical case evidence and model-mediated information requests |
-| [MeissaEval](user_study/README.md) | 6,676 screened PathVQA test questions | Medical images, local zoom, and optional live segmentation workers |
-| [MedCUABench](user_study/README.md) | 432 variants from 216 base tasks | Screenshot-only browser actions and the upstream GT checker |
+| [MedRBench](external_data/README.md) | 3,367 prepared variants from 1,453 source cases | Clinical case evidence and model-mediated information requests |
+| [MeissaEval](external_data/README.md) | 6,676 screened PathVQA test questions | Medical images, local zoom, and optional live segmentation workers |
+| [MedCUABench](external_data/README.md) | 432 variants from 216 base tasks | Screenshot-only browser actions and the upstream GT checker |
 
-The first three benchmarks have converted tasks in `benchmark_dataprocess/`; their [train/validation/test splits](benchmark_dataprocess/splits/README.md) contain 168/68/106 tasks. The three user-study benchmarks are prepared separately from pinned upstream sources; their source data, generated task files, images, browser runtime, and model weights are not bundled. The MeissaEval count refers to a local screened PathVQA conversion, not a provenance-verified held-out set. Meissa-SFT is training data and is kept separate from MeissaEval. See the [user-study setup](user_study/README.md) and [upstream paths](benchmark/README.md).
-
-### Upstream projects
-
-- [PhysicianBench](https://github.com/HealthRex/PhysicianBench)
-- [HealthAdminBench](https://github.com/som-shahlab/health-admin-bench)
-- [MedCTA](https://huggingface.co/datasets/IVUL-KAUST/MedCTA)
-- [MedRBench](https://github.com/MAGIC-AI4Med/MedRBench)
-- [Meissa](https://github.com/Schuture/Meissa) and [PathVQA](https://huggingface.co/datasets/flaviagiammarino/path-vqa)
-- [MedCUA-BenchMark](https://github.com/Jia7878/MedCUA-BenchMark)
+The first three benchmarks have converted tasks in `benchmark_dataprocess/`; their [train/validation/test splits](benchmark_dataprocess/splits/README.md) contain 168/68/106 tasks. The three external-data benchmarks are prepared separately from pinned upstream sources; their source data, generated task files, images, browser runtime, and model weights are not bundled. The MeissaEval count refers to a local screened PathVQA conversion, not a provenance-verified held-out set. Meissa-SFT is training data and is kept separate from MeissaEval. See the [external-data setup](external_data/README.md) and [upstream paths](benchmark/README.md).
 
 ## Running
 
@@ -135,3 +126,6 @@ TASK_MANIFEST.json     # dataset revisions and checksums
 - [PhysicianBench](https://github.com/HealthRex/PhysicianBench)
 - [HealthAdminBench](https://github.com/som-shahlab/health-admin-bench)
 - [MedCTA](https://huggingface.co/datasets/IVUL-KAUST/MedCTA)
+- [MedRBench](https://github.com/MAGIC-AI4Med/MedRBench)
+- [Meissa](https://github.com/Schuture/Meissa) and [PathVQA](https://huggingface.co/datasets/flaviagiammarino/path-vqa)
+- [MedCUA-BenchMark](https://github.com/Jia7878/MedCUA-BenchMark)
